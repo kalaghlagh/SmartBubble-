@@ -1,0 +1,47 @@
+<resources>
+    <string name="app_name">سمارت بابل</string>
+    <string name="nav_home">الرئيسية</string>
+    <string name="nav_assistant">المساعد</string>
+    <string name="nav_create">إنشاء</string>
+    <string name="nav_library">المكتبة</string>
+    <string name="nav_settings">الإعدادات</string>
+
+    <string name="greeting_title">صباح الخير، %1$s</string>
+    <string name="status_workspace">مساحة عمل تنفيذية ذكية • نشط</string>
+    <string name="credits_label">٩٨٪ الرصيد</string>
+    <string name="what_to_create">ما الذي تريد إنشاءه اليوم؟</string>
+    <string name="synthesizing_subtitle">صياغة مستندات مؤسسية، نماذج وعروض تقديمية</string>
+    <string name="prompt_placeholder">اطلب من سمارت بابل الصياغة، الحساب، أو التصميم...</string>
+
+    <string name="quick_creation">إنشاء سريع</string>
+    <string name="generative_studio">استوديو توليدي</string>
+    <string name="word_doc">مستند Word</string>
+    <string name="word_desc">خطابات، عقود رسمية، وتقارير تنفيذية</string>
+    <string name="ppt_deck">عرض PowerPoint</string>
+    <string name="ppt_desc">شرائح عمل تفاعلية وعروض استثمار</string>
+    <string name="excel_sheet">جدول Excel</string>
+    <string name="excel_desc">ميزانيات دقيقة، فواتير ونماذج مالية</string>
+    <string name="pdf_studio">مستند PDF</string>
+    <string name="pdf_desc">تقارير احترافية مجهزة ومحمية للطباعة</string>
+
+    <string name="notebooklm_node">مركز المعرفة NotebookLM</string>
+    <string name="google_sync">مزامنة Google</string>
+    <string name="recent_work">المستندات الأخيرة</string>
+    <string name="view_all">عرض الكل</string>
+
+    <string name="open_word">فتح في Word</string>
+    <string name="open_ppt">فتح في PowerPoint</string>
+    <string name="open_excel">فتح في Excel</string>
+    <string name="export_pdf">تصدير PDF</string>
+    <string name="share_file">مشاركة</string>
+    <string name="save_library">حفظ في المكتبة</string>
+    <string name="copy_content">نسخ المحتوى</string>
+
+    <string name="mode_strict">تطابق تام</string>
+    <string name="mode_smart">ملاءمة ذكية</string>
+    <string name="mode_style">نمط فقط</string>
+
+    <string name="orchestrator_title">الموجه الذكي المركزي</string>
+    <string name="my_templates_title">قوالبي الشخصية</string>
+    <string name="voice_runtime">التفاعل الصوتي الذكي</string>
+</resources>

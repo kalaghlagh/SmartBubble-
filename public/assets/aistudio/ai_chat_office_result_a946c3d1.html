@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/><meta content="mobile_tab" name="shell-type"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Plus+Jakarta+Sans:wght@600;700&amp;display=swap" rel="stylesheet"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{width:100vw;margin:0;padding:0;background-color:#0d1321;}body{overscroll-behavior:none;-webkit-tap-highlight-color:transparent;}.pb-safe{padding-bottom:env(safe-area-inset-bottom,0px);}.pt-safe{padding-top:env(safe-area-inset-top,0px);}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config = { darkMode: "class", theme: { extend: { "colors": { "outline": "#859395", "secondary-container": "#4f25be", "surface-container-lowest": "#080e1c", "error": "#ffb4ab", "on-background": "#dde2f6", "primary-container": "#24d6e8", "tertiary-fixed": "#d8e2ff", "secondary-fixed-dim": "#ccbeff", "surface": "#0d1321", "on-primary-fixed": "#001f23", "on-secondary-container": "#beadff", "surface-container-high": "#242a39", "secondary": "#ccbeff", "tertiary-fixed-dim": "#bac6e4", "on-surface-variant": "#bbc9cb", "on-primary-fixed-variant": "#004f56", "surface-container-highest": "#2f3544", "background": "#0d1321", "surface-variant": "#2f3544", "inverse-surface": "#dde2f6", "error-container": "#93000a", "outline-variant": "#3c494b", "inverse-on-surface": "#2a303f", "surface-container-low": "#151b2a", "on-surface": "#dde2f6", "tertiary-container": "#b7c3e1", "on-primary-container": "#005961", "on-secondary": "#350097", "inverse-primary": "#006972", "secondary-fixed": "#e7deff", "on-tertiary": "#253048", "primary": "#78f0ff", "on-tertiary-container": "#445069", "tertiary": "#d3dffe", "primary-fixed-dim": "#2ddaec", "on-secondary-fixed": "#1f0060", "on-tertiary-fixed": "#0f1b32", "on-secondary-fixed-variant": "#4c21bb", "surface-dim": "#0d1321", "surface-container": "#1a1f2e", "on-error-container": "#ffdad6", "surface-tint": "#2ddaec", "surface-bright": "#333949", "on-primary": "#00363c", "primary-fixed": "#8ef2ff", "on-error": "#690005", "on-tertiary-fixed-variant": "#3b4760" }, "borderRadius": { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" }, "spacing": { "space-lg": "1.5rem", "margin-tablet": "1.5rem", "gutter-tablet": "1.5rem", "space-xl": "2rem", "margin-desktop": "2rem", "gutter": "1rem", "gutter-desktop": "2rem", "space-xs": "0.25rem", "space-md": "1rem", "margin": "1rem", "space-sm": "0.5rem" }, "fontFamily": { "display-lg": ["Plus Jakarta Sans"], "headline-sm": ["Plus Jakarta Sans"], "title-lg": ["Inter"], "label-sm": ["Inter"], "headline-md": ["Plus Jakarta Sans"], "title-md": ["Inter"], "label-lg": ["Inter"], "headline-lg": ["Plus Jakarta Sans"], "body-sm": ["Inter"], "headline-lg-mobile": ["Plus Jakarta Sans"], "label-md": ["Inter"], "body-lg": ["Inter"], "body-md": ["Inter"] }, "fontSize": { "display-lg": ["40px", {"lineHeight": "48px", "letterSpacing": "-0.02em", "fontWeight": "700"}], "headline-sm": ["18px", {"lineHeight": "24px", "fontWeight": "600"}], "title-lg": ["16px", {"lineHeight": "24px", "fontWeight": "600"}], "label-sm": ["11px", {"lineHeight": "14px", "letterSpacing": "0.03em", "fontWeight": "500"}], "headline-md": ["22px", {"lineHeight": "28px", "fontWeight": "600"}], "title-md": ["14px", {"lineHeight": "20px", "fontWeight": "600"}], "label-lg": ["14px", {"lineHeight": "20px", "letterSpacing": "0.01em", "fontWeight": "500"}], "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.015em", "fontWeight": "600"}], "body-sm": ["12px", {"lineHeight": "16px", "fontWeight": "400"}], "headline-lg-mobile": ["26px", {"lineHeight": "34px", "letterSpacing": "-0.01em", "fontWeight": "600"}], "label-md": ["12px", {"lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "500"}], "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}], "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}] } } } };</script><style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head><body class="bg-surface text-on-surface antialiased flex flex-col min-h-screen selection:bg-primary-container selection:text-on-primary-container"><header class="fixed top-0 w-full z-50 bg-surface/85 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.25)]"><div class="h-6 px-margin flex items-center justify-between text-on-surface-variant font-label-sm text-label-sm select-none pt-1"><span class="tracking-tight font-medium text-on-surface">09:41</span><div class="flex items-center gap-1.5"><span class="material-symbols-outlined text-[14px]">signal_cellular_alt</span><span class="material-symbols-outlined text-[14px]">wifi</span><span class="material-symbols-outlined text-[14px]">battery_full</span></div></div><div class="h-14 px-margin flex items-center justify-between"><div class="flex items-center gap-space-sm"><div class="w-9 h-9 rounded-lg bg-gradient-to-tr from-primary-container to-secondary flex items-center justify-center shadow-[0_0_16px_rgba(36,214,232,0.35)]"><span class="material-symbols-outlined text-on-primary font-bold text-[20px]">bubble_chart</span></div><div class="flex flex-col"><div class="flex items-center gap-1"><span class="font-headline-sm text-headline-sm tracking-tight text-on-surface">Smart Bubble</span><span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span></div><span class="font-label-sm text-label-sm text-on-surface-variant">Ai Assistant</span></div></div><div class="flex items-center gap-space-xs"><button aria-label="Notifications" class="w-11 h-11 flex items-center justify-center rounded-full text-on-surface-variant hover:text-on-surface hover:bg-surface-container active:bg-surface-container-high transition-colors" type="button"><span class="material-symbols-outlined text-[22px]">notifications</span></button><button aria-label="User Profile" class="w-11 h-11 flex items-center justify-center rounded-full hover:bg-surface-container transition-colors" type="button"><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></button></div></div></header><main class="flex-1 flex flex-col relative w-full pt-20 pb-24 px-margin bg-surface"><div class="flex flex-col w-full pb-6 space-y-4">
+<!-- Conversation Context & Model Bar -->
+<div class="w-full bg-surface-container-low rounded-xl p-3 shadow-sm flex items-center justify-between">
+<div class="flex items-center gap-2.5 min-w-0">
+<div class="w-2.5 h-2.5 rounded-full bg-primary-container animate-pulse flex-shrink-0"></div>
+<div class="flex flex-col min-w-0">
+<div class="flex items-center gap-1.5">
+<span class="font-title-md text-title-md text-on-surface truncate">Session #142</span>
+<span class="bg-primary/10 text-primary font-label-sm text-label-sm px-1.5 py-0.5 rounded-full font-semibold">Active</span>
+</div>
+<span class="font-body-sm text-body-sm text-on-surface-variant truncate">Central Orchestrator: Claude 3.5 Sonnet / Gemini Pro</span>
+</div>
+</div>
+<div class="flex items-center gap-1 flex-shrink-0">
+<button aria-label="Chat History" class="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container active:scale-95 transition-all" type="button">
+<span class="material-symbols-outlined text-[19px]">history</span>
+</button>
+<button aria-label="New Session" class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-primary hover:bg-surface-container-highest active:scale-95 transition-all" type="button">
+<span class="material-symbols-outlined text-[19px]">add</span>
+</button>
+</div>
+</div>
+<!-- Messages Container -->
+<div class="flex flex-col space-y-4 w-full">
+<!-- User Prompt Bubble -->
+<div class="flex flex-col items-end pl-6">
+<div class="bg-secondary-container text-on-secondary-container rounded-2xl rounded-tr-xs p-3.5 shadow-md max-w-[92%] relative">
+<p class="font-body-md text-body-md leading-relaxed text-secondary-fixed">
+          Create a formal commercial partnership proposal between SmartBubble Technologies and Apex Enterprise Solutions for an enterprise license of 500 seats. Include SLA, tier pricing, and implementation timeline.
+        </p>
+<div class="flex items-center justify-end gap-1.5 mt-2">
+<span class="font-label-sm text-label-sm text-on-secondary-container/80">09:42 AM</span>
+<span class="material-symbols-outlined text-[14px] text-primary" style="font-variation-settings: 'FILL' 1;">done_all</span>
+</div>
+</div>
+</div>
+<!-- AI Assistant Response with Generated Artifact -->
+<div class="flex flex-col items-start pr-1 space-y-2">
+<!-- Assistant Header Identity -->
+<div class="flex items-center gap-2 px-1">
+<div class="relative flex items-center justify-center w-7 h-7 rounded-full bg-surface-container-highest shadow-[0_0_12px_rgba(36,214,232,0.4)]">
+<div class="absolute inset-0 rounded-full bg-gradient-to-tr from-primary-container to-secondary opacity-75 blur-[1px]"></div>
+<span class="material-symbols-outlined text-on-primary text-[15px] relative z-10 font-bold">bubble_chart</span>
+</div>
+<span class="font-title-md text-title-md text-on-surface font-semibold">Smart Bubble</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">just now</span>
+</div>
+<!-- Main Assistant Content Card -->
+<div class="w-full bg-surface-container rounded-2xl rounded-tl-xs p-4 shadow-lg space-y-3.5">
+<p class="font-body-md text-body-md text-on-surface leading-relaxed">
+          I've drafted the complete 4-page Commercial Partnership Agreement with enterprise SLA terms, tiered pricing tables, and a 6-week onboarding milestone chart.
+        </p>
+<!-- Rich Generated Document Card -->
+<div class="bg-surface-container-low rounded-xl p-3.5 relative overflow-hidden shadow-inner flex flex-col space-y-3">
+<!-- Subtle Accent Beam -->
+<div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary-container via-primary to-secondary"></div>
+<!-- Document Top Details -->
+<div class="flex items-start gap-3 pt-0.5">
+<!-- Office Document Thumbnail Placeholder -->
+<div class="relative w-14 h-16 rounded-lg bg-surface-container-high flex flex-col items-center justify-center flex-shrink-0 shadow-md overflow-hidden">
+<img class="w-full h-full object-cover opacity-80" data-alt="Stylized contract document preview showing crisp blue typographic headers, structured signature fields, and subtle corporate watermark layout with dark executive theme tones." src="https://lh3.googleusercontent.com/aida-public/AB6AXuA4as2U-GEK7N2xcrpj5ybBmjFeOQbiGkXyDAN34gzahFe46uwjg72uLvgCpq9BbQmIqzRYoWQ3whNOjMg6VzOdxKq6Ot1pR04FxEOb0iBuqSHjYdObmKfI0k9bhIeXcKjiN9og2sqGfLzz4x87HxooxsRJZGMaCDNJ7nlDWhJABGExUKaMk74ywbwguTtWzs2a8x1Cwhcjm9n2UNAU4vFCvgBuiYXaovpclUAaVipa"/>
+<div class="absolute bottom-0 inset-x-0 bg-primary-container/90 py-0.5 flex justify-center items-center">
+<span class="font-label-sm text-[9px] font-bold text-on-primary-container tracking-wider">DOCX</span>
+</div>
+</div>
+<!-- Document Text Metadata -->
+<div class="flex-1 min-w-0 flex flex-col">
+<div class="flex items-center gap-1.5">
+<span class="material-symbols-outlined text-primary text-[16px]">description</span>
+<h3 class="font-title-md text-title-md text-on-surface font-semibold truncate">Apex_Enterprise_Partnership_Agreement_v1.docx</h3>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-0.5">
+                DOCX &amp; PDF Ready • 4 Pages • 1,840 Words • Formatted with Signature Blocks
+              </p>
+<div class="flex items-center gap-1.5 mt-2 text-primary font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[15px]" style="font-variation-settings: 'FILL' 1;">verified</span>
+<span>Orchestrator Verified &amp; Export Ready</span>
+</div>
+</div>
+</div>
+<!-- Primary & Secondary File Actions -->
+<div class="grid grid-cols-2 gap-2 pt-1">
+<button class="h-10 rounded-lg bg-gradient-to-r from-primary-container to-secondary flex items-center justify-center gap-1.5 text-surface-container-lowest font-label-lg text-label-lg font-semibold shadow-md active:scale-95 transition-all" type="button">
+<span class="material-symbols-outlined text-[18px]">edit_document</span>
+<span>Open in Word</span>
+</button>
+<button class="h-10 rounded-lg bg-surface-container-high flex items-center justify-center gap-1.5 text-on-surface font-label-lg text-label-lg hover:bg-surface-container-highest active:scale-95 transition-all" type="button">
+<span class="material-symbols-outlined text-[18px] text-error">picture_as_pdf</span>
+<span>Export PDF</span>
+</button>
+</div>
+<!-- Aux Utility Actions -->
+<div class="flex items-center justify-between pt-1 text-on-surface-variant font-label-md text-label-md">
+<button class="flex items-center gap-1 hover:text-on-surface active:text-primary transition-colors py-1 px-2 rounded-md hover:bg-surface-container" type="button">
+<span class="material-symbols-outlined text-[16px]">share</span>
+<span>Share</span>
+</button>
+<button class="flex items-center gap-1 hover:text-on-surface active:text-primary transition-colors py-1 px-2 rounded-md hover:bg-surface-container" type="button">
+<span class="material-symbols-outlined text-[16px]">bookmark_add</span>
+<span>Save to Library</span>
+</button>
+<button class="flex items-center gap-1 hover:text-on-surface active:text-primary transition-colors py-1 px-2 rounded-md hover:bg-surface-container" type="button">
+<span class="material-symbols-outlined text-[16px]">visibility</span>
+<span>Inspect Raw</span>
+</button>
+</div>
+</div>
+<!-- Inline Response Action Bar -->
+<div class="flex items-center justify-between pt-1 text-on-surface-variant">
+<div class="flex items-center gap-1">
+<button aria-label="Copy Response" class="w-8 h-8 rounded-full flex items-center justify-center hover:bg-surface-container-high hover:text-on-surface active:scale-90 transition-all" type="button">
+<span class="material-symbols-outlined text-[17px]">content_copy</span>
+</button>
+<button aria-label="Read Aloud" class="w-8 h-8 rounded-full flex items-center justify-center hover:bg-surface-container-high hover:text-on-surface active:scale-90 transition-all" type="button">
+<span class="material-symbols-outlined text-[17px]">volume_up</span>
+</button>
+<button class="flex items-center gap-1 px-2 h-7 rounded-full bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-label-sm text-label-sm active:scale-95 transition-all" type="button">
+<span class="material-symbols-outlined text-[14px]">translate</span>
+<span>Arabic</span>
+</button>
+</div>
+<button class="flex items-center gap-1 text-on-surface-variant hover:text-primary font-label-sm text-label-sm py-1 px-2 rounded-md hover:bg-surface-container-high transition-colors" type="button">
+<span class="material-symbols-outlined text-[15px]">refresh</span>
+<span>Regenerate</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Realtime Floating Decibel / Voice Ready Tag -->
+<div class="flex items-center justify-center w-full">
+<div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-container-high/90 shadow-sm backdrop-blur-md">
+<span class="flex h-2 w-2 relative">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+</span>
+<span class="font-label-sm text-label-sm text-on-surface">Voice mode ready • Tap mic to talk</span>
+<span class="material-symbols-outlined text-primary text-[14px]">graphic_eq</span>
+</div>
+</div>
+<!-- Docked Contextual Input Composer -->
+<div class="w-full bg-surface-container-low rounded-2xl p-2.5 shadow-xl flex flex-col gap-2">
+<!-- Active Generation / Fast Pills -->
+<div class="flex items-center gap-1.5 overflow-x-auto pb-1 select-none">
+<button class="flex-shrink-0 px-2.5 py-1 rounded-full bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high font-label-sm text-label-sm flex items-center gap-1 transition-colors" type="button">
+<span class="material-symbols-outlined text-[13px] text-primary">add_circle</span>
+<span>Add Appendix B: Security</span>
+</button>
+<button class="flex-shrink-0 px-2.5 py-1 rounded-full bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high font-label-sm text-label-sm flex items-center gap-1 transition-colors" type="button">
+<span class="material-symbols-outlined text-[13px] text-secondary">percent</span>
+<span>Change to 15% Net-30</span>
+</button>
+<button class="flex-shrink-0 px-2.5 py-1 rounded-full bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high font-label-sm text-label-sm flex items-center gap-1 transition-colors" type="button">
+<span class="material-symbols-outlined text-[13px] text-primary">summarize</span>
+<span>Summarize Exec Deck</span>
+</button>
+</div>
+<!-- Multiline Input & Micro Controls -->
+<div class="flex items-end gap-2 bg-surface-container rounded-xl p-1.5">
+<button aria-label="Attach File" class="w-9 h-9 rounded-lg flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors flex-shrink-0" type="button">
+<span class="material-symbols-outlined text-[20px]">attach_file</span>
+</button>
+<textarea class="flex-1 bg-transparent text-on-surface font-body-md text-body-md placeholder:text-on-surface-variant focus:outline-none resize-none py-1.5 max-h-24" placeholder="Ask follow-up or request changes..." rows="1"></textarea>
+<!-- Pulsing Mic Trigger -->
+<button aria-label="Toggle Voice Mode" class="relative w-9 h-9 rounded-lg bg-surface-container-high flex items-center justify-center text-primary hover:bg-surface-container-highest transition-colors flex-shrink-0" type="button">
+<span class="material-symbols-outlined text-[20px]">mic</span>
+<span class="absolute inset-0 rounded-lg shadow-[0_0_10px_rgba(36,214,232,0.3)] pointer-events-none"></span>
+</button>
+<!-- Gradient Send Trigger -->
+<button aria-label="Send Request" class="w-9 h-9 rounded-lg bg-gradient-to-tr from-primary-container via-primary to-secondary flex items-center justify-center text-on-primary font-bold shadow-md active:scale-95 transition-transform flex-shrink-0" type="button">
+<span class="material-symbols-outlined text-[19px]">arrow_upward</span>
+</button>
+</div>
+</div>
+</div></main><nav class="fixed bottom-0 w-full z-50 pb-safe bg-surface/90 backdrop-blur-xl shadow-[0_-4px_20px_rgba(0,0,0,0.4)]" data-active-classes="text-primary [&amp;_span.indicator]:bg-primary/20"><div class="flex items-center justify-around h-20 px-2 max-w-lg mx-auto relative"><a class="flex flex-col items-center justify-center min-w-[56px] h-14 text-on-surface-variant hover:text-on-surface transition-colors" data-path="home" href="#"><div class="w-10 h-7 rounded-full flex items-center justify-center indicator"><span class="material-symbols-outlined text-[22px]">grid_view</span></div><span class="font-label-sm text-label-sm mt-0.5">Home</span></a><a aria-current="page" class="flex flex-col items-center justify-center min-w-[56px] h-14 transition-colors text-primary [&amp;_span.indicator]:bg-primary/20" data-path="ai-assistant" href="#"><div class="w-10 h-7 rounded-full flex items-center justify-center indicator"><span class="material-symbols-outlined text-[22px]">auto_awesome</span></div><span class="font-label-sm text-label-sm mt-0.5">Assistant</span></a><div class="relative -top-5 flex flex-col items-center"><a class="w-14 h-14 rounded-full bg-gradient-to-tr from-primary-container via-primary to-secondary flex items-center justify-center shadow-[0_0_24px_rgba(36,214,232,0.45)] active:scale-95 transition-transform" data-path="create-studio" href="#"><span class="material-symbols-outlined text-on-primary font-bold text-[28px]">add</span></a><span class="font-label-sm text-label-sm mt-1 text-on-surface-variant">Create</span></div><a class="flex flex-col items-center justify-center min-w-[56px] h-14 text-on-surface-variant hover:text-on-surface transition-colors" data-path="library" href="#"><div class="w-10 h-7 rounded-full flex items-center justify-center indicator"><span class="material-symbols-outlined text-[22px]">folder_open</span></div><span class="font-label-sm text-label-sm mt-0.5">Library</span></a><a class="flex flex-col items-center justify-center min-w-[56px] h-14 text-on-surface-variant hover:text-on-surface transition-colors" data-path="settings" href="#"><div class="w-10 h-7 rounded-full flex items-center justify-center indicator"><span class="material-symbols-outlined text-[22px]">tune</span></div><span class="font-label-sm text-label-sm mt-0.5">Settings</span></a></div></nav></body></html>

@@ -1,0 +1,47 @@
+<resources>
+    <string name="app_name">Smart Bubble</string>
+    <string name="nav_home">Accueil</string>
+    <string name="nav_assistant">Assistant</string>
+    <string name="nav_create">Créer</string>
+    <string name="nav_library">Bibliothèque</string>
+    <string name="nav_settings">Paramètres</string>
+
+    <string name="greeting_title">Bonjour, %1$s</string>
+    <string name="status_workspace">Espace de travail exécutif autonome • Actif</string>
+    <string name="credits_label">98% crédits</string>
+    <string name="what_to_create">Que souhaitez-vous créer aujourd\'hui ?</string>
+    <string name="synthesizing_subtitle">Synthèse de documents, modèles et présentations</string>
+    <string name="prompt_placeholder">Demandez à Smart Bubble de rédiger, calculer, concevoir...</string>
+
+    <string name="quick_creation">Création rapide</string>
+    <string name="generative_studio">Studio génératif</string>
+    <string name="word_doc">Document Word</string>
+    <string name="word_desc">Rapports, lettres, contrats</string>
+    <string name="ppt_deck">Présentation PowerPoint</string>
+    <string name="ppt_desc">Présentations, pitchs, synthèses</string>
+    <string name="excel_sheet">Feuille Excel</string>
+    <string name="excel_desc">Budgets, factures, modèles</string>
+    <string name="pdf_studio">Studio PDF</string>
+    <string name="pdf_desc">Combiner, formater, signer</string>
+
+    <string name="notebooklm_node">Nœud NotebookLM</string>
+    <string name="google_sync">Sync Google</string>
+    <string name="recent_work">Documents récents</string>
+    <string name="view_all">Voir tout</string>
+
+    <string name="open_word">Ouvrir dans Word</string>
+    <string name="open_ppt">Ouvrir dans PowerPoint</string>
+    <string name="open_excel">Ouvrir dans Excel</string>
+    <string name="export_pdf">Exporter en PDF</string>
+    <string name="share_file">Partager</string>
+    <string name="save_library">Enregistrer</string>
+    <string name="copy_content">Copier le texte</string>
+
+    <string name="mode_strict">Concordance stricte</string>
+    <string name="mode_smart">Adaptation intelligente</string>
+    <string name="mode_style">Style uniquement</string>
+
+    <string name="orchestrator_title">Orchestrateur IA Central</string>
+    <string name="my_templates_title">Mes Modèles</string>
+    <string name="voice_runtime">Moteur vocal et audio</string>
+</resources>
