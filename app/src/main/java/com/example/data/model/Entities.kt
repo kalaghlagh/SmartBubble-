@@ -27,9 +27,10 @@ data class DocumentEntity(
 data class TemplateEntity(
     @PrimaryKey val id: String,
     val name: String,
-    val fileType: String, // "DOCX", "PPTX", "XLSX", "PDF"
+    val fileType: String, // "DOCX", "PPTX", "XLSX"
     val originalFilePath: String,
     val profileJson: String,
+    val fileSize: Long = 250880L, // in bytes
     val isDefaultWord: Boolean = false,
     val isDefaultPpt: Boolean = false,
     val isDefaultExcel: Boolean = false,
@@ -41,15 +42,16 @@ data class TemplateEntity(
     val thumbnailColorHex: String = "#24D6E8"
 )
 
-@Entity(tableName = "knowledge_sources")
-data class KnowledgeSourceEntity(
+@Entity(tableName = "ai_providers")
+data class ProviderEntity(
     @PrimaryKey val id: String,
     val name: String,
-    val sourceType: String, // "PDF", "DOCX", "PPTX", "XLSX", "TXT", "WEB", "NOTEBOOKLM"
-    val uriOrUrl: String,
-    val extractedText: String,
-    val notebookReference: String? = null,
-    val processingStatus: String = "Synced", // "Processing", "Synced", "Failed"
+    val providerType: String, // "OpenAI", "Google Gemini", "Anthropic Claude", "OpenAI-compatible", "Custom"
+    val baseUrl: String,
+    val encryptedApiKey: String,
+    val modelName: String,
+    val isDefault: Boolean = false,
+    val status: String = "Active", // "Active", "Connected (24ms)", "Error: ...", "Not Tested"
     val createdAt: Long = System.currentTimeMillis()
 )
 

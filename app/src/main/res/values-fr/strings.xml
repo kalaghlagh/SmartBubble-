@@ -1,47 +1,69 @@
 <resources>
-    <string name="app_name">Smart Bubble</string>
-    <string name="nav_home">Accueil</string>
-    <string name="nav_assistant">Assistant</string>
-    <string name="nav_create">Créer</string>
+    <string name="app_name">SmartBubble</string>
+
+    <!-- Bottom Navigation -->
+    <string name="nav_chat">Discussion</string>
+    <string name="nav_templates">Mes Modèles</string>
     <string name="nav_library">Bibliothèque</string>
     <string name="nav_settings">Paramètres</string>
 
-    <string name="greeting_title">Bonjour, %1$s</string>
-    <string name="status_workspace">Espace de travail exécutif autonome • Actif</string>
-    <string name="credits_label">98% crédits</string>
-    <string name="what_to_create">Que souhaitez-vous créer aujourd\'hui ?</string>
-    <string name="synthesizing_subtitle">Synthèse de documents, modèles et présentations</string>
-    <string name="prompt_placeholder">Demandez à Smart Bubble de rédiger, calculer, concevoir...</string>
+    <!-- Chat Screen -->
+    <string name="chat_placeholder">Écrivez votre message ici…</string>
+    <string name="chat_new_session">Nouvelle discussion</string>
+    <string name="chat_select_template">Appliquer un modèle</string>
+    <string name="chat_no_template">Sans modèle (Style standard)</string>
+    <string name="chat_regenerate">Régénérer</string>
+    <string name="chat_copy">Copier</string>
+    <string name="chat_listen">Écouter</string>
+    <string name="chat_open_file">Ouvrir</string>
+    <string name="chat_share_file">Partager</string>
+    <string name="chat_export_pdf">Exporter en PDF</string>
+    <string name="chat_listening">Écoute en cours…</string>
+    <string name="chat_voice_hint">Mode vocal actif. Parlez maintenant.</string>
 
-    <string name="quick_creation">Création rapide</string>
-    <string name="generative_studio">Studio génératif</string>
-    <string name="word_doc">Document Word</string>
-    <string name="word_desc">Rapports, lettres, contrats</string>
-    <string name="ppt_deck">Présentation PowerPoint</string>
-    <string name="ppt_desc">Présentations, pitchs, synthèses</string>
-    <string name="excel_sheet">Feuille Excel</string>
-    <string name="excel_desc">Budgets, factures, modèles</string>
-    <string name="pdf_studio">Studio PDF</string>
-    <string name="pdf_desc">Combiner, formater, signer</string>
+    <!-- Templates Screen -->
+    <string name="templates_title">Mes Modèles</string>
+    <string name="templates_upload">Téléverser un modèle</string>
+    <string name="filter_all">Tous</string>
+    <string name="filter_docs">Docs</string>
+    <string name="filter_pptx">PPTX</string>
+    <string name="filter_xlsx">XLSX</string>
+    <string name="template_added_on">Ajouté: %1$s</string>
+    <string name="template_preview">Aperçu du profil</string>
+    <string name="template_set_default">Définir par défaut</string>
+    <string name="template_delete">Supprimer le modèle</string>
+    <string name="template_empty_title">Aucun modèle téléversé</string>
+    <string name="template_empty_desc">Importez vos fichiers DOCX, PPTX ou XLSX de référence pour appliquer vos polices et styles aux documents générés.</string>
 
-    <string name="notebooklm_node">Nœud NotebookLM</string>
-    <string name="google_sync">Sync Google</string>
-    <string name="recent_work">Documents récents</string>
-    <string name="view_all">Voir tout</string>
+    <!-- Library Screen -->
+    <string name="library_title">Bibliothèque</string>
+    <string name="filter_documents">Documents</string>
+    <string name="filter_presentations">Présentations</string>
+    <string name="filter_spreadsheets">Feuilles de calcul</string>
+    <string name="search_placeholder">Rechercher des fichiers…</string>
+    <string name="library_empty_title">Aucun document pour le moment</string>
+    <string name="library_empty_desc">Demandez à SmartBubble dans Discussion de générer des lettres, présentations ou rapports.</string>
+    <string name="file_rename">Renommer</string>
+    <string name="file_delete">Supprimer</string>
+    <string name="file_open">Ouvrir le fichier</string>
+    <string name="file_share">Partager le fichier</string>
 
-    <string name="open_word">Ouvrir dans Word</string>
-    <string name="open_ppt">Ouvrir dans PowerPoint</string>
-    <string name="open_excel">Ouvrir dans Excel</string>
-    <string name="export_pdf">Exporter en PDF</string>
-    <string name="share_file">Partager</string>
-    <string name="save_library">Enregistrer</string>
-    <string name="copy_content">Copier le texte</string>
+    <!-- Settings Screen -->
+    <string name="settings_title">Paramètres</string>
+    <string name="settings_ai_providers">Fournisseurs IA</string>
+    <string name="settings_ai_providers_desc">Gérer vos fournisseurs IA</string>
+    <string name="settings_add_provider">Ajouter un fournisseur</string>
+    <string name="settings_test_connection">Tester la connexion</string>
+    <string name="settings_set_default">Définir par défaut</string>
+    <string name="settings_default_badge">Par défaut</string>
+    <string name="settings_delete">Supprimer</string>
+    <string name="settings_language">Langue</string>
+    <string name="settings_theme">Thème</string>
+    <string name="settings_about">À propos de SmartBubble</string>
+    <string name="theme_light">Clair</string>
+    <string name="theme_dark">Sombre</string>
+    <string name="theme_system">Système</string>
 
-    <string name="mode_strict">Concordance stricte</string>
-    <string name="mode_smart">Adaptation intelligente</string>
-    <string name="mode_style">Style uniquement</string>
-
-    <string name="orchestrator_title">Orchestrateur IA Central</string>
-    <string name="my_templates_title">Mes Modèles</string>
-    <string name="voice_runtime">Moteur vocal et audio</string>
+    <string name="security_notice_title">Avis de sécurité sur l\'appareil</string>
+    <string name="security_notice_desc">Les clés d\'accès sont chiffrées localement avec Android Keystore sur votre appareil. Un proxy serveur privé est recommandé en entreprise.</string>
 </resources>

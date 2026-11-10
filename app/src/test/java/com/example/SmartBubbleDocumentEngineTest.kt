@@ -4,7 +4,6 @@ import com.example.document.docx.DocxEngine
 import com.example.document.model.*
 import com.example.document.pptx.PptxEngine
 import com.example.document.xlsx.XlsxEngine
-import com.example.social.SocialMediaExplainer
 import com.example.template.analysis.TemplateAnalysisEngine
 import com.example.template.domain.TemplateProfile
 import org.junit.Assert.*
@@ -188,21 +187,5 @@ class SmartBubbleDocumentEngineTest {
         assertEquals("Extracted Profile", extractedProfile.name)
         assertEquals("DOCX", extractedProfile.originalFileType)
         assertTrue(extractedProfile.isAnalysisComplete)
-    }
-
-    @Test
-    fun testSocialMediaExplainerArabicAndEnglish() {
-        val explainer = SocialMediaExplainer()
-
-        val englishPost = "Excited to announce our new enterprise AI workspace rollout with 500 seats!"
-        val enAnalysis = explainer.analyzeSharedContent(englishPost, "en")
-        assertEquals("English", enAnalysis.detectedLanguage)
-        assertTrue(enAnalysis.summary.isNotBlank())
-        assertTrue(enAnalysis.executiveExplanation.isNotBlank())
-
-        val arabicPost = "سعداء بالإعلان عن إطلاق مساحة العمل الذكية للشركات والمؤسسات اليوم"
-        val arAnalysis = explainer.analyzeSharedContent(arabicPost, "ar")
-        assertEquals("Arabic", arAnalysis.detectedLanguage)
-        assertTrue(arAnalysis.summary.contains("المحتوى"))
     }
 }

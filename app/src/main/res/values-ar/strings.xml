@@ -1,47 +1,69 @@
 <resources>
-    <string name="app_name">سمارت بابل</string>
-    <string name="nav_home">الرئيسية</string>
-    <string name="nav_assistant">المساعد</string>
-    <string name="nav_create">إنشاء</string>
+    <string name="app_name">SmartBubble</string>
+
+    <!-- Bottom Navigation -->
+    <string name="nav_chat">المحادثة</string>
+    <string name="nav_templates">قوالبي</string>
     <string name="nav_library">المكتبة</string>
     <string name="nav_settings">الإعدادات</string>
 
-    <string name="greeting_title">صباح الخير، %1$s</string>
-    <string name="status_workspace">مساحة عمل تنفيذية ذكية • نشط</string>
-    <string name="credits_label">٩٨٪ الرصيد</string>
-    <string name="what_to_create">ما الذي تريد إنشاءه اليوم؟</string>
-    <string name="synthesizing_subtitle">صياغة مستندات مؤسسية، نماذج وعروض تقديمية</string>
-    <string name="prompt_placeholder">اطلب من سمارت بابل الصياغة، الحساب، أو التصميم...</string>
+    <!-- Chat Screen -->
+    <string name="chat_placeholder">اكتب رسالتك هنا…</string>
+    <string name="chat_new_session">محادثة جديدة</string>
+    <string name="chat_select_template">تطبيق قالب</string>
+    <string name="chat_no_template">بدون قالب (النمط الافتراضي)</string>
+    <string name="chat_regenerate">إعادة المحاولة</string>
+    <string name="chat_copy">نسخ</string>
+    <string name="chat_listen">استماع</string>
+    <string name="chat_open_file">فتح</string>
+    <string name="chat_share_file">مشاركة</string>
+    <string name="chat_export_pdf">تصدير PDF</string>
+    <string name="chat_listening">جاري الاستماع…</string>
+    <string name="chat_voice_hint">الوضع الصوتي نشط. تحدث الآن.</string>
 
-    <string name="quick_creation">إنشاء سريع</string>
-    <string name="generative_studio">استوديو توليدي</string>
-    <string name="word_doc">مستند Word</string>
-    <string name="word_desc">خطابات، عقود رسمية، وتقارير تنفيذية</string>
-    <string name="ppt_deck">عرض PowerPoint</string>
-    <string name="ppt_desc">شرائح عمل تفاعلية وعروض استثمار</string>
-    <string name="excel_sheet">جدول Excel</string>
-    <string name="excel_desc">ميزانيات دقيقة، فواتير ونماذج مالية</string>
-    <string name="pdf_studio">مستند PDF</string>
-    <string name="pdf_desc">تقارير احترافية مجهزة ومحمية للطباعة</string>
+    <!-- Templates Screen -->
+    <string name="templates_title">قوالبي</string>
+    <string name="templates_upload">رفع قالب جديد</string>
+    <string name="filter_all">الكل</string>
+    <string name="filter_docs">مستندات</string>
+    <string name="filter_pptx">عروض PPTX</string>
+    <string name="filter_xlsx">جداول XLSX</string>
+    <string name="template_added_on">تاريخ الإضافة: %1$s</string>
+    <string name="template_preview">معاينة التنسيق</string>
+    <string name="template_set_default">تعيين كافتراضي</string>
+    <string name="template_delete">حذف القالب</string>
+    <string name="template_empty_title">لا توجد قوالب مرفوعة</string>
+    <string name="template_empty_desc">ارفع ملفاتك المرجعية بصيغة DOCX أو PPTX أو XLSX لتطبيق هويتك وخطوطك على المستندات المولدة.</string>
 
-    <string name="notebooklm_node">مركز المعرفة NotebookLM</string>
-    <string name="google_sync">مزامنة Google</string>
-    <string name="recent_work">المستندات الأخيرة</string>
-    <string name="view_all">عرض الكل</string>
+    <!-- Library Screen -->
+    <string name="library_title">المكتبة</string>
+    <string name="filter_documents">المستندات</string>
+    <string name="filter_presentations">العروض التقديمية</string>
+    <string name="filter_spreadsheets">الجداول المالية</string>
+    <string name="search_placeholder">البحث في الملفات…</string>
+    <string name="library_empty_title">لا توجد ملفات بعد</string>
+    <string name="library_empty_desc">اطلب من SmartBubble في المحادثة إنشاء خطابات، عروض، أو جداول بيانات.</string>
+    <string name="file_rename">إعادة التسمية</string>
+    <string name="file_delete">حذف</string>
+    <string name="file_open">فتح الملف</string>
+    <string name="file_share">مشاركة الملف</string>
 
-    <string name="open_word">فتح في Word</string>
-    <string name="open_ppt">فتح في PowerPoint</string>
-    <string name="open_excel">فتح في Excel</string>
-    <string name="export_pdf">تصدير PDF</string>
-    <string name="share_file">مشاركة</string>
-    <string name="save_library">حفظ في المكتبة</string>
-    <string name="copy_content">نسخ المحتوى</string>
+    <!-- Settings Screen -->
+    <string name="settings_title">الإعدادات</string>
+    <string name="settings_ai_providers">مزودو الذكاء الاصطناعي</string>
+    <string name="settings_ai_providers_desc">إدارة مزودي الذكاء الاصطناعي</string>
+    <string name="settings_add_provider">إضافة مزود</string>
+    <string name="settings_test_connection">اختبار الاتصال</string>
+    <string name="settings_set_default">تعيين كافتراضي</string>
+    <string name="settings_default_badge">افتراضي</string>
+    <string name="settings_delete">حذف</string>
+    <string name="settings_language">اللغة</string>
+    <string name="settings_theme">المظهر</string>
+    <string name="settings_about">حول SmartBubble</string>
+    <string name="theme_light">فاتح</string>
+    <string name="theme_dark">داكن</string>
+    <string name="theme_system">النظام</string>
 
-    <string name="mode_strict">تطابق تام</string>
-    <string name="mode_smart">ملاءمة ذكية</string>
-    <string name="mode_style">نمط فقط</string>
-
-    <string name="orchestrator_title">الموجه الذكي المركزي</string>
-    <string name="my_templates_title">قوالبي الشخصية</string>
-    <string name="voice_runtime">التفاعل الصوتي الذكي</string>
+    <string name="security_notice_title">تنبيه حماية بيانات الاعتماد على الجهاز</string>
+    <string name="security_notice_desc">يتم تشفير المفاتيح باستخدام Android Keystore محلياً على جهازك. بالنسبة لبيئات العمل المؤسسية، يُنصح بربط وسيط خادم محمي.</string>
 </resources>

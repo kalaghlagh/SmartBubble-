@@ -4,14 +4,16 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.ChatBubble
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -19,17 +21,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.ui.AppNavTab
-import com.example.ui.theme.BubbleCyan
-import com.example.ui.theme.BubblePurple
 
 @Composable
 fun SmartBubbleBottomNavBar(
@@ -40,120 +40,96 @@ fun SmartBubbleBottomNavBar(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(16.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-        tonalElevation = 8.dp
+            .shadow(12.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+        tonalElevation = 6.dp
     ) {
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.navigationBars)
-                .height(72.dp)
+                .height(64.dp)
                 .padding(horizontal = 8.dp),
-            contentAlignment = Alignment.Center
+            horizontalArrangement = Arrangement.SpaceAround,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Home
-                NavBarItem(
-                    label = stringResource(R.string.nav_home),
-                    icon = Icons.Default.GridView,
-                    isSelected = currentTab == AppNavTab.HOME,
-                    onClick = { onTabSelected(AppNavTab.HOME) },
-                    testTag = "nav_home"
-                )
+            // Chat
+            BottomNavItem(
+                label = stringResource(R.string.nav_chat),
+                selectedIcon = Icons.Filled.ChatBubble,
+                unselectedIcon = Icons.Outlined.ChatBubbleOutline,
+                isSelected = currentTab == AppNavTab.CHAT,
+                onClick = { onTabSelected(AppNavTab.CHAT) },
+                testTag = "nav_chat"
+            )
 
-                // Assistant
-                NavBarItem(
-                    label = stringResource(R.string.nav_assistant),
-                    icon = Icons.Default.AutoAwesome,
-                    isSelected = currentTab == AppNavTab.ASSISTANT,
-                    onClick = { onTabSelected(AppNavTab.ASSISTANT) },
-                    testTag = "nav_assistant"
-                )
+            // My Templates
+            BottomNavItem(
+                label = stringResource(R.string.nav_templates),
+                selectedIcon = Icons.Filled.Description,
+                unselectedIcon = Icons.Outlined.Description,
+                isSelected = currentTab == AppNavTab.TEMPLATES,
+                onClick = { onTabSelected(AppNavTab.TEMPLATES) },
+                testTag = "nav_templates"
+            )
 
-                // Central Floating Create FAB
-                Box(
-                    modifier = Modifier
-                        .offset(y = (-16).dp)
-                        .size(56.dp)
-                        .clip(CircleShape)
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(BubbleCyan, BubblePurple)
-                            )
-                        )
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = ripple(bounded = false, radius = 28.dp)
-                        ) {
-                            onTabSelected(AppNavTab.CREATE)
-                        }
-                        .testTag("nav_create_fab"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Create Document",
-                        tint = Color.Black,
-                        modifier = Modifier.size(30.dp)
-                    )
-                }
+            // Library
+            BottomNavItem(
+                label = stringResource(R.string.nav_library),
+                selectedIcon = Icons.Filled.Folder,
+                unselectedIcon = Icons.Outlined.Folder,
+                isSelected = currentTab == AppNavTab.LIBRARY,
+                onClick = { onTabSelected(AppNavTab.LIBRARY) },
+                testTag = "nav_library"
+            )
 
-                // Library
-                NavBarItem(
-                    label = stringResource(R.string.nav_library),
-                    icon = Icons.Default.FolderOpen,
-                    isSelected = currentTab == AppNavTab.LIBRARY,
-                    onClick = { onTabSelected(AppNavTab.LIBRARY) },
-                    testTag = "nav_library"
-                )
-
-                // Settings
-                NavBarItem(
-                    label = stringResource(R.string.nav_settings),
-                    icon = Icons.Default.Tune,
-                    isSelected = currentTab == AppNavTab.SETTINGS,
-                    onClick = { onTabSelected(AppNavTab.SETTINGS) },
-                    testTag = "nav_settings"
-                )
-            }
+            // Settings
+            BottomNavItem(
+                label = stringResource(R.string.nav_settings),
+                selectedIcon = Icons.Filled.Settings,
+                unselectedIcon = Icons.Outlined.Settings,
+                isSelected = currentTab == AppNavTab.SETTINGS,
+                onClick = { onTabSelected(AppNavTab.SETTINGS) },
+                testTag = "nav_settings"
+            )
         }
     }
 }
 
 @Composable
-private fun NavBarItem(
+private fun BottomNavItem(
     label: String,
-    icon: ImageVector,
+    selectedIcon: ImageVector,
+    unselectedIcon: ImageVector,
     isSelected: Boolean,
     onClick: () -> Unit,
     testTag: String
 ) {
     val activeColor = MaterialTheme.colorScheme.primary
-    val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
 
     Column(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = false, radius = 28.dp),
+                onClick = onClick
+            )
+            .padding(horizontal = 14.dp, vertical = 6.dp)
             .testTag(testTag),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Box(
             modifier = Modifier
-                .size(width = 44.dp, height = 28.dp)
+                .size(width = 48.dp, height = 28.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(if (isSelected) activeColor.copy(alpha = 0.18f) else Color.Transparent),
+                .background(if (isSelected) activeColor.copy(alpha = 0.16f) else Color.Transparent),
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = icon,
+                imageVector = if (isSelected) selectedIcon else unselectedIcon,
                 contentDescription = label,
                 tint = if (isSelected) activeColor else inactiveColor,
                 modifier = Modifier.size(20.dp)
@@ -163,6 +139,7 @@ private fun NavBarItem(
         Text(
             text = label,
             fontSize = 11.sp,
+            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (isSelected) activeColor else inactiveColor,
             style = MaterialTheme.typography.labelSmall
         )

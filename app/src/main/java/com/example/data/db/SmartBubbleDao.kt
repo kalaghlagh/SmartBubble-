@@ -3,7 +3,7 @@ package com.example.data.db
 import androidx.room.*
 import com.example.data.model.ChatMessageEntity
 import com.example.data.model.DocumentEntity
-import com.example.data.model.KnowledgeSourceEntity
+import com.example.data.model.ProviderEntity
 import com.example.data.model.TemplateEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -57,9 +57,6 @@ interface TemplateDao {
     @Query("SELECT * FROM templates WHERE isDefaultExcel = 1 LIMIT 1")
     suspend fun getDefaultExcelTemplate(): TemplateEntity?
 
-    @Query("SELECT * FROM templates WHERE isDefaultPdf = 1 LIMIT 1")
-    suspend fun getDefaultPdfTemplate(): TemplateEntity?
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTemplate(template: TemplateEntity)
 
@@ -74,18 +71,30 @@ interface TemplateDao {
 }
 
 @Dao
-interface KnowledgeDao {
-    @Query("SELECT * FROM knowledge_sources ORDER BY createdAt DESC")
-    fun getAllKnowledgeSources(): Flow<List<KnowledgeSourceEntity>>
+interface ProviderDao {
+    @Query("SELECT * FROM ai_providers ORDER BY isDefault DESC, createdAt ASC")
+    fun getAllProviders(): Flow<List<ProviderEntity>>
 
-    @Query("SELECT * FROM knowledge_sources WHERE id = :id")
-    suspend fun getKnowledgeSourceById(id: String): KnowledgeSourceEntity?
+    @Query("SELECT * FROM ai_providers WHERE isDefault = 1 LIMIT 1")
+    suspend fun getDefaultProvider(): ProviderEntity?
+
+    @Query("SELECT * FROM ai_providers WHERE id = :id")
+    suspend fun getProviderById(id: String): ProviderEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertKnowledgeSource(source: KnowledgeSourceEntity)
+    suspend fun insertProvider(provider: ProviderEntity)
+
+    @Update
+    suspend fun updateProvider(provider: ProviderEntity)
 
     @Delete
-    suspend fun deleteKnowledgeSource(source: KnowledgeSourceEntity)
+    suspend fun deleteProvider(provider: ProviderEntity)
+
+    @Query("UPDATE ai_providers SET isDefault = 0")
+    suspend fun clearDefault()
+
+    @Query("UPDATE ai_providers SET isDefault = 1 WHERE id = :id")
+    suspend fun setAsDefault(id: String)
 }
 
 @Dao

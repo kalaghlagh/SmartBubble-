@@ -2,15 +2,14 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,137 +25,219 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.model.DocumentEntity
 import com.example.ui.SmartBubbleViewModel
-import com.example.ui.theme.*
+import java.text.SimpleDateFormat
+import java.util.*
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     viewModel: SmartBubbleViewModel,
     modifier: Modifier = Modifier
 ) {
     val documents by viewModel.allDocuments.collectAsState()
-    val inspectedDoc by viewModel.selectedDocumentForInspection.collectAsState()
-
+    var selectedFilter by remember { mutableStateOf("All") }
     var searchQuery by remember { mutableStateOf("") }
-    var selectedFilter by remember { mutableStateOf("ALL") } // "ALL", "DOCX", "PPTX", "XLSX", "PDF", "FAVORITES"
+    var showSearchBar by remember { mutableStateOf(false) }
+
+    // Rename dialog state
+    var docToRename by remember { mutableStateOf<DocumentEntity?>(null) }
+    var renameInput by remember { mutableStateOf("") }
 
     val filteredDocs = documents.filter { doc ->
+        val matchesType = when (selectedFilter) {
+            "Documents" -> doc.fileType.equals("DOCX", ignoreCase = true)
+            "Presentations" -> doc.fileType.equals("PPTX", ignoreCase = true)
+            "Spreadsheets" -> doc.fileType.equals("XLSX", ignoreCase = true)
+            else -> true
+        }
         val matchesSearch = doc.title.contains(searchQuery, ignoreCase = true) ||
                 doc.summary.contains(searchQuery, ignoreCase = true)
-        val matchesFilter = when (selectedFilter) {
-            "ALL" -> true
-            "FAVORITES" -> doc.isFavorite
-            else -> doc.fileType == selectedFilter
-        }
-        matchesSearch && matchesFilter
+        matchesType && matchesSearch
     }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 16.dp)
     ) {
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Header
-        Row(
+        // Top Header matching mockup
+        Surface(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp
         ) {
             Column {
-                Text(
-                    text = "Document Library",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = "${documents.size} verified files in local executive storage",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF1D52D8)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Folder,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = stringResource(R.string.library_title),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = { showSearchBar = !showSearchBar },
+                            modifier = Modifier.testTag("library_search_toggle")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Search,
+                                contentDescription = "Search",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { /* More options */ },
+                            modifier = Modifier.testTag("library_more_options")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "Options",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                if (showSearchBar) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text(stringResource(R.string.search_placeholder)) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .testTag("library_search_field"),
+                        singleLine = true,
+                        leadingIcon = {
+                            Icon(imageVector = Icons.Default.Search, contentDescription = null)
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear")
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Filter Pills Row [All] [Documents] [Presentations] [Spreadsheets]
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            val filters = listOf(
+                "All" to stringResource(R.string.filter_all),
+                "Documents" to stringResource(R.string.filter_documents),
+                "Presentations" to stringResource(R.string.filter_presentations),
+                "Spreadsheets" to stringResource(R.string.filter_spreadsheets)
+            )
+
+            filters.forEach { (key, label) ->
+                val isSelected = selectedFilter == key
+                FilterChip(
+                    selected = isSelected,
+                    onClick = { selectedFilter = key },
+                    label = {
+                        Text(
+                            text = label,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                            fontSize = 13.sp
+                        )
+                    },
+                    shape = RoundedCornerShape(20.dp),
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                    ),
+                    modifier = Modifier.testTag("library_filter_$key")
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
-        // Search Bar
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            placeholder = { Text("Search documents, contracts, reports...", style = MaterialTheme.typography.bodySmall) },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-            trailingIcon = {
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { searchQuery = "" }) {
-                        Icon(Icons.Default.Clear, contentDescription = "Clear")
-                    }
-                }
-            },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("library_search_input"),
-            shape = RoundedCornerShape(12.dp)
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Filter Pills
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            FilterPill("All Files", isSelected = selectedFilter == "ALL") { selectedFilter = "ALL" }
-            FilterPill("Word (.docx)", isSelected = selectedFilter == "DOCX") { selectedFilter = "DOCX" }
-            FilterPill("PowerPoint (.pptx)", isSelected = selectedFilter == "PPTX") { selectedFilter = "PPTX" }
-            FilterPill("Excel (.xlsx)", isSelected = selectedFilter == "XLSX") { selectedFilter = "XLSX" }
-            FilterPill("PDF Docs", isSelected = selectedFilter == "PDF") { selectedFilter = "PDF" }
-            FilterPill("Favorites", isSelected = selectedFilter == "FAVORITES") { selectedFilter = "FAVORITES" }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Document Cards List
+        // Document List
         if (filteredDocs.isEmpty()) {
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    .padding(24.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
                         imageVector = Icons.Default.FolderOpen,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.outline,
-                        modifier = Modifier.size(48.dp)
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.size(64.dp)
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "No documents found",
+                        text = stringResource(R.string.library_empty_title),
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = stringResource(R.string.library_empty_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp
                     )
                 }
             }
         } else {
             LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 96.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(filteredDocs, key = { it.id }) { doc ->
-                    LibraryDocCard(
+                    LibraryDocumentItem(
                         doc = doc,
                         onOpen = { viewModel.openDocument(doc) },
-                        onExportPdf = { viewModel.exportDocumentAsPdf(doc) },
                         onShare = { viewModel.shareDocument(doc) },
-                        onInspect = { viewModel.inspectDocument(doc) },
-                        onToggleFavorite = { viewModel.toggleFavorite(doc) },
+                        onExportPdf = { viewModel.exportDocumentAsPdf(doc) },
+                        onRename = {
+                            docToRename = doc
+                            renameInput = doc.title
+                        },
                         onDelete = { viewModel.deleteDocument(doc) }
                     )
                 }
@@ -164,62 +245,36 @@ fun LibraryScreen(
         }
     }
 
-    // Inspect Raw Text Modal
-    if (inspectedDoc != null) {
-        val currentDoc = inspectedDoc!!
+    // Rename dialog
+    docToRename?.let { doc ->
         AlertDialog(
-            onDismissRequest = { viewModel.clearInspection() },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Description,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = currentDoc.title, style = MaterialTheme.typography.titleMedium)
-                }
-            },
+            onDismissRequest = { docToRename = null },
+            title = { Text(stringResource(R.string.file_rename)) },
             text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 340.dp)
-                ) {
-                    Text(
-                        text = "Metadata: ${currentDoc.fileType} • ${currentDoc.fileSize / 1024} KB • Orchestrator: ${currentDoc.providerUsed}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    HorizontalDivider()
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = currentDoc.textContent.ifBlank { "(Binary document created and verified)" },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
+                OutlinedTextField(
+                    value = renameInput,
+                    onValueChange = { renameInput = it },
+                    label = { Text("File Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             },
             confirmButton = {
-                Button(onClick = {
-                    viewModel.deliveryManager.deliverBoth(
-                        file = java.io.File(currentDoc.filePath),
-                        textContent = currentDoc.textContent,
-                        mimeType = "text/plain",
-                        title = currentDoc.title
-                    )
-                    viewModel.clearInspection()
-                }) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Copy Text")
+                Button(
+                    onClick = {
+                        val newTitle = renameInput.trim()
+                        if (newTitle.isNotBlank()) {
+                            viewModel.renameDocument(doc, newTitle)
+                        }
+                        docToRename = null
+                    }
+                ) {
+                    Text("Save")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.clearInspection() }) {
-                    Text("Close")
+                TextButton(onClick = { docToRename = null }) {
+                    Text("Cancel")
                 }
             }
         )
@@ -227,137 +282,165 @@ fun LibraryScreen(
 }
 
 @Composable
-private fun FilterPill(
-    label: String,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    Surface(
-        onClick = onClick,
-        shape = CircleShape,
-        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
-        modifier = Modifier.height(32.dp)
-    ) {
-        Box(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-            )
-        }
-    }
-}
-
-@Composable
-private fun LibraryDocCard(
+fun LibraryDocumentItem(
     doc: DocumentEntity,
     onOpen: () -> Unit,
-    onExportPdf: () -> Unit,
     onShare: () -> Unit,
-    onInspect: () -> Unit,
-    onToggleFavorite: () -> Unit,
+    onExportPdf: () -> Unit,
+    onRename: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val (icon, color) = when (doc.fileType) {
-        "DOCX" -> Icons.Default.Description to WordBlue
-        "PPTX" -> Icons.Default.Slideshow to PptOrange
-        "XLSX" -> Icons.Default.TableChart to ExcelGreen
-        else -> Icons.Default.PictureAsPdf to PdfRed
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    val formattedDate = remember(doc.createdAt) {
+        val sdf = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
+        sdf.format(Date(doc.createdAt))
     }
 
-    Card(
+    val badgeColor = when (doc.fileType.uppercase()) {
+        "DOCX" -> Color(0xFF1D52D8)
+        "PPTX" -> Color(0xFFE05D26)
+        "XLSX" -> Color(0xFF107C41)
+        else -> Color(0xFFD83B01)
+    }
+
+    val badgeLetter = when (doc.fileType.uppercase()) {
+        "DOCX" -> "W"
+        "PPTX" -> "P"
+        "XLSX" -> "X"
+        else -> "PDF"
+    }
+
+    val sizeFormatted = remember(doc.fileSize) {
+        if (doc.fileSize >= 1024 * 1024) {
+            String.format(Locale.US, "%.1f MB", doc.fileSize / (1024.0 * 1024.0))
+        } else {
+            "${doc.fileSize / 1024} KB"
+        }
+    }
+
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onOpen)
             .testTag("library_doc_${doc.id}"),
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer
-        )
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.SpaceBetween
+            // Square Badge Icon matching mockup
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(badgeColor),
+                contentAlignment = Alignment.Center
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(color.copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = doc.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "${doc.fileSize / 1024} KB • ${doc.pageOrSlideCount} Pages • ${doc.providerUsed}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                IconButton(onClick = onToggleFavorite, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        imageVector = if (doc.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        contentDescription = "Favorite",
-                        tint = if (doc.isFavorite) Color.Red else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
+                Text(
+                    text = badgeLetter,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
             }
 
-            // Action row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
+            Spacer(modifier = Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = doc.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                    text = "$formattedDate • $sizeFormatted",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Direct Share Button matching mockup
+            IconButton(
+                onClick = onShare,
+                modifier = Modifier.testTag("share_doc_${doc.id}")
             ) {
-                TextButton(onClick = onInspect, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                    Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Inspect", style = MaterialTheme.typography.labelSmall)
-                }
-                TextButton(onClick = onShare, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Share", style = MaterialTheme.typography.labelSmall)
-                }
-                TextButton(onClick = onExportPdf, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(14.dp), tint = PdfRed)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("PDF", style = MaterialTheme.typography.labelSmall)
-                }
-                Button(
-                    onClick = onOpen,
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    modifier = Modifier.height(32.dp)
+                Icon(
+                    imageVector = Icons.Outlined.Share,
+                    contentDescription = "Share",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // 3-dots Menu
+            Box {
+                IconButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier.testTag("menu_doc_${doc.id}")
                 ) {
-                    Text("Open", style = MaterialTheme.typography.labelSmall)
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "More",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.file_open)) },
+                        leadingIcon = { Icon(Icons.Default.Launch, contentDescription = null) },
+                        onClick = {
+                            menuExpanded = false
+                            onOpen()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.file_share)) },
+                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                        onClick = {
+                            menuExpanded = false
+                            onShare()
+                        }
+                    )
+                    if (doc.fileType != "PDF") {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.chat_export_pdf)) },
+                            leadingIcon = { Icon(Icons.Default.PictureAsPdf, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onExportPdf()
+                            }
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.file_rename)) },
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                        onClick = {
+                            menuExpanded = false
+                            onRename()
+                        }
+                    )
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.file_delete), color = MaterialTheme.colorScheme.error) },
+                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                        onClick = {
+                            menuExpanded = false
+                            onDelete()
+                        }
+                    )
                 }
             }
         }

@@ -6,23 +6,23 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.example.data.model.ChatMessageEntity
 import com.example.data.model.DocumentEntity
-import com.example.data.model.KnowledgeSourceEntity
+import com.example.data.model.ProviderEntity
 import com.example.data.model.TemplateEntity
 
 @Database(
     entities = [
         DocumentEntity::class,
         TemplateEntity::class,
-        KnowledgeSourceEntity::class,
+        ProviderEntity::class,
         ChatMessageEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class SmartBubbleDatabase : RoomDatabase() {
     abstract fun documentDao(): DocumentDao
     abstract fun templateDao(): TemplateDao
-    abstract fun knowledgeDao(): KnowledgeDao
+    abstract fun providerDao(): ProviderDao
     abstract fun chatDao(): ChatDao
 
     companion object {
@@ -35,7 +35,7 @@ abstract class SmartBubbleDatabase : RoomDatabase() {
                     context.applicationContext,
                     SmartBubbleDatabase::class.java,
                     "smart_bubble_db"
-                ).fallbackToDestructiveMigration().build()
+                ).fallbackToDestructiveMigration(true).build()
                 INSTANCE = instance
                 instance
             }

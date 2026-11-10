@@ -79,8 +79,28 @@ class CentralAiOrchestrator(
             _currentState.value = TaskLifecycleState.ANALYZING
             _statusMessage.value = "Central Orchestrator analyzing intent and planning pipeline..."
 
-            val detectedFormat = forceFormat ?: detectDesiredFormat(userPrompt)
-            val template = selectedTemplate ?: loadDefaultTemplateForFormat(detectedFormat)
+            val isDocReq = forceFormat != null || isDocumentCreationRequest(userPrompt)
+            val detectedFormat = if (isDocReq) (forceFormat ?: detectDesiredFormat(userPrompt)) else null
+            val template = if (detectedFormat != null) {
+                selectedTemplate ?: loadDefaultTemplateForFormat(detectedFormat)
+            } else TemplateProfile.defaultProfile()
+
+            if (detectedFormat == null) {
+                // Pure conversational response
+                val isArabic = userPrompt.any { it in '\u0600'..'\u06FF' }
+                val isFrench = userPrompt.contains("bonjour", ignoreCase = true) || userPrompt.contains("merci", ignoreCase = true)
+                val reply = when {
+                    isArabic -> "بالطبع! إليك ملخص حول استفسارك:\nالذكاء الاصطناعي هو مجال متقدم في علوم الحاسوب يهدف إلى تطوير خوارزميات وأنظمة قادرة على محاكاة القدرات الذهنية البشرية، مثل التعلم والاستنتاج وصياغة المستندات التلقائية. يمكنك أيضاً أن تطلب مني إنشاء ملف Word أو PowerPoint أو Excel بناءً على أي موضوع."
+                    isFrench -> "Certainement ! Voici une réponse détaillée à votre question. SmartBubble peut également compiler des documents Word, des présentations PowerPoint ou des feuilles Excel sur mesure avec vos modèles personnels."
+                    else -> "I'd be glad to help with that. You can ask me conversational questions or prompt me to draft professional letters, executive reports, PowerPoint decks, or financial Excel sheets using your uploaded templates."
+                }
+                _currentState.value = TaskLifecycleState.COMPLETED
+                _statusMessage.value = "Completed successfully"
+                return@withContext GenerationTaskResult(
+                    state = TaskLifecycleState.COMPLETED,
+                    conversationalReply = reply
+                )
+            }
 
             // Stage 3: GENERATING structured content schema
             _currentState.value = TaskLifecycleState.GENERATING
@@ -125,19 +145,11 @@ class CentralAiOrchestrator(
                     pageOrSlideCount = xlsxModel.sheets.size
                     wordCount = textContent.split("\\s+".toRegex()).size
                 }
-                "PDF" -> {
+                else -> {
                     val wordModel = synthesizeWordModel(userPrompt, template)
                     pdfEngine.generatePdf(wordModel, outputFile, template)
                     textContent = extractTextFromWord(wordModel)
                     pageOrSlideCount = 2
-                    wordCount = textContent.split("\\s+".toRegex()).size
-                }
-                else -> {
-                    // Chat only if prompt is purely conversational and no doc requested
-                    val wordModel = synthesizeWordModel(userPrompt, template)
-                    docxEngine.generateDocx(wordModel, outputFile, template)
-                    textContent = extractTextFromWord(wordModel)
-                    pageOrSlideCount = 1
                     wordCount = textContent.split("\\s+".toRegex()).size
                 }
             }
@@ -216,7 +228,7 @@ class CentralAiOrchestrator(
             "DOCX" -> tDao.getDefaultWordTemplate()
             "PPTX" -> tDao.getDefaultPptTemplate()
             "XLSX" -> tDao.getDefaultExcelTemplate()
-            else -> tDao.getDefaultPdfTemplate()
+            else -> tDao.getDefaultWordTemplate()
         }
         return if (defaultEntity != null) {
             TemplateProfile.fromJson(defaultEntity.profileJson)
@@ -225,11 +237,23 @@ class CentralAiOrchestrator(
         }
     }
 
+    private fun isDocumentCreationRequest(prompt: String): Boolean {
+        val lower = prompt.lowercase()
+        val keywords = listOf(
+            "create", "draft", "generate", "write", "prepare", "make", "letter",
+            "report", "doc", "slide", "presentation", "deck", "spreadsheet",
+            "sheet", "excel", "table", "contract", "proposal", "invoice", "summary",
+            "اكتب", "أنشئ", "اصنع", "تقرير", "خطاب", "عرض", "جدول", "مستند", "ملف", "اتفاقية", "عقد", "ميزانية",
+            "rédiger", "créer", "générer", "lettre", "rapport", "présentation", "feuille"
+        )
+        return keywords.any { lower.contains(it) }
+    }
+
     private fun detectDesiredFormat(prompt: String): String {
         val lower = prompt.lowercase()
         return when {
             lower.contains("slide") || lower.contains("presentation") || lower.contains("deck") || lower.contains("pitch") || lower.contains("powerpoint") || lower.contains("pptx") -> "PPTX"
-            lower.contains("excel") || lower.contains("sheet") || lower.contains("spreadsheet") || lower.contains("budget") || lower.contains("table") || lower.contains("xlsx") || lower.contains("invoice") && lower.contains("calc") -> "XLSX"
+            lower.contains("excel") || lower.contains("sheet") || lower.contains("spreadsheet") || lower.contains("budget") || lower.contains("table") || lower.contains("xlsx") || (lower.contains("invoice") && lower.contains("calc")) -> "XLSX"
             lower.contains("pdf") || lower.contains("print") -> "PDF"
             else -> "DOCX" // Default office document
         }

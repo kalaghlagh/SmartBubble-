@@ -1,6 +1,6 @@
 {
-  "name": "Smart Bubble",
-  "description": "AI Office & Content Creation Assistant — Generate Word, PowerPoint, Excel, and PDF files with multi-provider AI orchestration and personal templates.",
+  "name": "SmartBubble",
+  "description": "Personal AI-powered content creation assistant — communicate with AI providers, upload Office templates, and generate editable Word, PowerPoint, Excel, and PDF documents.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
