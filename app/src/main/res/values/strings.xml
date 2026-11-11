@@ -190,4 +190,7 @@
     <string name="template_preview_header">Header</string>
     <string name="template_preview_footer">Footer</string>
     <string name="template_preview_structure_only">Structure preview (from template profile)</string>
+    <string name="msg_operation_failed">Something went wrong: %1$s</string>
+    <string name="msg_file_not_found">The file for this document could not be found.</string>
+    <string name="msg_pdf_export_failed">PDF export failed: %1$s</string>
 </resources>

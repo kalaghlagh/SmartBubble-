@@ -190,4 +190,7 @@
     <string name="template_preview_header">En-tête</string>
     <string name="template_preview_footer">Pied de page</string>
     <string name="template_preview_structure_only">Aperçu de structure (du profil du modèle)</string>
+    <string name="msg_operation_failed">Une erreur est survenue : %1$s</string>
+    <string name="msg_file_not_found">Le fichier de ce document est introuvable.</string>
+    <string name="msg_pdf_export_failed">Échec de l’export PDF : %1$s</string>
 </resources>

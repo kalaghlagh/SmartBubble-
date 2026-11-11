@@ -36,6 +36,13 @@ interface DocumentDao {
 
     @Query("DELETE FROM documents WHERE id = :id")
     suspend fun deleteDocumentById(id: String)
+
+    @Query("SELECT COUNT(*) FROM documents")
+    suspend fun countDocuments(): Int
+
+    /** Number of Library entries that point at the same physical file (legacy installs may share). */
+    @Query("SELECT COUNT(*) FROM documents WHERE filePath = :filePath")
+    suspend fun countDocumentsWithPath(filePath: String): Int
 }
 
 @Dao
@@ -78,6 +85,24 @@ interface TemplateDao {
 
     @Query("DELETE FROM templates WHERE id = :id")
     suspend fun deleteTemplateById(id: String)
+
+    @Query("SELECT * FROM templates")
+    suspend fun getAllTemplatesOnce(): List<TemplateEntity>
+
+    @Query("SELECT COUNT(*) FROM templates")
+    suspend fun countTemplates(): Int
+
+    @Query("UPDATE templates SET isDefaultWord = :isDefault WHERE id = :id")
+    suspend fun setDefaultWordFlag(id: String, isDefault: Boolean)
+
+    @Query("UPDATE templates SET isDefaultPpt = :isDefault WHERE id = :id")
+    suspend fun setDefaultPptFlag(id: String, isDefault: Boolean)
+
+    @Query("UPDATE templates SET isDefaultExcel = :isDefault WHERE id = :id")
+    suspend fun setDefaultExcelFlag(id: String, isDefault: Boolean)
+
+    @Query("UPDATE templates SET fileSize = :fileSize WHERE id = :id")
+    suspend fun updateFileSize(id: String, fileSize: Long)
 }
 
 @Dao
@@ -105,6 +130,9 @@ interface ProviderDao {
 
     @Query("UPDATE ai_providers SET isDefault = 1 WHERE id = :id")
     suspend fun setAsDefault(id: String)
+
+    @Query("SELECT COUNT(*) FROM ai_providers")
+    suspend fun countProviders(): Int
 }
 
 @Dao
@@ -120,6 +148,9 @@ interface ChatDao {
 
     @Query("DELETE FROM chat_messages WHERE sessionId = :sessionId")
     suspend fun deleteMessagesBySessionId(sessionId: String)
+
+    @Query("SELECT COUNT(*) FROM chat_messages")
+    suspend fun countMessages(): Int
 }
 
 @Dao
@@ -144,4 +175,7 @@ interface ConversationDao {
 
     @Query("DELETE FROM conversations WHERE id = :id")
     suspend fun deleteConversationById(id: String)
+
+    @Query("SELECT COUNT(*) FROM conversations")
+    suspend fun countConversations(): Int
 }

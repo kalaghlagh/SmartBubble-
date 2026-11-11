@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.core.security.KeystoreHelper
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "smart_bubble_settings")
@@ -41,6 +42,8 @@ class PreferencesManager(private val context: Context) {
         val KEY_CUSTOM_ENDPOINT = stringPreferencesKey("custom_endpoint_url")
         val KEY_ENC_CUSTOM = stringPreferencesKey("enc_key_custom")
         val KEY_ACTIVE_CONVERSATION_ID = stringPreferencesKey("active_conversation_id")
+        // One-time sample data seeding marker (never reset, so deleted samples are never recreated)
+        val KEY_SAMPLE_DATA_SEEDED = booleanPreferencesKey("sample_data_seeded_v1")
     }
 
     val defaultProvider: Flow<String> = context.dataStore.data.map { prefs ->
@@ -93,6 +96,13 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun setActiveConversationId(id: String) {
         context.dataStore.edit { it[KEY_ACTIVE_CONVERSATION_ID] = id }
+    }
+
+    suspend fun isSampleDataSeeded(): Boolean =
+        context.dataStore.data.first()[KEY_SAMPLE_DATA_SEEDED] ?: false
+
+    suspend fun markSampleDataSeeded() {
+        context.dataStore.edit { it[KEY_SAMPLE_DATA_SEEDED] = true }
     }
 
     suspend fun setDefaultProvider(provider: String) {

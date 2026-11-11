@@ -190,4 +190,7 @@
     <string name="template_preview_header">رأس الصفحة</string>
     <string name="template_preview_footer">تذييل الصفحة</string>
     <string name="template_preview_structure_only">معاينة البنية (من مواصفات القالب)</string>
+    <string name="msg_operation_failed">حدث خطأ: %1$s</string>
+    <string name="msg_file_not_found">تعذّر العثور على ملف هذا المستند.</string>
+    <string name="msg_pdf_export_failed">فشل تصدير PDF: %1$s</string>
 </resources>

@@ -2,8 +2,10 @@ package com.example.ui
 
 import android.app.Application
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.room.withTransaction
 import com.example.R
 import com.example.ai.orchestrator.CentralAiOrchestrator
 import com.example.ai.orchestrator.TaskLifecycleState
@@ -11,6 +13,8 @@ import com.example.ai.providers.AiConnectionTester
 import com.example.core.delivery.DeliveryManager
 import com.example.core.security.KeystoreHelper
 import com.example.core.storage.PreferencesManager
+import com.example.core.storage.PreferencesSeedFlagStore
+import com.example.core.storage.SampleDataSeeder
 import com.example.core.voice.VoiceAssistantManager
 import com.example.core.voice.VoiceState
 import com.example.data.db.SmartBubbleDatabase
@@ -28,10 +32,12 @@ import com.example.ocr.ScannedDocumentStructureReconstructor
 import com.example.document.model.ScannedPageData
 import com.example.document.model.ScannedDocumentReviewState
 import com.example.document.docx.DocxEngine
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
@@ -46,6 +52,10 @@ enum class AppNavTab {
 
 class SmartBubbleViewModel(application: Application) : AndroidViewModel(application) {
 
+    private companion object {
+        const val TAG = "SmartBubbleViewModel"
+    }
+
     private val context = application.applicationContext
     val database = SmartBubbleDatabase.getDatabase(context)
     val preferences = PreferencesManager(context)
@@ -54,6 +64,11 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     val templateAnalysisEngine = TemplateAnalysisEngine()
     val templatePreviewEngine = TemplatePreviewEngine()
     val ocrEngine = DocumentOcrEngine(context, orchestrator)
+    private val sampleDataSeeder = SampleDataSeeder(
+        filesDir = context.filesDir,
+        database = database,
+        flagStore = PreferencesSeedFlagStore(preferences)
+    )
 
     // Template Preview State
     private val _selectedPreviewTemplate = MutableStateFlow<TemplateEntity?>(null)
@@ -135,12 +150,21 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     val appTheme = preferences.appTheme.stateIn(viewModelScope, SharingStarted.Eagerly, "dark")
 
     init {
-        seedInitialDataIfNeeded()
-        restoreActiveConversation()
+        viewModelScope.launch {
+            try {
+                // One-time sample seeding + consistency maintenance, off the main thread.
+                withContext(Dispatchers.IO) { sampleDataSeeder.runStartupTasks() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Start-up data maintenance failed", e)
+            }
+            restoreActiveConversation()
+        }
     }
 
-    private fun restoreActiveConversation() {
-        viewModelScope.launch {
+    private suspend fun restoreActiveConversation() {
+        try {
             preferences.activeConversationId.firstOrNull()?.let { savedId ->
                 if (savedId.isNotBlank()) {
                     val exists = database.conversationDao().getConversationById(savedId)
@@ -149,207 +173,10 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     }
                 }
             }
-        }
-    }
-
-    private fun seedInitialDataIfNeeded() {
-        viewModelScope.launch {
-            // Seed initial AI Providers if empty
-            val existingProvider = database.providerDao().getProviderById("p-openai")
-            if (existingProvider == null) {
-                database.providerDao().insertProvider(
-                    ProviderEntity(
-                        id = "p-openai",
-                        name = "OpenAI",
-                        providerType = "OpenAI",
-                        baseUrl = "https://api.openai.com/v1",
-                        encryptedApiKey = KeystoreHelper.encrypt("sk-live-smartbubble-encrypted"),
-                        modelName = "GPT-4o",
-                        isDefault = true,
-                        status = "Connected (28ms)"
-                    )
-                )
-                database.providerDao().insertProvider(
-                    ProviderEntity(
-                        id = "p-gemini",
-                        name = "Google Gemini",
-                        providerType = "Google Gemini",
-                        baseUrl = "https://generativelanguage.googleapis.com",
-                        encryptedApiKey = KeystoreHelper.encrypt("gemini-smartbubble-encrypted"),
-                        modelName = "Gemini 1.5 Pro",
-                        isDefault = false,
-                        status = "Ready"
-                    )
-                )
-                database.providerDao().insertProvider(
-                    ProviderEntity(
-                        id = "p-claude",
-                        name = "Anthropic Claude",
-                        providerType = "Anthropic Claude",
-                        baseUrl = "https://api.anthropic.com/v1",
-                        encryptedApiKey = KeystoreHelper.encrypt("sk-ant-smartbubble-encrypted"),
-                        modelName = "Claude 3.5 Sonnet",
-                        isDefault = false,
-                        status = "Ready"
-                    )
-                )
-            }
-
-            // Ensure templates directory exists
-            val templateDir = File(context.filesDir, "templates").apply { mkdirs() }
-
-            // Seed initial templates matching mockup with genuine reference files
-            val t1 = database.templateDao().getTemplateById("tmpl-company-report")
-            if (t1 == null) {
-                val profileDoc = TemplateProfile.defaultProfile().copy(
-                    templateId = "tmpl-company-report",
-                    name = "Company Report Template",
-                    originalFileType = "DOCX",
-                    primaryColorHex = "#1D52D8",
-                    headingFont = "Segoe UI Semibold"
-                )
-                val docxTemplateFile = File(templateDir, "Company_Report_Template.docx")
-                if (!docxTemplateFile.exists()) {
-                    val sampleModel = com.example.document.model.WordDocumentModel(
-                        title = "Corporate Executive Report",
-                        subtitle = "Standard Enterprise Template Format",
-                        sections = listOf(
-                            com.example.document.model.WordSection(
-                                heading = "Executive Summary",
-                                paragraphs = listOf("This reference document defines standard margins, header/footer branding, and typography for enterprise reports.")
-                            )
-                        )
-                    )
-                    com.example.document.docx.DocxEngine().generateDocx(sampleModel, docxTemplateFile, profileDoc)
-                }
-
-                database.templateDao().insertTemplate(
-                    TemplateEntity(
-                        id = profileDoc.templateId,
-                        name = profileDoc.name,
-                        fileType = "DOCX",
-                        originalFilePath = docxTemplateFile.absolutePath,
-                        fileSize = if (docxTemplateFile.exists()) docxTemplateFile.length() else 250880L,
-                        profileJson = profileDoc.toJson(),
-                        isDefaultWord = true,
-                        compatibilityStatus = "Compatible",
-                        thumbnailColorHex = "#1D52D8"
-                    )
-                )
-
-                val profilePpt = TemplateProfile.defaultProfile().copy(
-                    templateId = "tmpl-presentation-theme",
-                    name = "Presentation Theme",
-                    originalFileType = "PPTX",
-                    primaryColorHex = "#E05D26"
-                )
-                val pptxTemplateFile = File(templateDir, "Presentation_Theme.pptx")
-                if (!pptxTemplateFile.exists()) {
-                    val samplePpt = com.example.document.model.PresentationModel(
-                        title = "Presentation Theme Deck",
-                        subtitle = "16:9 Standard Corporate Slide Master",
-                        slides = listOf(
-                            com.example.document.model.SlideModel(
-                                title = "Theme Architecture",
-                                bulletPoints = listOf("Master layout placeholders", "Brand color accents")
-                            )
-                        )
-                    )
-                    com.example.document.pptx.PptxEngine().generatePptx(samplePpt, pptxTemplateFile, profilePpt)
-                }
-
-                database.templateDao().insertTemplate(
-                    TemplateEntity(
-                        id = profilePpt.templateId,
-                        name = profilePpt.name,
-                        fileType = "PPTX",
-                        originalFilePath = pptxTemplateFile.absolutePath,
-                        fileSize = if (pptxTemplateFile.exists()) pptxTemplateFile.length() else 2202009L,
-                        profileJson = profilePpt.toJson(),
-                        isDefaultPpt = true,
-                        compatibilityStatus = "Compatible",
-                        thumbnailColorHex = "#E05D26"
-                    )
-                )
-
-                val profileXlsx = TemplateProfile.defaultProfile().copy(
-                    templateId = "tmpl-business-data",
-                    name = "Business Data Template",
-                    originalFileType = "XLSX",
-                    primaryColorHex = "#107C41"
-                )
-                val xlsxTemplateFile = File(templateDir, "Business_Data_Template.xlsx")
-                if (!xlsxTemplateFile.exists()) {
-                    val sampleXlsx = com.example.document.model.SpreadsheetModel(
-                        workbookTitle = "Business Data Workbook",
-                        sheets = listOf(
-                            com.example.document.model.SheetModel(
-                                name = "Data Summary",
-                                headers = listOf("Category", "Target", "Actual", "Performance"),
-                                rows = listOf(
-                                    listOf("Revenue", 100000, 105000, "+5%"),
-                                    listOf("Efficiency", 95, 98, "+3%")
-                                )
-                            )
-                        )
-                    )
-                    com.example.document.xlsx.XlsxEngine().generateXlsx(sampleXlsx, xlsxTemplateFile, profileXlsx)
-                }
-
-                database.templateDao().insertTemplate(
-                    TemplateEntity(
-                        id = profileXlsx.templateId,
-                        name = profileXlsx.name,
-                        fileType = "XLSX",
-                        originalFilePath = xlsxTemplateFile.absolutePath,
-                        fileSize = if (xlsxTemplateFile.exists()) xlsxTemplateFile.length() else 184320L,
-                        profileJson = profileXlsx.toJson(),
-                        isDefaultExcel = true,
-                        compatibilityStatus = "Compatible",
-                        thumbnailColorHex = "#107C41"
-                    )
-                )
-            }
-
-            // Seed initial conversation entity
-            val existingConv = database.conversationDao().getConversationById("session-smartbubble")
-            if (existingConv == null) {
-                database.conversationDao().insertConversation(
-                    ConversationEntity(
-                        id = "session-smartbubble",
-                        title = "تقرير الذكاء الاصطناعي",
-                        lastMessagePreview = "بالطبع! إليك تقرير مختصر عن الذكاء الاصطناعي...",
-                        updatedAt = System.currentTimeMillis() - 120000,
-                        createdAt = System.currentTimeMillis() - 180000
-                    )
-                )
-            }
-
-            // Seed initial messages for session-smartbubble
-            val existingChat = database.chatDao().getMessagesForSession("session-smartbubble").firstOrNull()
-            if (existingChat.isNullOrEmpty()) {
-                val msg1 = ChatMessageEntity(
-                    id = "chat-seed-1",
-                    sessionId = "session-smartbubble",
-                    isUser = true,
-                    content = "اكتب لي تقريراً مختصراً عن الذكاء الاصطناعي",
-                    timestamp = System.currentTimeMillis() - 180000
-                )
-                database.chatDao().insertMessage(msg1)
-
-                val msg2 = ChatMessageEntity(
-                    id = "chat-seed-2",
-                    sessionId = "session-smartbubble",
-                    isUser = false,
-                    content = "بالطبع! إليك تقرير مختصر عن الذكاء الاصطناعي:\n\nالذكاء الاصطناعي هو مجال من علوم الحاسوب يهدف إلى تطوير أنظمة قادرة على محاكاة الذكاء البشري مثل التعلم والاستنتاج واتخاذ القرار، مع إمكانية تحويل الأفكار إلى مستندات مكتبية احترافية مثل Word و PowerPoint و Excel.",
-                    timestamp = System.currentTimeMillis() - 120000,
-                    attachedDocId = "doc-project-summary",
-                    attachedDocTitle = "Project Summary.pdf",
-                    attachedDocType = "PDF",
-                    orchestratorNote = "Orchestrator Verified"
-                )
-                database.chatDao().insertMessage(msg2)
-            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore active conversation", e)
         }
     }
 
@@ -606,25 +433,30 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         if (!isUpdatingDefault.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
-                when (template.fileType.uppercase()) {
-                    "DOCX" -> {
-                        database.templateDao().clearDefaultWord()
-                        database.templateDao().updateTemplate(template.copy(isDefaultWord = true))
-                    }
-                    "PPTX" -> {
-                        database.templateDao().clearDefaultPpt()
-                        database.templateDao().updateTemplate(template.copy(isDefaultPpt = true))
-                    }
-                    "XLSX" -> {
-                        database.templateDao().clearDefaultExcel()
-                        database.templateDao().updateTemplate(template.copy(isDefaultExcel = true))
-                    }
-                    else -> {
-                        database.templateDao().clearDefaultWord()
-                        database.templateDao().updateTemplate(template.copy(isDefaultWord = true))
+                val dao = database.templateDao()
+                // Clear + set in one transaction so a type can never end up with two defaults.
+                // Targeted flag updates avoid overwriting other fields with a stale UI snapshot.
+                database.withTransaction {
+                    when (template.fileType.uppercase()) {
+                        "PPTX" -> {
+                            dao.clearDefaultPpt()
+                            dao.setDefaultPptFlag(template.id, true)
+                        }
+                        "XLSX" -> {
+                            dao.clearDefaultExcel()
+                            dao.setDefaultExcelFlag(template.id, true)
+                        }
+                        else -> { // "DOCX" and any other type (unchanged behaviour)
+                            dao.clearDefaultWord()
+                            dao.setDefaultWordFlag(template.id, true)
+                        }
                     }
                 }
                 _snackBarMessage.value = context.getString(R.string.msg_template_set_default, template.name, template.fileType)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportError("setDefaultTemplate", e)
             } finally {
                 isUpdatingDefault.set(false)
             }
@@ -635,14 +467,17 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         if (!isUpdatingDefault.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
-                val updated = when (template.fileType.uppercase()) {
-                    "DOCX" -> template.copy(isDefaultWord = false)
-                    "PPTX" -> template.copy(isDefaultPpt = false)
-                    "XLSX" -> template.copy(isDefaultExcel = false)
-                    else -> template.copy(isDefaultWord = false)
+                val dao = database.templateDao()
+                when (template.fileType.uppercase()) {
+                    "PPTX" -> dao.setDefaultPptFlag(template.id, false)
+                    "XLSX" -> dao.setDefaultExcelFlag(template.id, false)
+                    else -> dao.setDefaultWordFlag(template.id, false)
                 }
-                database.templateDao().updateTemplate(updated)
                 _snackBarMessage.value = context.getString(R.string.msg_template_removed_default, template.name)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportError("removeDefaultTemplate", e)
             } finally {
                 isUpdatingDefault.set(false)
             }
@@ -1085,6 +920,15 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 _isGenerating.value = false
             }
         }
+    }
+
+    /** Logs an unexpected failure and shows the existing snackbar feedback instead of crashing. */
+    private fun reportError(operation: String, e: Throwable) {
+        Log.e(TAG, "$operation failed", e)
+        _snackBarMessage.value = context.getString(
+            R.string.msg_operation_failed,
+            e.message ?: e.javaClass.simpleName
+        )
     }
 
     fun clearSnackBar() {
