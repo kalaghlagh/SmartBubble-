@@ -40,6 +40,10 @@ interface DocumentDao {
     @Query("SELECT COUNT(*) FROM documents")
     suspend fun countDocuments(): Int
 
+    /** Renames only this Library entry; its physical file and other entries are untouched. */
+    @Query("UPDATE documents SET title = :title WHERE id = :id")
+    suspend fun updateTitle(id: String, title: String)
+
     /** Number of Library entries that point at the same physical file (legacy installs may share). */
     @Query("SELECT COUNT(*) FROM documents WHERE filePath = :filePath")
     suspend fun countDocumentsWithPath(filePath: String): Int

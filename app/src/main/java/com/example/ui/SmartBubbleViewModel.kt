@@ -12,6 +12,7 @@ import com.example.ai.orchestrator.TaskLifecycleState
 import com.example.ai.providers.AiConnectionTester
 import com.example.core.delivery.DeliveryManager
 import com.example.core.security.KeystoreHelper
+import com.example.core.storage.DocumentFileNames
 import com.example.core.storage.PreferencesManager
 import com.example.core.storage.PreferencesSeedFlagStore
 import com.example.core.storage.SampleDataSeeder
@@ -35,6 +36,7 @@ import com.example.document.docx.DocxEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -369,17 +371,37 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     fun renameDocument(doc: DocumentEntity, newTitle: String) {
         if (newTitle.isBlank()) return
         viewModelScope.launch {
-            val updated = doc.copy(title = newTitle)
-            database.documentDao().updateDocument(updated)
-            _snackBarMessage.value = context.getString(R.string.msg_document_renamed, newTitle)
+            try {
+                // Only the visible title changes; the physical file name stays independent.
+                val title = DocumentFileNames.displayTitle(newTitle)
+                database.documentDao().updateTitle(doc.id, title)
+                _snackBarMessage.value = context.getString(R.string.msg_document_renamed, title)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportError("renameDocument", e)
+            }
         }
     }
 
     fun deleteDocument(doc: DocumentEntity) {
         viewModelScope.launch {
-            File(doc.filePath).delete()
-            database.documentDao().deleteDocument(doc)
-            _snackBarMessage.value = context.getString(R.string.msg_document_deleted)
+            try {
+                withContext(Dispatchers.IO) {
+                    val dao = database.documentDao()
+                    dao.deleteDocument(doc)
+                    // Older versions could point several Library entries at one shared file;
+                    // only delete the file once no other entry references it.
+                    if (doc.filePath.isNotBlank() && dao.countDocumentsWithPath(doc.filePath) == 0) {
+                        File(doc.filePath).delete()
+                    }
+                }
+                _snackBarMessage.value = context.getString(R.string.msg_document_deleted)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportError("deleteDocument", e)
+            }
         }
     }
 
@@ -764,6 +786,8 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             _isGenerating.value = true
             _scanProgress.value = context.getString(R.string.generate_word_doc)
+            var createdFile: File? = null
+            var documentSaved = false
             try {
                 // Determine template profile
                 val templateProfile = if (reviewState.selectedTemplateId != null && reviewState.selectedTemplateId != "default") {
@@ -784,17 +808,18 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     pages = reviewState.pages
                 )
 
-                // Save Word Document
-                val documentsDir = File(context.filesDir, "generated_docs").apply { mkdirs() }
+                // Save Word Document: unique physical file, Unicode (e.g. Arabic) visible title.
                 val docId = UUID.randomUUID().toString()
-                val safeTitle = reviewState.documentTitle.replace("[^a-zA-Z0-9_\\-\\u0600-\\u06FF]".toRegex(), "_").take(48)
-                val docxFile = File(documentsDir, "$safeTitle.docx")
-
-                val docxEngine = DocxEngine()
-                docxEngine.generateDocx(wordModel, docxFile, templateProfile, templateFile)
-
-                if (!docxFile.exists() || docxFile.length() == 0L) {
-                    throw IllegalStateException("Generated DOCX file is missing or empty.")
+                val visibleTitle = DocumentFileNames.displayTitle(reviewState.documentTitle) + ".docx"
+                val docxFile = withContext(Dispatchers.IO) {
+                    val documentsDir = File(context.filesDir, "generated_docs").apply { mkdirs() }
+                    val file = DocumentFileNames.createUniqueFile(documentsDir, reviewState.documentTitle, "docx")
+                    createdFile = file
+                    DocxEngine().generateDocx(wordModel, file, templateProfile, templateFile)
+                    if (!file.exists() || file.length() == 0L) {
+                        throw IllegalStateException("Generated DOCX file is missing or empty.")
+                    }
+                    file
                 }
 
                 val allText = reviewState.pages.joinToString("\n\n") { it.rawText }
@@ -803,7 +828,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 // Insert into Room DocumentDao
                 val docEntity = DocumentEntity(
                     id = docId,
-                    title = docxFile.name,
+                    title = visibleTitle,
                     fileType = "DOCX",
                     filePath = docxFile.absolutePath,
                     fileSize = docxFile.length(),
@@ -817,6 +842,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     isOrchestratorVerified = true
                 )
                 database.documentDao().insertDocument(docEntity)
+                documentSaved = true
 
                 // Deliver real file + clipboard
                 deliveryManager.deliverBoth(
@@ -839,9 +865,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
                 val isArabic = reviewState.pages.any { it.isArabicDetected }
                 val assistantReply = if (isArabic) {
-                    "تم مسح ومعالجة المستند ضوئياً بنجاح وتوليد ملف Word (DOCX) أصلي قابل للتحرير بالكامل: **${docxFile.name}** (${reviewState.pages.size} صفحات). تم نسخ المحتوى النصي إلى الحافظة وحفظ الملف في مكتبتك."
+                    "تم مسح ومعالجة المستند ضوئياً بنجاح وتوليد ملف Word (DOCX) أصلي قابل للتحرير بالكامل: **${docEntity.title}** (${reviewState.pages.size} صفحات). تم نسخ المحتوى النصي إلى الحافظة وحفظ الملف في مكتبتك."
                 } else {
-                    "I've scanned and transformed your document into a genuine, fully editable Word document: **${docxFile.name}** (${reviewState.pages.size} pages). The text has been copied to your clipboard and the DOCX is saved in your Library."
+                    "I've scanned and transformed your document into a genuine, fully editable Word document: **${docEntity.title}** (${reviewState.pages.size} pages). The text has been copied to your clipboard and the DOCX is saved in your Library."
                 }
 
                 val assistantMsg = ChatMessageEntity(
@@ -859,7 +885,12 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
                 _snackBarMessage.value = context.getString(R.string.msg_generated_copied)
                 _scannedReviewState.value = null
+            } catch (e: CancellationException) {
+                if (!documentSaved) withContext(NonCancellable + Dispatchers.IO) { createdFile?.delete() }
+                throw e
             } catch (e: Exception) {
+                Log.e(TAG, "generateDocxFromScannedDocument failed", e)
+                if (!documentSaved) withContext(Dispatchers.IO) { createdFile?.delete() }
                 _snackBarMessage.value = "Failed to generate Word document: ${e.message}"
             } finally {
                 _isGenerating.value = false

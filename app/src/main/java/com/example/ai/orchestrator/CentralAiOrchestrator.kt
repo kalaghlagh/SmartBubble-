@@ -3,6 +3,7 @@ package com.example.ai.orchestrator
 import android.content.Context
 import com.example.core.delivery.DeliveryManager
 import com.example.core.delivery.DeliveryResult
+import com.example.core.storage.DocumentFileNames
 import com.example.data.db.SmartBubbleDatabase
 import com.example.data.model.DocumentEntity
 import com.example.document.docx.DocxEngine
@@ -71,6 +72,8 @@ class CentralAiOrchestrator(
         templateMode: TemplateMode = TemplateMode.SMART_ADAPTATION,
         forceFormat: String? = null // "DOCX", "PPTX", "XLSX", "PDF"
     ): GenerationTaskResult = withContext(Dispatchers.IO) {
+        var createdFile: File? = null
+        var documentSaved = false
         try {
             // Stage 1: CREATED
             _currentState.value = TaskLifecycleState.CREATED
@@ -119,8 +122,14 @@ class CentralAiOrchestrator(
 
             val documentsDir = File(context.filesDir, "generated_docs").apply { mkdirs() }
             val docId = UUID.randomUUID().toString()
-            val fileName = sanitizeFileName(generateDocumentTitle(userPrompt, detectedFormat))
-            val outputFile = File(documentsDir, "$fileName.${detectedFormat.lowercase()}")
+            val extension = detectedFormat.lowercase()
+            // Visible title is unchanged; the physical file name is unique per document so a new
+            // generation can never overwrite a file that another Library entry points to.
+            val displayTitle = "${generateDocumentTitle(userPrompt, detectedFormat)}.$extension"
+            val outputFile = DocumentFileNames.createUniqueFile(
+                documentsDir, generateDocumentTitle(userPrompt, detectedFormat), extension
+            )
+            createdFile = outputFile
 
             var textContent = ""
             var pageOrSlideCount = 1
@@ -175,7 +184,7 @@ class CentralAiOrchestrator(
 
             val docEntity = DocumentEntity(
                 id = docId,
-                title = outputFile.name,
+                title = displayTitle,
                 fileType = detectedFormat,
                 filePath = outputFile.absolutePath,
                 fileSize = outputFile.length(),
@@ -189,6 +198,7 @@ class CentralAiOrchestrator(
                 isOrchestratorVerified = true
             )
             database.documentDao().insertDocument(docEntity)
+            documentSaved = true
 
             // Stage 7: OPENING / DELIVERING (BOTH = Real File + Clipboard)
             _currentState.value = TaskLifecycleState.OPENING
@@ -206,7 +216,7 @@ class CentralAiOrchestrator(
             _currentState.value = TaskLifecycleState.COMPLETED
             _statusMessage.value = "Completed successfully • Ready for inspection"
 
-            val reply = "I've structured, validated, and generated the complete $detectedFormat file: **${outputFile.name}** (${outputFile.length() / 1024} KB). Text content has been copied to your clipboard, and the document is saved in your Library ready for export or opening in Office."
+            val reply = "I've structured, validated, and generated the complete $detectedFormat file: **${docEntity.title}** (${outputFile.length() / 1024} KB). Text content has been copied to your clipboard, and the document is saved in your Library ready for export or opening in Office."
 
             GenerationTaskResult(
                 state = TaskLifecycleState.COMPLETED,
@@ -216,6 +226,8 @@ class CentralAiOrchestrator(
             )
 
         } catch (e: Exception) {
+            // Never leave an empty/partial file behind for a document that was not saved.
+            if (!documentSaved) createdFile?.delete()
             _currentState.value = TaskLifecycleState.FAILED
             _statusMessage.value = "Error: ${e.message}"
             GenerationTaskResult(
@@ -375,10 +387,6 @@ class CentralAiOrchestrator(
             lower.contains("pdf") || lower.contains("print") -> "PDF"
             else -> "DOCX" // Default office document
         }
-    }
-
-    private fun sanitizeFileName(name: String): String {
-        return name.replace("[^a-zA-Z0-9_\\-]".toRegex(), "_").take(48)
     }
 
     private fun generateDocumentTitle(prompt: String, format: String): String {
