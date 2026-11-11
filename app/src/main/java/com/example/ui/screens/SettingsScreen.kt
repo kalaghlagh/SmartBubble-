@@ -54,6 +54,14 @@ fun SettingsScreen(
 
     var showAddProviderDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
+    var showVoiceLanguageDialog by remember { mutableStateOf(false) }
+    val voiceLanguage by viewModel.voiceLanguage.collectAsState()
+    val voiceLanguageOptions = listOf(
+        "auto" to stringResource(R.string.voice_language_auto),
+        "en" to "English",
+        "ar" to "العربية",
+        "fr" to "Français"
+    )
     var showThemeDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
 
@@ -249,6 +257,18 @@ fun SettingsScreen(
 
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
+                        // Voice conversation language Row
+                        SettingsNavRow(
+                            icon = Icons.Outlined.Mic,
+                            title = stringResource(R.string.settings_voice_language),
+                            value = voiceLanguageOptions.firstOrNull { it.first == voiceLanguage }?.second
+                                ?: stringResource(R.string.voice_language_auto),
+                            onClick = { showVoiceLanguageDialog = true },
+                            testTag = "settings_voice_language_row"
+                        )
+
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
                         // Theme Row
                         SettingsNavRow(
                             icon = Icons.Outlined.Palette,
@@ -341,6 +361,45 @@ fun SettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showLanguageDialog = false }) {
+                    Text(stringResource(R.string.action_close))
+                }
+            }
+        )
+    }
+
+    // Voice Language Dialog
+    if (showVoiceLanguageDialog) {
+        AlertDialog(
+            onDismissRequest = { showVoiceLanguageDialog = false },
+            title = { Text(stringResource(R.string.settings_voice_language)) },
+            text = {
+                Column {
+                    voiceLanguageOptions.forEach { option ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewModel.setVoiceLanguage(option.first)
+                                    showVoiceLanguageDialog = false
+                                }
+                                .padding(vertical = 12.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = voiceLanguage == option.first,
+                                onClick = {
+                                    viewModel.setVoiceLanguage(option.first)
+                                    showVoiceLanguageDialog = false
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(text = option.second, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showVoiceLanguageDialog = false }) {
                     Text(stringResource(R.string.action_close))
                 }
             }

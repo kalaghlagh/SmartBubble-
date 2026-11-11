@@ -245,4 +245,26 @@
     <string name="scan_progress_page">التعرّف على الصفحة %1$d من %2$d…</string>
     <string name="settings_choose_default_provider">لم يتم اختيار مزوّد افتراضي. اضغط «تعيين كافتراضي» على أحد المزوّدين.</string>
     <string name="settings_no_providers">لا يوجد مزوّدو ذكاء اصطناعي بعد. أضف مزوّدًا باستخدام مفتاح API الخاص بك لبدء استخدام الذكاء الاصطناعي.</string>
+    <string name="settings_voice_language">لغة المحادثة الصوتية</string>
+    <string name="voice_language_auto">نفس لغة التطبيق</string>
+    <string name="voice_recognizing">جارٍ التعرّف على الكلام…</string>
+    <string name="voice_thinking">في انتظار رد الذكاء الاصطناعي…</string>
+    <string name="voice_speaking">جارٍ التحدث…</string>
+    <string name="voice_paused">متوقف مؤقتًا</string>
+    <string name="voice_ready">محادثة صوتية</string>
+    <string name="voice_end">إنهاء</string>
+    <string name="voice_pause">إيقاف القراءة مؤقتًا</string>
+    <string name="voice_resume">متابعة القراءة</string>
+    <string name="voice_stop_reading">إيقاف القراءة</string>
+    <string name="voice_busy">يرجى انتظار انتهاء الطلب الحالي قبل استخدام الصوت.</string>
+    <string name="voice_err_permission">إذن الميكروفون مطلوب للمحادثة الصوتية. يمكنك السماح به من إعدادات التطبيق.</string>
+    <string name="voice_err_recognition_unavailable">التعرّف على الكلام غير متاح على هذا الجهاز.</string>
+    <string name="voice_err_no_speech">لم يتم اكتشاف أي كلام. انتهت المحادثة الصوتية.</string>
+    <string name="voice_err_network">التعرّف على الكلام يحتاج إلى اتصال بالشبكة.</string>
+    <string name="voice_err_language">التعرّف على الكلام غير متاح للغة الصوت المحددة على هذا الجهاز.</string>
+    <string name="voice_err_busy">خدمة التعرّف على الكلام مشغولة. يرجى المحاولة مرة أخرى.</string>
+    <string name="voice_err_recognition_failed">فشل التعرّف على الكلام. يرجى المحاولة مرة أخرى.</string>
+    <string name="voice_err_tts_unavailable">تحويل النص إلى كلام غير متاح على هذا الجهاز.</string>
+    <string name="voice_err_tts_language">لا يوجد صوت مثبّت للغة هذه الرسالة. ثبّته من إعدادات تحويل النص إلى كلام في الجهاز.</string>
+    <string name="voice_err_tts_failed">تعذّرت قراءة الرد بصوت مسموع.</string>
 </resources>

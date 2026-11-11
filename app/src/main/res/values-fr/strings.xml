@@ -245,4 +245,26 @@
     <string name="scan_progress_page">Reconnaissance de la page %1$d sur %2$d…</string>
     <string name="settings_choose_default_provider">Aucun fournisseur par défaut. Touchez « Définir par défaut » sur un fournisseur.</string>
     <string name="settings_no_providers">Aucun fournisseur d’IA pour l’instant. Ajoutez un fournisseur avec votre propre clé API pour utiliser l’IA.</string>
+    <string name="settings_voice_language">Langue de la conversation vocale</string>
+    <string name="voice_language_auto">Identique à la langue de l’application</string>
+    <string name="voice_recognizing">Reconnaissance vocale…</string>
+    <string name="voice_thinking">En attente de la réponse de l’IA…</string>
+    <string name="voice_speaking">Lecture de la réponse…</string>
+    <string name="voice_paused">En pause</string>
+    <string name="voice_ready">Conversation vocale</string>
+    <string name="voice_end">Terminer</string>
+    <string name="voice_pause">Mettre la lecture en pause</string>
+    <string name="voice_resume">Reprendre la lecture</string>
+    <string name="voice_stop_reading">Arrêter la lecture</string>
+    <string name="voice_busy">Veuillez attendre la fin de la demande en cours avant d’utiliser la voix.</string>
+    <string name="voice_err_permission">L’autorisation du microphone est nécessaire pour la conversation vocale. Vous pouvez l’accorder dans les paramètres de l’application.</string>
+    <string name="voice_err_recognition_unavailable">La reconnaissance vocale n’est pas disponible sur cet appareil.</string>
+    <string name="voice_err_no_speech">Aucune parole détectée. La conversation vocale est terminée.</string>
+    <string name="voice_err_network">La reconnaissance vocale nécessite une connexion réseau.</string>
+    <string name="voice_err_language">La reconnaissance vocale n’est pas disponible pour la langue vocale choisie sur cet appareil.</string>
+    <string name="voice_err_busy">Le service de reconnaissance vocale est occupé. Veuillez réessayer.</string>
+    <string name="voice_err_recognition_failed">La reconnaissance vocale a échoué. Veuillez réessayer.</string>
+    <string name="voice_err_tts_unavailable">La synthèse vocale n’est pas disponible sur cet appareil.</string>
+    <string name="voice_err_tts_language">Aucune voix n’est installée pour la langue de ce message. Installez-la dans les paramètres de synthèse vocale de l’appareil.</string>
+    <string name="voice_err_tts_failed">La réponse n’a pas pu être lue à voix haute.</string>
 </resources>

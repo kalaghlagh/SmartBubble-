@@ -24,6 +24,12 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: SmartBubbleViewModel by viewModels()
 
+    override fun onStop() {
+        super.onStop()
+        // Never keep the microphone open or keep talking once the app is no longer visible.
+        if (!isChangingConfigurations) viewModel.onAppBackgrounded()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

@@ -32,7 +32,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
@@ -47,6 +50,7 @@ import com.example.data.model.ConversationEntity
 import com.example.data.model.DocumentEntity
 import com.example.data.model.TemplateEntity
 import com.example.ui.SmartBubbleViewModel
+import com.example.ui.VoicePhase
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -63,8 +67,12 @@ fun ChatScreen(
     val conversations by viewModel.allConversations.collectAsState()
     val currentSessionId by viewModel.currentSessionId.collectAsState()
     val isGenerating by viewModel.isGenerating.collectAsState()
-    val isPlayingAudio by viewModel.isPlayingAudio.collectAsState()
     val voiceState by viewModel.voiceState.collectAsState()
+    val voicePhase by viewModel.voicePhase.collectAsState()
+    val voiceActive by viewModel.voiceConversationActive.collectAsState()
+    val voicePartialText by viewModel.voicePartialText.collectAsState()
+    val voiceInputLevel by viewModel.voiceInputLevel.collectAsState()
+    val speakingMessageId by viewModel.speakingMessageId.collectAsState()
     val selectedTemplate by viewModel.selectedTemplateForChat.collectAsState()
     val defaultProvider by viewModel.defaultProvider.collectAsState()
 
@@ -95,6 +103,19 @@ fun ChatScreen(
         if (uris.isNotEmpty()) {
             viewModel.processScannedPages(uris)
         }
+    }
+
+    // Runtime microphone permission for voice conversation
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) viewModel.startVoiceConversation() else viewModel.onMicrophonePermissionDenied()
+    }
+    val startVoice: () -> Unit = {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) viewModel.startVoiceConversation()
+        else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
@@ -403,8 +424,12 @@ fun ChatScreen(
                     ChatBubbleItem(
                         message = msg,
                         attachedDoc = attachedDoc,
-                        isPlayingAudio = isPlayingAudio,
-                        onPlayAudio = { viewModel.speakText(msg.content) },
+                        audioState = when {
+                            speakingMessageId != msg.id -> MessageAudioState.IDLE
+                            voiceState == VoiceState.PAUSED -> MessageAudioState.PAUSED
+                            else -> MessageAudioState.SPEAKING
+                        },
+                        onToggleAudio = { viewModel.toggleMessageSpeech(msg.id, msg.content) },
                         onStopAudio = { viewModel.stopSpeaking() },
                         onCopyText = {
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -424,28 +449,14 @@ fun ChatScreen(
                 }
             }
 
-            // Voice listening hint bar
-            if (voiceState == VoiceState.LISTENING) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = stringResource(R.string.chat_listening),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
+            // Voice conversation status bar: listening / recognizing / thinking / speaking
+            if (voiceActive || voicePhase == VoicePhase.LISTENING || voicePhase == VoicePhase.RECOGNIZING) {
+                VoiceConversationBar(
+                    phase = voicePhase,
+                    partialText = voicePartialText,
+                    inputLevel = voiceInputLevel,
+                    onEnd = { viewModel.stopVoiceConversation() }
+                )
             }
 
             // Bottom Input Dock
@@ -526,12 +537,10 @@ fun ChatScreen(
                         // Microphone Voice Button
                         IconButton(
                             onClick = {
-                                if (voiceState == VoiceState.LISTENING) {
-                                    viewModel.voiceAssistant.stopListening()
-                                } else {
-                                    viewModel.voiceAssistant.startListening()
-                                }
+                                if (voiceActive) viewModel.stopVoiceConversation() else startVoice()
                             },
+                            // A typed request is still being answered: wait for it to finish.
+                            enabled = voiceActive || !isGenerating,
                             modifier = Modifier
                                 .size(46.dp)
                                 .clip(CircleShape)
@@ -539,8 +548,8 @@ fun ChatScreen(
                                 .testTag("chat_voice_button")
                         ) {
                             Icon(
-                                imageVector = if (voiceState == VoiceState.LISTENING) Icons.Default.MicOff else Icons.Default.Mic,
-                                contentDescription = stringResource(R.string.chat_mic),
+                                imageVector = if (voiceActive) Icons.Default.Stop else Icons.Default.Mic,
+                                contentDescription = stringResource(if (voiceActive) R.string.voice_end else R.string.chat_mic),
                                 tint = MaterialTheme.colorScheme.onPrimary,
                                 modifier = Modifier.size(22.dp)
                             )
@@ -1023,8 +1032,8 @@ fun ConversationDrawerItem(
 fun ChatBubbleItem(
     message: ChatMessageEntity,
     attachedDoc: DocumentEntity?,
-    isPlayingAudio: Boolean,
-    onPlayAudio: () -> Unit,
+    audioState: MessageAudioState,
+    onToggleAudio: () -> Unit,
     onStopAudio: () -> Unit,
     onCopyText: () -> Unit,
     onOpenDoc: () -> Unit,
@@ -1108,8 +1117,8 @@ fun ChatBubbleItem(
             if (!isUser) {
                 Spacer(modifier = Modifier.height(6.dp))
                 WaveformAudioPlayer(
-                    isPlaying = isPlayingAudio,
-                    onPlay = onPlayAudio,
+                    state = audioState,
+                    onToggle = onToggleAudio,
                     onStop = onStopAudio
                 )
             }
@@ -1148,33 +1157,45 @@ fun ChatBubbleItem(
     }
 }
 
+/** Read-aloud state of one chat message. */
+enum class MessageAudioState { IDLE, SPEAKING, PAUSED }
+
+/**
+ * Read-aloud control of an assistant message: tap to play, tap again to pause / resume, and a
+ * stop button while it is active. The bars only animate while speech is actually playing.
+ */
 @Composable
 fun WaveformAudioPlayer(
-    isPlaying: Boolean,
-    onPlay: () -> Unit,
+    state: MessageAudioState,
+    onToggle: () -> Unit,
     onStop: () -> Unit
 ) {
+    val isPlaying = state == MessageAudioState.SPEAKING
+    val isActive = state != MessageAudioState.IDLE
     Surface(
         shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = Modifier.clickable {
-            if (isPlaying) onStop() else onPlay()
-        }
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = if (isPlaying) Icons.Default.PauseCircle else Icons.Default.PlayCircle,
-                contentDescription = if (isPlaying) "Stop" else stringResource(R.string.chat_listen),
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp)
-            )
+            IconButton(onClick = onToggle, modifier = Modifier.size(36.dp).testTag("message_audio_toggle")) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Default.PauseCircle else Icons.Default.PlayCircle,
+                    contentDescription = stringResource(
+                        when (state) {
+                            MessageAudioState.SPEAKING -> R.string.voice_pause
+                            MessageAudioState.PAUSED -> R.string.voice_resume
+                            MessageAudioState.IDLE -> R.string.chat_listen
+                        }
+                    ),
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
 
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Animated waveform bars
+            // Waveform bars (animated only while speaking)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -1195,20 +1216,109 @@ fun WaveformAudioPlayer(
                             .height(if (isPlaying) animatedHeight.dp else baseHeight.dp)
                             .clip(CircleShape)
                             .background(
-                                if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                             )
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
+            if (isActive) {
+                IconButton(onClick = onStop, modifier = Modifier.size(36.dp).testTag("message_audio_stop")) {
+                    Icon(
+                        imageVector = Icons.Default.StopCircle,
+                        contentDescription = stringResource(R.string.voice_stop_reading),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.width(10.dp))
+            }
+        }
+    }
+}
 
-            Text(
-                text = "0:24",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 11.sp
-            )
+/** Status of the two-way voice conversation, with the live transcript and an End button. */
+@Composable
+fun VoiceConversationBar(
+    phase: VoicePhase,
+    partialText: String,
+    inputLevel: Float,
+    onEnd: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .testTag("voice_conversation_bar"),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 12.dp, top = 6.dp, bottom = 6.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            when (phase) {
+                VoicePhase.LISTENING -> {
+                    // Real microphone level from the recognizer
+                    val level by animateFloatAsState(targetValue = inputLevel, label = "mic_level")
+                    Box(
+                        modifier = Modifier
+                            .size((12 + 12 * level).dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                    )
+                }
+                VoicePhase.RECOGNIZING, VoicePhase.THINKING ->
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                VoicePhase.SPEAKING -> Icon(
+                    imageVector = Icons.Default.GraphicEq,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+                VoicePhase.PAUSED -> Icon(
+                    imageVector = Icons.Default.Pause,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+                VoicePhase.IDLE -> Icon(
+                    imageVector = Icons.Default.Mic,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(
+                        when (phase) {
+                            VoicePhase.LISTENING -> R.string.chat_listening
+                            VoicePhase.RECOGNIZING -> R.string.voice_recognizing
+                            VoicePhase.THINKING -> R.string.voice_thinking
+                            VoicePhase.SPEAKING -> R.string.voice_speaking
+                            VoicePhase.PAUSED -> R.string.voice_paused
+                            VoicePhase.IDLE -> R.string.voice_ready
+                        }
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                if (phase == VoicePhase.LISTENING && partialText.isNotBlank()) {
+                    Text(
+                        text = partialText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            TextButton(onClick = onEnd, modifier = Modifier.testTag("voice_end_button")) {
+                Text(stringResource(R.string.voice_end))
+            }
         }
     }
 }

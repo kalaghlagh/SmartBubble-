@@ -24,7 +24,9 @@ import com.example.core.storage.PreferencesManager
 import com.example.core.storage.PreferencesSeedFlagStore
 import com.example.core.storage.SampleDataSeeder
 import com.example.core.voice.VoiceAssistantManager
+import com.example.core.voice.VoiceError
 import com.example.core.voice.VoiceState
+import com.example.core.voice.VoiceText
 import com.example.data.db.SmartBubbleDatabase
 import com.example.data.model.ChatMessageEntity
 import com.example.data.model.ConversationEntity
@@ -146,16 +148,44 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     private val _snackBarMessage = MutableStateFlow<String?>(null)
     val snackBarMessage: StateFlow<String?> = _snackBarMessage.asStateFlow()
 
-    // Audio playback state
-    private val _isPlayingAudio = MutableStateFlow(false)
-    val isPlayingAudio: StateFlow<Boolean> = _isPlayingAudio.asStateFlow()
+    // ---- Voice conversation -------------------------------------------------------------
+    // Listener callbacks arrive on the main thread.
+    private val voiceAssistant = VoiceAssistantManager(context, object : VoiceAssistantManager.Listener {
+        override fun onTranscription(text: String) {
+            // What the user said goes through the same orchestrator path as typed messages.
+            if (_voiceConversationActive.value) executePrompt(text, fromVoice = true)
+        }
 
-    // Voice assistant
-    val voiceAssistant = VoiceAssistantManager(context) { recognizedText ->
-        executePrompt(recognizedText)
-    }
-    val voiceState = voiceAssistant.voiceState
-    val voiceDecibel = voiceAssistant.decibelLevel
+        override fun onSpeechCompleted(messageId: String) {
+            // The spoken reply finished: listen for the user's next turn.
+            if (_voiceConversationActive.value && messageId == pendingVoiceReplyId) {
+                pendingVoiceReplyId = null
+                listenForVoiceTurn()
+            }
+        }
+
+        override fun onVoiceError(error: VoiceError) {
+            endVoiceConversation()
+            _snackBarMessage.value = str(voiceErrorStringRes(error))
+        }
+    })
+
+    private val _voiceConversationActive = MutableStateFlow(false)
+    /** True from the mic tap until the user ends the conversation or an error ends it. */
+    val voiceConversationActive: StateFlow<Boolean> = _voiceConversationActive.asStateFlow()
+
+    /** Id of the assistant message being spoken as part of the voice conversation loop. */
+    private var pendingVoiceReplyId: String? = null
+
+    /** Raw engine state (used by the per-message player: speaking / paused). */
+    val voiceState: StateFlow<VoiceState> = voiceAssistant.state
+    val voicePartialText: StateFlow<String> = voiceAssistant.partialText
+    val voiceInputLevel: StateFlow<Float> = voiceAssistant.inputLevel
+    val speakingMessageId: StateFlow<String?> = voiceAssistant.speakingMessageId
+
+    /** Voice language setting: "auto" (follow the app language), "ar", "en" or "fr". */
+    val voiceLanguage: StateFlow<String> =
+        preferences.voiceLanguage.stateIn(viewModelScope, SharingStarted.Eagerly, VoiceText.AUTO)
 
     // Settings preferences
     /** Name of the default provider ("" when none), read from the ai_providers table. */
@@ -176,6 +206,19 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     private val aiRequestInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
     val appLanguage = preferences.appLanguage.stateIn(viewModelScope, SharingStarted.Eagerly, "en")
     val appTheme = preferences.appTheme.stateIn(viewModelScope, SharingStarted.Eagerly, "dark")
+
+    /** What the voice conversation is doing, for the Chat UI. */
+    val voicePhase: StateFlow<VoicePhase> =
+        combine(voiceAssistant.state, _isGenerating, _voiceConversationActive) { engine, generating, active ->
+            when {
+                engine == VoiceState.LISTENING -> VoicePhase.LISTENING
+                engine == VoiceState.RECOGNIZING -> VoicePhase.RECOGNIZING
+                engine == VoiceState.SPEAKING -> VoicePhase.SPEAKING
+                engine == VoiceState.PAUSED -> VoicePhase.PAUSED
+                active && generating -> VoicePhase.THINKING
+                else -> VoicePhase.IDLE
+            }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, VoicePhase.IDLE)
 
     init {
         viewModelScope.launch {
@@ -277,11 +320,21 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    fun executePrompt(prompt: String, forceFormat: String? = null) {
+    /**
+     * @param fromVoice the text is a voice transcription: the real reply is read aloud and the
+     *   voice conversation continues (or ends, with the error shown, if the request fails).
+     */
+    fun executePrompt(prompt: String, forceFormat: String? = null, fromVoice: Boolean = false) {
         val text = prompt.trim()
         if (text.isEmpty()) return
-        // One AI request at a time: ignore repeated taps / voice results while one is running.
-        if (!aiRequestInFlight.compareAndSet(false, true)) return
+        // One AI request at a time: ignore repeated taps while one is running.
+        if (!aiRequestInFlight.compareAndSet(false, true)) {
+            if (fromVoice) {
+                endVoiceConversation()
+                _snackBarMessage.value = str(R.string.voice_busy)
+            }
+            return
+        }
         val sessionId = _currentSessionId.value
 
         viewModelScope.launch {
@@ -325,9 +378,10 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
                 // Only the provider's real answer is stored; failures are never saved as replies.
                 val doc = result.document
+                val replyId = UUID.randomUUID().toString()
                 database.chatDao().insertMessage(
                     ChatMessageEntity(
-                        id = UUID.randomUUID().toString(),
+                        id = replyId,
                         sessionId = sessionId,
                         isUser = false,
                         content = result.reply,
@@ -343,12 +397,20 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 )
                 database.conversationDao().updateLastMessage(sessionId, result.reply.take(60))
                 if (doc != null) _snackBarMessage.value = str(R.string.msg_generated_copied)
+                // Voice turn: read the provider's actual reply aloud, then listen again.
+                if (fromVoice && _voiceConversationActive.value) {
+                    pendingVoiceReplyId = replyId
+                    speakMessage(replyId, result.reply)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: AiException) {
                 Log.w(TAG, "AI request failed: ${e.kind}")
+                // Nothing is spoken for a failed request; the error is shown instead.
+                if (fromVoice) endVoiceConversation()
                 _snackBarMessage.value = aiErrorMessage(e, defaultProvider.value)
             } catch (e: Exception) {
+                if (fromVoice) endVoiceConversation()
                 reportError("executePrompt", e)
             } finally {
                 // Always release the loading state, even after an error.
@@ -729,20 +791,79 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    // Voice & Audio
-    fun speakText(text: String) {
-        val locale = when (appLanguage.value) {
-            "ar" -> Locale("ar")
-            "fr" -> Locale.FRENCH
-            else -> Locale.US
+    // ------------------------------------------------------------------ voice conversation
+
+    /**
+     * Starts a two-way voice conversation: listen -> transcribe -> default AI provider ->
+     * read the reply aloud -> listen again, until the user ends it or an error occurs.
+     * The caller must have been granted RECORD_AUDIO.
+     */
+    fun startVoiceConversation() {
+        if (aiRequestInFlight.get()) {
+            _snackBarMessage.value = str(R.string.voice_busy)
+            return
         }
-        _isPlayingAudio.value = true
-        voiceAssistant.speak(text, locale)
+        _voiceConversationActive.value = true
+        pendingVoiceReplyId = null
+        listenForVoiceTurn()
     }
 
-    fun stopSpeaking() {
+    /** Ends the conversation: closes the microphone (discarding unsent speech) and stops speech. */
+    fun stopVoiceConversation() {
+        endVoiceConversation()
+        voiceAssistant.cancelListening()
         voiceAssistant.stopSpeaking()
-        _isPlayingAudio.value = false
+    }
+
+    private fun endVoiceConversation() {
+        _voiceConversationActive.value = false
+        pendingVoiceReplyId = null
+    }
+
+    private fun listenForVoiceTurn() {
+        val language = VoiceText.effectiveLanguage(voiceLanguage.value, appLanguage.value)
+        voiceAssistant.startListening(VoiceText.recognitionTag(language, Locale.getDefault()))
+    }
+
+    fun onMicrophonePermissionDenied() {
+        endVoiceConversation()
+        _snackBarMessage.value = str(R.string.voice_err_permission)
+    }
+
+    /** Called when the app leaves the foreground: the mic is closed and speech stops. */
+    fun onAppBackgrounded() {
+        stopVoiceConversation()
+    }
+
+    fun setVoiceLanguage(language: String) {
+        launchSafely("setVoiceLanguage") { preferences.setVoiceLanguage(language) }
+    }
+
+    /** Reads [text] with a voice matching the language of the text itself. */
+    private fun speakMessage(messageId: String, text: String) {
+        val language = VoiceText.detectLanguage(text, appLanguage.value)
+        voiceAssistant.speak(messageId, text, VoiceText.speechLocales(language, Locale.getDefault()))
+    }
+
+    /** Per-message player: play, or pause/resume when this message is the one being read. */
+    fun toggleMessageSpeech(messageId: String, text: String) {
+        if (speakingMessageId.value == messageId) {
+            when (voiceState.value) {
+                VoiceState.SPEAKING -> voiceAssistant.pauseSpeaking()
+                VoiceState.PAUSED -> voiceAssistant.resumeSpeaking()
+                else -> speakMessage(messageId, text)
+            }
+        } else {
+            // Reading another message on request takes over from the conversation loop.
+            if (pendingVoiceReplyId != null) endVoiceConversation()
+            speakMessage(messageId, text)
+        }
+    }
+
+    /** Stops reading. Stopping the conversation's spoken reply also ends the conversation. */
+    fun stopSpeaking() {
+        if (pendingVoiceReplyId != null) endVoiceConversation()
+        voiceAssistant.stopSpeaking()
     }
 
     // AI Providers Management

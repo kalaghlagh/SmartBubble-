@@ -79,6 +79,15 @@ class PreferencesManager(private val context: Context) {
         prefs[KEY_NOTEBOOKLM_EMAIL] ?: "alexander.w@enterprise.com"
     }
 
+    /** Voice conversation language: "auto" (follow the app language), "ar", "en" or "fr". */
+    val voiceLanguage: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_VOICE_LANG] ?: "auto"
+    }
+
+    suspend fun setVoiceLanguage(language: String) {
+        context.dataStore.edit { it[KEY_VOICE_LANG] = language }
+    }
+
     val activeConversationId: Flow<String?> = context.dataStore.data.map { prefs ->
         prefs[KEY_ACTIVE_CONVERSATION_ID]
     }

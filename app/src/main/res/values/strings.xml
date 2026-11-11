@@ -245,4 +245,26 @@
     <string name="scan_progress_page">Recognizing page %1$d of %2$d…</string>
     <string name="settings_choose_default_provider">No default provider selected. Tap “Set as Default” on a provider.</string>
     <string name="settings_no_providers">No AI providers yet. Add a provider with your own API key to start using AI.</string>
+    <string name="settings_voice_language">Voice conversation language</string>
+    <string name="voice_language_auto">Same as app language</string>
+    <string name="voice_recognizing">Recognizing speech…</string>
+    <string name="voice_thinking">Waiting for the AI reply…</string>
+    <string name="voice_speaking">Speaking…</string>
+    <string name="voice_paused">Paused</string>
+    <string name="voice_ready">Voice conversation</string>
+    <string name="voice_end">End</string>
+    <string name="voice_pause">Pause reading</string>
+    <string name="voice_resume">Resume reading</string>
+    <string name="voice_stop_reading">Stop reading</string>
+    <string name="voice_busy">Please wait for the current request to finish before using voice.</string>
+    <string name="voice_err_permission">Microphone permission is required for voice conversation. You can allow it in the app settings.</string>
+    <string name="voice_err_recognition_unavailable">Speech recognition is not available on this device.</string>
+    <string name="voice_err_no_speech">No speech was detected. Voice conversation ended.</string>
+    <string name="voice_err_network">Speech recognition needs a network connection.</string>
+    <string name="voice_err_language">Speech recognition is not available for the selected voice language on this device.</string>
+    <string name="voice_err_busy">The speech recognizer is busy. Please try again.</string>
+    <string name="voice_err_recognition_failed">Speech recognition failed. Please try again.</string>
+    <string name="voice_err_tts_unavailable">Text-to-speech is not available on this device.</string>
+    <string name="voice_err_tts_language">No voice is installed for the language of this message. Install it in the device’s text-to-speech settings.</string>
+    <string name="voice_err_tts_failed">The reply could not be read aloud.</string>
 </resources>
