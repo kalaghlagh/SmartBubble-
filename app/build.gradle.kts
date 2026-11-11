@@ -50,9 +50,13 @@ android {
       signingConfig = signingConfigs.getByName("release")
     }
     debug {
-      // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
-      // AI Studio.
-      signingConfig = signingConfigs.getByName("debugConfig")
+      // AI Studio provides `${rootDir}/debug.keystore` and must keep using the "debugConfig"
+      // signing config. That keystore is git-ignored, so a fresh clone (or CI) does not have it;
+      // in that case fall back to AGP's standard debug signing config, which uses the
+      // auto-generated ~/.android/debug.keystore. Release signing is unchanged.
+      signingConfig =
+        if (file("${rootDir}/debug.keystore").exists()) signingConfigs.getByName("debugConfig")
+        else signingConfigs.getByName("debug")
     }
   }
   compileOptions {
@@ -79,6 +83,10 @@ secrets {
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
+
+// Export the Room schema (exportSchema = true) so every database version is recorded in
+// app/schemas and future migrations can be verified against it. Commit the generated JSON.
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.

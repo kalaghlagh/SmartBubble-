@@ -92,158 +92,152 @@ class PdfEngine {
 
         val margin = template.marginLeftPt.toFloat().coerceIn(36f, 72f)
         val contentWidth = pageWidth - (margin * 2)
+        // Content may extend down to this y; below it is reserved for the footer.
+        val contentBottom = pageHeight - 90f
+        val freshPageSpace = contentBottom - margin
         var y = margin
 
-        // Draw top accent bar
-        canvas.drawRect(margin, y, pageWidth - margin, y + 4f, barPaint)
-        y += 24f
+        fun startNewPage() {
+            drawFooter(canvas, margin, pageWidth, pageHeight, currentPageNum)
+            pdfDocument.finishPage(page)
+            currentPageNum++
+            val nextInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, currentPageNum).create()
+            page = pdfDocument.startPage(nextInfo)
+            canvas = page.canvas
+            y = margin
+        }
 
-        // Draw Title
-        val titleLayout = StaticLayout.Builder.obtain(model.title, 0, model.title.length, titlePaint, contentWidth.toInt())
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-            .build()
-        canvas.save()
-        canvas.translate(margin, y)
-        titleLayout.draw(canvas)
-        canvas.restore()
-        y += titleLayout.height + 12f
-
-        // Draw Subtitle / Org
-        val subText = if (model.subtitle.isNotBlank()) "${model.subtitle} • ${model.organization}" else model.organization
-        val subLayout = StaticLayout.Builder.obtain(subText, 0, subText.length, subtitlePaint, contentWidth.toInt())
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-            .build()
-        canvas.save()
-        canvas.translate(margin, y)
-        subLayout.draw(canvas)
-        canvas.restore()
-        y += subLayout.height + 20f
-
-        // Draw dividing rule
-        canvas.drawLine(margin, y, pageWidth - margin, y, linePaint)
-        y += 18f
-
-        // Draw Sections
-        for (section in model.sections) {
-            // Check page overflow
-            if (y > pageHeight - 120f) {
-                drawFooter(canvas, margin, pageWidth, pageHeight, currentPageNum)
-                pdfDocument.finishPage(page)
-                currentPageNum++
-                val nextInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, currentPageNum).create()
-                page = pdfDocument.startPage(nextInfo)
-                canvas = page.canvas
-                y = margin
+        /**
+         * Draws [layout] at [x]. A block that fits on a fresh page but not in the remaining space
+         * moves to the next page (unchanged behaviour); a block taller than a page is split line
+         * by line across as many pages as needed, so no text is drawn off the page and lost.
+         */
+        fun drawLayout(layout: StaticLayout, x: Float) {
+            if (PdfPagination.shouldMoveWholeBlockToNextPage(
+                    layout.height.toFloat(), contentBottom - y, freshPageSpace
+                )
+            ) {
+                startNewPage()
             }
+            val lineCount = layout.lineCount
+            if (lineCount == 0) return
+            val boundaries = IntArray(lineCount + 1) { i ->
+                if (i < lineCount) layout.getLineTop(i) else layout.getLineBottom(lineCount - 1)
+            }
+            val chunks = PdfPagination.splitLines(boundaries, contentBottom - y, freshPageSpace)
+            for (chunk in chunks) {
+                if (chunk.startsNewPage) startNewPage()
+                val top = boundaries[chunk.startLine]
+                val bottom = boundaries[chunk.endLine]
+                canvas.save()
+                canvas.translate(x, y - top)
+                canvas.clipRect(0f, top.toFloat(), layout.width.toFloat(), bottom.toFloat())
+                layout.draw(canvas)
+                canvas.restore()
+                y += (bottom - top)
+            }
+        }
 
-            // Section Heading
-            val headingLayout = StaticLayout.Builder.obtain(section.heading, 0, section.heading.length, headingPaint, contentWidth.toInt())
+        fun buildLayout(text: String, paint: TextPaint, width: Int): StaticLayout =
+            StaticLayout.Builder.obtain(text, 0, text.length, paint, width.coerceAtLeast(1))
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
                 .build()
-            canvas.save()
-            canvas.translate(margin, y)
-            headingLayout.draw(canvas)
-            canvas.restore()
-            y += headingLayout.height + 8f
 
-            // Paragraphs
-            for (p in section.paragraphs) {
-                val pLayout = StaticLayout.Builder.obtain(p, 0, p.length, bodyPaint, contentWidth.toInt())
-                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                    .build()
-                if (y + pLayout.height > pageHeight - 90f) {
-                    drawFooter(canvas, margin, pageWidth, pageHeight, currentPageNum)
-                    pdfDocument.finishPage(page)
-                    currentPageNum++
-                    val nextInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, currentPageNum).create()
-                    page = pdfDocument.startPage(nextInfo)
-                    canvas = page.canvas
-                    y = margin
-                }
-                canvas.save()
-                canvas.translate(margin, y)
-                pLayout.draw(canvas)
-                canvas.restore()
-                y += pLayout.height + 10f
-            }
+        try {
+            // Draw top accent bar
+            canvas.drawRect(margin, y, pageWidth - margin, y + 4f, barPaint)
+            y += 24f
 
-            // Bullets
-            for (b in section.bulletPoints) {
-                val bulletText = "•  $b"
-                val bLayout = StaticLayout.Builder.obtain(bulletText, 0, bulletText.length, bodyPaint, contentWidth.toInt() - 16)
-                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                    .build()
-                if (y + bLayout.height > pageHeight - 90f) {
-                    drawFooter(canvas, margin, pageWidth, pageHeight, currentPageNum)
-                    pdfDocument.finishPage(page)
-                    currentPageNum++
-                    val nextInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, currentPageNum).create()
-                    page = pdfDocument.startPage(nextInfo)
-                    canvas = page.canvas
-                    y = margin
-                }
-                canvas.save()
-                canvas.translate(margin + 12f, y)
-                bLayout.draw(canvas)
-                canvas.restore()
-                y += bLayout.height + 6f
-            }
+            // Draw Title
+            drawLayout(buildLayout(model.title, titlePaint, contentWidth.toInt()), margin)
             y += 12f
-        }
 
-        // Draw Table if present
-        if (model.table != null && model.table.headers.isNotEmpty()) {
-            if (y > pageHeight - 160f) {
-                drawFooter(canvas, margin, pageWidth, pageHeight, currentPageNum)
-                pdfDocument.finishPage(page)
-                currentPageNum++
-                val nextInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, currentPageNum).create()
-                page = pdfDocument.startPage(nextInfo)
-                canvas = page.canvas
-                y = margin
-            }
+            // Draw Subtitle / Org
+            val subText = if (model.subtitle.isNotBlank()) "${model.subtitle} • ${model.organization}" else model.organization
+            drawLayout(buildLayout(subText, subtitlePaint, contentWidth.toInt()), margin)
+            y += 20f
 
-            val colCount = model.table.headers.size
-            val colWidth = contentWidth / colCount
-            val rowHeight = 22f
-
-            // Header Row
-            canvas.drawRect(margin, y, margin + contentWidth, y + rowHeight, tableHeaderPaint)
-            val headerTextPaint = TextPaint().apply {
-                color = Color.WHITE
-                textSize = 10f
-                isFakeBoldText = true
-                isAntiAlias = true
-            }
-            for (i in model.table.headers.indices) {
-                canvas.drawText(model.table.headers[i], margin + (i * colWidth) + 6f, y + 15f, headerTextPaint)
-            }
-            y += rowHeight
-
-            // Data Rows
-            var rowIndex = 0
-            for (row in model.table.rows) {
-                if (rowIndex % 2 == 1) {
-                    canvas.drawRect(margin, y, margin + contentWidth, y + rowHeight, tableRowAltPaint)
-                }
-                for (i in 0 until minOf(row.size, colCount)) {
-                    canvas.drawText(row[i], margin + (i * colWidth) + 6f, y + 15f, bodyPaint)
-                }
-                canvas.drawLine(margin, y + rowHeight, margin + contentWidth, y + rowHeight, linePaint)
-                y += rowHeight
-                rowIndex++
-            }
+            // Draw dividing rule
+            canvas.drawLine(margin, y, pageWidth - margin, y, linePaint)
             y += 18f
-        }
 
-        // Draw Footer on last page
-        drawFooter(canvas, margin, pageWidth, pageHeight, currentPageNum)
-        pdfDocument.finishPage(page)
+            // Draw Sections
+            for (section in model.sections) {
+                // Keep a heading from being stranded at the very bottom of a page
+                if (y > pageHeight - 120f) startNewPage()
 
-        FileOutputStream(outputFile).use { out ->
-            pdfDocument.writeTo(out)
+                // Section Heading
+                drawLayout(buildLayout(section.heading, headingPaint, contentWidth.toInt()), margin)
+                y += 8f
+
+                // Paragraphs
+                for (p in section.paragraphs) {
+                    drawLayout(buildLayout(p, bodyPaint, contentWidth.toInt()), margin)
+                    y += 10f
+                }
+
+                // Bullets
+                for (b in section.bulletPoints) {
+                    drawLayout(buildLayout("•  $b", bodyPaint, contentWidth.toInt() - 16), margin + 12f)
+                    y += 6f
+                }
+                y += 12f
+            }
+
+            // Draw Table if present
+            if (model.table != null && model.table.headers.isNotEmpty()) {
+                if (y > pageHeight - 160f) startNewPage()
+
+                val colCount = model.table.headers.size
+                val colWidth = contentWidth / colCount
+                val rowHeight = 22f
+                val headerTextPaint = TextPaint().apply {
+                    color = Color.WHITE
+                    textSize = 10f
+                    isFakeBoldText = true
+                    isAntiAlias = true
+                }
+
+                fun drawHeaderRow() {
+                    canvas.drawRect(margin, y, margin + contentWidth, y + rowHeight, tableHeaderPaint)
+                    for (i in model.table.headers.indices) {
+                        canvas.drawText(model.table.headers[i], margin + (i * colWidth) + 6f, y + 15f, headerTextPaint)
+                    }
+                    y += rowHeight
+                }
+
+                drawHeaderRow()
+
+                // Data Rows: continue on new pages (repeating the header) instead of overflowing.
+                var rowIndex = 0
+                for (row in model.table.rows) {
+                    if (y + rowHeight > contentBottom) {
+                        startNewPage()
+                        drawHeaderRow()
+                    }
+                    if (rowIndex % 2 == 1) {
+                        canvas.drawRect(margin, y, margin + contentWidth, y + rowHeight, tableRowAltPaint)
+                    }
+                    for (i in 0 until minOf(row.size, colCount)) {
+                        canvas.drawText(row[i], margin + (i * colWidth) + 6f, y + 15f, bodyPaint)
+                    }
+                    canvas.drawLine(margin, y + rowHeight, margin + contentWidth, y + rowHeight, linePaint)
+                    y += rowHeight
+                    rowIndex++
+                }
+                y += 18f
+            }
+
+            // Draw Footer on last page
+            drawFooter(canvas, margin, pageWidth, pageHeight, currentPageNum)
+            pdfDocument.finishPage(page)
+
+            FileOutputStream(outputFile).use { out ->
+                pdfDocument.writeTo(out)
+            }
+        } finally {
+            pdfDocument.close()
         }
-        pdfDocument.close()
 
         return outputFile
     }

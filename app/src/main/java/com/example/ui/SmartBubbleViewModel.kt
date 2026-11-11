@@ -2,17 +2,31 @@ package com.example.ui
 
 import android.app.Application
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.room.withTransaction
 import com.example.R
 import com.example.ai.orchestrator.CentralAiOrchestrator
-import com.example.ai.orchestrator.TaskLifecycleState
-import com.example.ai.providers.AiConnectionTester
+import com.example.ai.orchestrator.ContentOperation
+import com.example.ai.orchestrator.ContextMessage
+import com.example.ai.orchestrator.DocumentFormat
+import com.example.ai.providers.AiErrorKind
+import com.example.ai.providers.AiException
+import com.example.ai.providers.ProviderInput
+import com.example.ai.providers.ProviderManager
+import com.example.ai.providers.ProviderValidationException
+import com.example.core.security.CredentialSecurityException
+import com.example.core.security.CredentialStore
 import com.example.core.delivery.DeliveryManager
-import com.example.core.security.KeystoreHelper
+import com.example.core.storage.DocumentFileNames
 import com.example.core.storage.PreferencesManager
+import com.example.core.storage.PreferencesSeedFlagStore
+import com.example.core.storage.SampleDataSeeder
 import com.example.core.voice.VoiceAssistantManager
+import com.example.core.voice.VoiceError
 import com.example.core.voice.VoiceState
+import com.example.core.voice.VoiceText
 import com.example.data.db.SmartBubbleDatabase
 import com.example.data.model.ChatMessageEntity
 import com.example.data.model.ConversationEntity
@@ -28,10 +42,14 @@ import com.example.ocr.ScannedDocumentStructureReconstructor
 import com.example.document.model.ScannedPageData
 import com.example.document.model.ScannedDocumentReviewState
 import com.example.document.docx.DocxEngine
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
@@ -46,14 +64,26 @@ enum class AppNavTab {
 
 class SmartBubbleViewModel(application: Application) : AndroidViewModel(application) {
 
+    private companion object {
+        const val TAG = "SmartBubbleViewModel"
+    }
+
     private val context = application.applicationContext
     val database = SmartBubbleDatabase.getDatabase(context)
     val preferences = PreferencesManager(context)
     val deliveryManager = DeliveryManager(context)
-    val orchestrator = CentralAiOrchestrator(context, database, deliveryManager)
+    private val credentialStore = CredentialStore(context)
+    /** Provider management + single source of truth for the default provider (Room flag). */
+    val providerManager = ProviderManager(database, credentialStore)
+    val orchestrator = CentralAiOrchestrator(context, database, deliveryManager, providerManager)
     val templateAnalysisEngine = TemplateAnalysisEngine()
     val templatePreviewEngine = TemplatePreviewEngine()
     val ocrEngine = DocumentOcrEngine(context, orchestrator)
+    private val sampleDataSeeder = SampleDataSeeder(
+        filesDir = context.filesDir,
+        database = database,
+        flagStore = PreferencesSeedFlagStore(preferences)
+    )
 
     // Template Preview State
     private val _selectedPreviewTemplate = MutableStateFlow<TemplateEntity?>(null)
@@ -118,29 +148,102 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     private val _snackBarMessage = MutableStateFlow<String?>(null)
     val snackBarMessage: StateFlow<String?> = _snackBarMessage.asStateFlow()
 
-    // Audio playback state
-    private val _isPlayingAudio = MutableStateFlow(false)
-    val isPlayingAudio: StateFlow<Boolean> = _isPlayingAudio.asStateFlow()
+    // ---- Voice conversation -------------------------------------------------------------
+    // Listener callbacks arrive on the main thread.
+    private val voiceAssistant = VoiceAssistantManager(context, object : VoiceAssistantManager.Listener {
+        override fun onTranscription(text: String) {
+            // What the user said goes through the same orchestrator path as typed messages.
+            if (_voiceConversationActive.value) executePrompt(text, fromVoice = true)
+        }
 
-    // Voice assistant
-    val voiceAssistant = VoiceAssistantManager(context) { recognizedText ->
-        executePrompt(recognizedText)
-    }
-    val voiceState = voiceAssistant.voiceState
-    val voiceDecibel = voiceAssistant.decibelLevel
+        override fun onSpeechCompleted(messageId: String) {
+            // The spoken reply finished: listen for the user's next turn.
+            if (_voiceConversationActive.value && messageId == pendingVoiceReplyId) {
+                pendingVoiceReplyId = null
+                listenForVoiceTurn()
+            }
+        }
+
+        override fun onVoiceError(error: VoiceError) {
+            endVoiceConversation()
+            _snackBarMessage.value = str(voiceErrorStringRes(error))
+        }
+    })
+
+    private val _voiceConversationActive = MutableStateFlow(false)
+    /** True from the mic tap until the user ends the conversation or an error ends it. */
+    val voiceConversationActive: StateFlow<Boolean> = _voiceConversationActive.asStateFlow()
+
+    /** Id of the assistant message being spoken as part of the voice conversation loop. */
+    private var pendingVoiceReplyId: String? = null
+
+    /** Raw engine state (used by the per-message player: speaking / paused). */
+    val voiceState: StateFlow<VoiceState> = voiceAssistant.state
+    val voicePartialText: StateFlow<String> = voiceAssistant.partialText
+    val voiceInputLevel: StateFlow<Float> = voiceAssistant.inputLevel
+    val speakingMessageId: StateFlow<String?> = voiceAssistant.speakingMessageId
+
+    /** Voice language setting: "auto" (follow the app language), "ar", "en" or "fr". */
+    val voiceLanguage: StateFlow<String> =
+        preferences.voiceLanguage.stateIn(viewModelScope, SharingStarted.Eagerly, VoiceText.AUTO)
 
     // Settings preferences
-    val defaultProvider = preferences.defaultProvider.stateIn(viewModelScope, SharingStarted.Eagerly, "OpenAI")
+    /** Name of the default provider ("" when none), read from the ai_providers table. */
+    val defaultProvider: StateFlow<String> = database.providerDao().getAllProviders()
+        .map { list -> list.firstOrNull { it.isDefault }?.name.orEmpty() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    /** Ids of providers that have an API key stored (keys themselves never leave CredentialStore). */
+    val providersWithKeys: StateFlow<Set<String>> = database.providerDao().getAllProviders()
+        .map { list -> list.filter { providerManager.hasKey(it.id) }.map { it.id }.toSet() }
+        .flowOn(Dispatchers.IO)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
+    private val _testingProviderIds = MutableStateFlow<Set<String>>(emptySet())
+    val testingProviderIds: StateFlow<Set<String>> = _testingProviderIds.asStateFlow()
+
+    /** Prevents duplicate AI requests from repeated taps or voice input while one is running. */
+    private val aiRequestInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
     val appLanguage = preferences.appLanguage.stateIn(viewModelScope, SharingStarted.Eagerly, "en")
     val appTheme = preferences.appTheme.stateIn(viewModelScope, SharingStarted.Eagerly, "dark")
 
+    /** What the voice conversation is doing, for the Chat UI. */
+    val voicePhase: StateFlow<VoicePhase> =
+        combine(voiceAssistant.state, _isGenerating, _voiceConversationActive) { engine, generating, active ->
+            when {
+                engine == VoiceState.LISTENING -> VoicePhase.LISTENING
+                engine == VoiceState.RECOGNIZING -> VoicePhase.RECOGNIZING
+                engine == VoiceState.SPEAKING -> VoicePhase.SPEAKING
+                engine == VoiceState.PAUSED -> VoicePhase.PAUSED
+                active && generating -> VoicePhase.THINKING
+                else -> VoicePhase.IDLE
+            }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, VoicePhase.IDLE)
+
     init {
-        seedInitialDataIfNeeded()
-        restoreActiveConversation()
+        viewModelScope.launch {
+            try {
+                // One-time sample seeding + consistency maintenance, off the main thread.
+                withContext(Dispatchers.IO) { sampleDataSeeder.runStartupTasks() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Start-up data maintenance failed", e)
+            }
+            try {
+                // Move legacy in-database keys to secure storage; drop fake keys and statuses.
+                withContext(Dispatchers.IO) { providerManager.migrateLegacyProviderData() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Provider data migration failed", e)
+            }
+            restoreActiveConversation()
+        }
     }
 
-    private fun restoreActiveConversation() {
-        viewModelScope.launch {
+    private suspend fun restoreActiveConversation() {
+        try {
             preferences.activeConversationId.firstOrNull()?.let { savedId ->
                 if (savedId.isNotBlank()) {
                     val exists = database.conversationDao().getConversationById(savedId)
@@ -149,207 +252,10 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     }
                 }
             }
-        }
-    }
-
-    private fun seedInitialDataIfNeeded() {
-        viewModelScope.launch {
-            // Seed initial AI Providers if empty
-            val existingProvider = database.providerDao().getProviderById("p-openai")
-            if (existingProvider == null) {
-                database.providerDao().insertProvider(
-                    ProviderEntity(
-                        id = "p-openai",
-                        name = "OpenAI",
-                        providerType = "OpenAI",
-                        baseUrl = "https://api.openai.com/v1",
-                        encryptedApiKey = KeystoreHelper.encrypt("sk-live-smartbubble-encrypted"),
-                        modelName = "GPT-4o",
-                        isDefault = true,
-                        status = "Connected (28ms)"
-                    )
-                )
-                database.providerDao().insertProvider(
-                    ProviderEntity(
-                        id = "p-gemini",
-                        name = "Google Gemini",
-                        providerType = "Google Gemini",
-                        baseUrl = "https://generativelanguage.googleapis.com",
-                        encryptedApiKey = KeystoreHelper.encrypt("gemini-smartbubble-encrypted"),
-                        modelName = "Gemini 1.5 Pro",
-                        isDefault = false,
-                        status = "Ready"
-                    )
-                )
-                database.providerDao().insertProvider(
-                    ProviderEntity(
-                        id = "p-claude",
-                        name = "Anthropic Claude",
-                        providerType = "Anthropic Claude",
-                        baseUrl = "https://api.anthropic.com/v1",
-                        encryptedApiKey = KeystoreHelper.encrypt("sk-ant-smartbubble-encrypted"),
-                        modelName = "Claude 3.5 Sonnet",
-                        isDefault = false,
-                        status = "Ready"
-                    )
-                )
-            }
-
-            // Ensure templates directory exists
-            val templateDir = File(context.filesDir, "templates").apply { mkdirs() }
-
-            // Seed initial templates matching mockup with genuine reference files
-            val t1 = database.templateDao().getTemplateById("tmpl-company-report")
-            if (t1 == null) {
-                val profileDoc = TemplateProfile.defaultProfile().copy(
-                    templateId = "tmpl-company-report",
-                    name = "Company Report Template",
-                    originalFileType = "DOCX",
-                    primaryColorHex = "#1D52D8",
-                    headingFont = "Segoe UI Semibold"
-                )
-                val docxTemplateFile = File(templateDir, "Company_Report_Template.docx")
-                if (!docxTemplateFile.exists()) {
-                    val sampleModel = com.example.document.model.WordDocumentModel(
-                        title = "Corporate Executive Report",
-                        subtitle = "Standard Enterprise Template Format",
-                        sections = listOf(
-                            com.example.document.model.WordSection(
-                                heading = "Executive Summary",
-                                paragraphs = listOf("This reference document defines standard margins, header/footer branding, and typography for enterprise reports.")
-                            )
-                        )
-                    )
-                    com.example.document.docx.DocxEngine().generateDocx(sampleModel, docxTemplateFile, profileDoc)
-                }
-
-                database.templateDao().insertTemplate(
-                    TemplateEntity(
-                        id = profileDoc.templateId,
-                        name = profileDoc.name,
-                        fileType = "DOCX",
-                        originalFilePath = docxTemplateFile.absolutePath,
-                        fileSize = if (docxTemplateFile.exists()) docxTemplateFile.length() else 250880L,
-                        profileJson = profileDoc.toJson(),
-                        isDefaultWord = true,
-                        compatibilityStatus = "Compatible",
-                        thumbnailColorHex = "#1D52D8"
-                    )
-                )
-
-                val profilePpt = TemplateProfile.defaultProfile().copy(
-                    templateId = "tmpl-presentation-theme",
-                    name = "Presentation Theme",
-                    originalFileType = "PPTX",
-                    primaryColorHex = "#E05D26"
-                )
-                val pptxTemplateFile = File(templateDir, "Presentation_Theme.pptx")
-                if (!pptxTemplateFile.exists()) {
-                    val samplePpt = com.example.document.model.PresentationModel(
-                        title = "Presentation Theme Deck",
-                        subtitle = "16:9 Standard Corporate Slide Master",
-                        slides = listOf(
-                            com.example.document.model.SlideModel(
-                                title = "Theme Architecture",
-                                bulletPoints = listOf("Master layout placeholders", "Brand color accents")
-                            )
-                        )
-                    )
-                    com.example.document.pptx.PptxEngine().generatePptx(samplePpt, pptxTemplateFile, profilePpt)
-                }
-
-                database.templateDao().insertTemplate(
-                    TemplateEntity(
-                        id = profilePpt.templateId,
-                        name = profilePpt.name,
-                        fileType = "PPTX",
-                        originalFilePath = pptxTemplateFile.absolutePath,
-                        fileSize = if (pptxTemplateFile.exists()) pptxTemplateFile.length() else 2202009L,
-                        profileJson = profilePpt.toJson(),
-                        isDefaultPpt = true,
-                        compatibilityStatus = "Compatible",
-                        thumbnailColorHex = "#E05D26"
-                    )
-                )
-
-                val profileXlsx = TemplateProfile.defaultProfile().copy(
-                    templateId = "tmpl-business-data",
-                    name = "Business Data Template",
-                    originalFileType = "XLSX",
-                    primaryColorHex = "#107C41"
-                )
-                val xlsxTemplateFile = File(templateDir, "Business_Data_Template.xlsx")
-                if (!xlsxTemplateFile.exists()) {
-                    val sampleXlsx = com.example.document.model.SpreadsheetModel(
-                        workbookTitle = "Business Data Workbook",
-                        sheets = listOf(
-                            com.example.document.model.SheetModel(
-                                name = "Data Summary",
-                                headers = listOf("Category", "Target", "Actual", "Performance"),
-                                rows = listOf(
-                                    listOf("Revenue", 100000, 105000, "+5%"),
-                                    listOf("Efficiency", 95, 98, "+3%")
-                                )
-                            )
-                        )
-                    )
-                    com.example.document.xlsx.XlsxEngine().generateXlsx(sampleXlsx, xlsxTemplateFile, profileXlsx)
-                }
-
-                database.templateDao().insertTemplate(
-                    TemplateEntity(
-                        id = profileXlsx.templateId,
-                        name = profileXlsx.name,
-                        fileType = "XLSX",
-                        originalFilePath = xlsxTemplateFile.absolutePath,
-                        fileSize = if (xlsxTemplateFile.exists()) xlsxTemplateFile.length() else 184320L,
-                        profileJson = profileXlsx.toJson(),
-                        isDefaultExcel = true,
-                        compatibilityStatus = "Compatible",
-                        thumbnailColorHex = "#107C41"
-                    )
-                )
-            }
-
-            // Seed initial conversation entity
-            val existingConv = database.conversationDao().getConversationById("session-smartbubble")
-            if (existingConv == null) {
-                database.conversationDao().insertConversation(
-                    ConversationEntity(
-                        id = "session-smartbubble",
-                        title = "تقرير الذكاء الاصطناعي",
-                        lastMessagePreview = "بالطبع! إليك تقرير مختصر عن الذكاء الاصطناعي...",
-                        updatedAt = System.currentTimeMillis() - 120000,
-                        createdAt = System.currentTimeMillis() - 180000
-                    )
-                )
-            }
-
-            // Seed initial messages for session-smartbubble
-            val existingChat = database.chatDao().getMessagesForSession("session-smartbubble").firstOrNull()
-            if (existingChat.isNullOrEmpty()) {
-                val msg1 = ChatMessageEntity(
-                    id = "chat-seed-1",
-                    sessionId = "session-smartbubble",
-                    isUser = true,
-                    content = "اكتب لي تقريراً مختصراً عن الذكاء الاصطناعي",
-                    timestamp = System.currentTimeMillis() - 180000
-                )
-                database.chatDao().insertMessage(msg1)
-
-                val msg2 = ChatMessageEntity(
-                    id = "chat-seed-2",
-                    sessionId = "session-smartbubble",
-                    isUser = false,
-                    content = "بالطبع! إليك تقرير مختصر عن الذكاء الاصطناعي:\n\nالذكاء الاصطناعي هو مجال من علوم الحاسوب يهدف إلى تطوير أنظمة قادرة على محاكاة الذكاء البشري مثل التعلم والاستنتاج واتخاذ القرار، مع إمكانية تحويل الأفكار إلى مستندات مكتبية احترافية مثل Word و PowerPoint و Excel.",
-                    timestamp = System.currentTimeMillis() - 120000,
-                    attachedDocId = "doc-project-summary",
-                    attachedDocTitle = "Project Summary.pdf",
-                    attachedDocType = "PDF",
-                    orchestratorNote = "Orchestrator Verified"
-                )
-                database.chatDao().insertMessage(msg2)
-            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore active conversation", e)
         }
     }
 
@@ -359,11 +265,11 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
     // Conversation Management Actions
     fun startNewConversation() {
-        viewModelScope.launch {
+        launchSafely("startNewConversation") {
             val newId = UUID.randomUUID().toString()
             val newConv = ConversationEntity(
                 id = newId,
-                title = context.getString(R.string.new_conversation),
+                title = str(R.string.new_conversation),
                 lastMessagePreview = "",
                 updatedAt = System.currentTimeMillis(),
                 createdAt = System.currentTimeMillis()
@@ -375,7 +281,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun selectConversation(id: String) {
-        viewModelScope.launch {
+        launchSafely("selectConversation") {
             _currentSessionId.value = id
             preferences.setActiveConversationId(id)
         }
@@ -383,17 +289,17 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
     fun renameConversation(id: String, newTitle: String) {
         if (newTitle.isBlank()) return
-        viewModelScope.launch {
+        launchSafely("renameConversation") {
             database.conversationDao().updateTitle(id, newTitle.trim())
-            _snackBarMessage.value = context.getString(R.string.msg_conversation_renamed)
+            _snackBarMessage.value = str(R.string.msg_conversation_renamed)
         }
     }
 
     fun deleteConversation(id: String) {
-        viewModelScope.launch {
+        launchSafely("deleteConversation") {
             database.conversationDao().deleteConversationById(id)
             database.chatDao().deleteMessagesBySessionId(id)
-            _snackBarMessage.value = context.getString(R.string.msg_conversation_deleted)
+            _snackBarMessage.value = str(R.string.msg_conversation_deleted)
 
             if (_currentSessionId.value == id) {
                 val remaining = database.conversationDao().getAllConversations().firstOrNull()
@@ -410,178 +316,293 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     fun selectTemplateForChat(template: TemplateEntity?) {
         _selectedTemplateForChat.value = template
         if (template != null) {
-            _snackBarMessage.value = context.getString(R.string.msg_template_selected, template.name)
+            _snackBarMessage.value = str(R.string.msg_template_selected, template.name)
         }
     }
 
-    fun executePrompt(prompt: String, forceFormat: String? = null) {
-        if (prompt.isBlank()) return
+    /**
+     * @param fromVoice the text is a voice transcription: the real reply is read aloud and the
+     *   voice conversation continues (or ends, with the error shown, if the request fails).
+     */
+    fun executePrompt(prompt: String, forceFormat: String? = null, fromVoice: Boolean = false) {
+        val text = prompt.trim()
+        if (text.isEmpty()) return
+        // One AI request at a time: ignore repeated taps while one is running.
+        if (!aiRequestInFlight.compareAndSet(false, true)) {
+            if (fromVoice) {
+                endVoiceConversation()
+                _snackBarMessage.value = str(R.string.voice_busy)
+            }
+            return
+        }
         val sessionId = _currentSessionId.value
 
         viewModelScope.launch {
             _isGenerating.value = true
+            try {
+                // Ensure conversation exists in Room
+                var conv = database.conversationDao().getConversationById(sessionId)
+                if (conv == null) {
+                    conv = ConversationEntity(
+                        id = sessionId,
+                        title = str(R.string.new_conversation),
+                        lastMessagePreview = text.take(50),
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    database.conversationDao().insertConversation(conv)
+                }
 
-            // Ensure conversation exists in Room
-            var conv = database.conversationDao().getConversationById(sessionId)
-            if (conv == null) {
-                conv = ConversationEntity(
-                    id = sessionId,
-                    title = context.getString(R.string.new_conversation),
-                    lastMessagePreview = prompt.take(50),
-                    updatedAt = System.currentTimeMillis()
+                // Auto-generate conversation title from the first meaningful request
+                val genericTitles = listOf("New Conversation", "محادثة جديدة", "Nouvelle conversation", "New Chat")
+                if (genericTitles.any { conv.title.equals(it, ignoreCase = true) }) {
+                    val firstLine = text.lineSequence().firstOrNull()?.trim() ?: text
+                    val autoTitle = if (firstLine.length > 32) firstLine.take(32) + "…" else firstLine
+                    database.conversationDao().updateTitle(sessionId, autoTitle)
+                }
+
+                // Conversation context = messages stored BEFORE this one (restored after restart too).
+                val history = buildContextHistory(sessionId)
+
+                database.conversationDao().updateLastMessage(sessionId, text.take(60))
+                database.chatDao().insertMessage(
+                    ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = sessionId, isUser = true, content = text)
                 )
-                database.conversationDao().insertConversation(conv)
-            }
 
-            // Auto-generate conversation title from the first meaningful request
-            val genericTitles = listOf("New Conversation", "محادثة جديدة", "Nouvelle conversation", "New Chat")
-            if (genericTitles.any { conv.title.equals(it, ignoreCase = true) }) {
-                val firstLine = prompt.lineSequence().firstOrNull()?.trim() ?: prompt.trim()
-                val autoTitle = if (firstLine.length > 32) firstLine.take(32) + "…" else firstLine
-                database.conversationDao().updateTitle(sessionId, autoTitle)
-            }
-
-            // Update conversation preview and timestamp
-            database.conversationDao().updateLastMessage(sessionId, prompt.take(60))
-
-            // Insert user message
-            val userMsg = ChatMessageEntity(
-                id = UUID.randomUUID().toString(),
-                sessionId = sessionId,
-                isUser = true,
-                content = prompt
-            )
-            database.chatDao().insertMessage(userMsg)
-
-            val templateProfile = _selectedTemplateForChat.value?.let {
-                TemplateProfile.fromJson(it.profileJson)
-            }
-            val originalTemplateFile = _selectedTemplateForChat.value?.originalFilePath?.let { File(it) }?.takeIf { it.exists() }
-
-            val result = orchestrator.executeUserRequest(
-                userPrompt = prompt,
-                defaultProviderName = defaultProvider.value,
-                selectedTemplate = templateProfile,
-                templateFile = originalTemplateFile,
-                forceFormat = forceFormat
-            )
-
-            if (result.state == TaskLifecycleState.COMPLETED) {
-                val assistantMsg = ChatMessageEntity(
-                    id = UUID.randomUUID().toString(),
-                    sessionId = sessionId,
-                    isUser = false,
-                    content = result.conversationalReply,
-                    attachedDocId = result.documentEntity?.id,
-                    attachedDocTitle = result.documentEntity?.title,
-                    attachedDocType = result.documentEntity?.fileType,
-                    orchestratorNote = if (originalTemplateFile != null) "Template Preserved" else "Orchestrator Verified"
+                val result = orchestrator.handleChatTurn(
+                    history = history,
+                    userMessage = text,
+                    uiLanguage = appLanguage.value,
+                    selectedTemplate = _selectedTemplateForChat.value,
+                    forceFormat = DocumentFormat.parse(forceFormat)
                 )
-                database.chatDao().insertMessage(assistantMsg)
-                database.conversationDao().updateLastMessage(sessionId, result.conversationalReply.take(60))
-                _snackBarMessage.value = context.getString(R.string.msg_generated_copied)
-            } else {
-                val errorMsg = ChatMessageEntity(
-                    id = UUID.randomUUID().toString(),
-                    sessionId = sessionId,
-                    isUser = false,
-                    content = "Generation failed: ${result.errorMessage ?: "Unknown error"}"
+
+                // Only the provider's real answer is stored; failures are never saved as replies.
+                val doc = result.document
+                val replyId = UUID.randomUUID().toString()
+                database.chatDao().insertMessage(
+                    ChatMessageEntity(
+                        id = replyId,
+                        sessionId = sessionId,
+                        isUser = false,
+                        content = result.reply,
+                        attachedDocId = doc?.id,
+                        attachedDocTitle = doc?.title,
+                        attachedDocType = doc?.fileType,
+                        orchestratorNote = when {
+                            doc == null -> result.provider.name
+                            result.templateApplied -> "Template Preserved • ${result.provider.name}"
+                            else -> "Orchestrator Verified • ${result.provider.name}"
+                        }
+                    )
                 )
-                database.chatDao().insertMessage(errorMsg)
+                database.conversationDao().updateLastMessage(sessionId, result.reply.take(60))
+                if (doc != null) _snackBarMessage.value = str(R.string.msg_generated_copied)
+                // Voice turn: read the provider's actual reply aloud, then listen again.
+                if (fromVoice && _voiceConversationActive.value) {
+                    pendingVoiceReplyId = replyId
+                    speakMessage(replyId, result.reply)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AiException) {
+                Log.w(TAG, "AI request failed: ${e.kind}")
+                // Nothing is spoken for a failed request; the error is shown instead.
+                if (fromVoice) endVoiceConversation()
+                _snackBarMessage.value = aiErrorMessage(e, defaultProvider.value)
+            } catch (e: Exception) {
+                if (fromVoice) endVoiceConversation()
+                reportError("executePrompt", e)
+            } finally {
+                // Always release the loading state, even after an error.
+                _isGenerating.value = false
+                aiRequestInFlight.set(false)
             }
-            _isGenerating.value = false
         }
+    }
+
+    /**
+     * Stored messages of [sessionId] as AI context. The text of an attached document is included
+     * once (on its most recent mention) so the user can ask about generated/scanned documents.
+     */
+    private suspend fun buildContextHistory(sessionId: String): List<ContextMessage> {
+        val messages = database.chatDao().getMessagesForSessionOnce(sessionId)
+        val seenDocs = mutableSetOf<String>()
+        val out = ArrayList<ContextMessage>(messages.size)
+        for (m in messages.asReversed()) {
+            val docId = m.attachedDocId
+            val docText = if (docId != null && seenDocs.add(docId)) {
+                database.documentDao().getDocumentById(docId)?.textContent
+            } else null
+            out += ContextMessage(m.isUser, m.content, docText, m.attachedDocTitle)
+        }
+        out.reverse()
+        return out
+    }
+
+    private fun mimeTypeFor(doc: DocumentEntity): String = when (doc.fileType) {
+        "DOCX" -> DeliveryManager.MIME_DOCX
+        "PPTX" -> DeliveryManager.MIME_PPTX
+        "XLSX" -> DeliveryManager.MIME_XLSX
+        else -> DeliveryManager.MIME_PDF
     }
 
     fun openDocument(doc: DocumentEntity) {
         val file = File(doc.filePath)
-        val mime = when (doc.fileType) {
-            "DOCX" -> DeliveryManager.MIME_DOCX
-            "PPTX" -> DeliveryManager.MIME_PPTX
-            "XLSX" -> DeliveryManager.MIME_XLSX
-            else -> DeliveryManager.MIME_PDF
+        if (!file.isFile) {
+            _snackBarMessage.value = str(R.string.msg_file_not_found)
+            return
         }
-        deliveryManager.openFile(file, mime)
+        deliveryManager.openFile(file, mimeTypeFor(doc))
     }
 
     fun shareDocument(doc: DocumentEntity) {
         val file = File(doc.filePath)
-        val mime = when (doc.fileType) {
-            "DOCX" -> DeliveryManager.MIME_DOCX
-            "PPTX" -> DeliveryManager.MIME_PPTX
-            "XLSX" -> DeliveryManager.MIME_XLSX
-            else -> DeliveryManager.MIME_PDF
+        if (!file.isFile) {
+            _snackBarMessage.value = str(R.string.msg_file_not_found)
+            return
         }
-        deliveryManager.shareFile(file, mime, doc.title)
+        deliveryManager.shareFile(file, mimeTypeFor(doc), doc.title)
     }
 
     fun exportDocumentAsPdf(doc: DocumentEntity) {
+        if (doc.fileType == "PDF") {
+            openDocument(doc)
+            return
+        }
         viewModelScope.launch {
-            if (doc.fileType == "PDF") {
-                openDocument(doc)
-                return@launch
-            }
-            val pdfDir = File(context.filesDir, "generated_docs").apply { mkdirs() }
-            val pdfFile = File(pdfDir, "${doc.title.substringBeforeLast('.')}_Export.pdf")
-            val wordModel = com.example.document.model.WordDocumentModel(
-                title = doc.title.substringBeforeLast('.'),
-                subtitle = "Exported from SmartBubble Library",
-                sections = listOf(
-                    com.example.document.model.WordSection(
-                        heading = "Document Content",
-                        paragraphs = listOf(doc.textContent)
+            try {
+                val pdfFile = withContext(Dispatchers.IO) {
+                    val title = DocumentFileNames.stripDocumentExtension(doc.title)
+                        .ifBlank { DocumentFileNames.displayTitle(doc.title) }
+                    // Keep paragraph breaks so long content is laid out (and paginated) per paragraph.
+                    val paragraphs = doc.textContent
+                        .split(Regex("""\n\s*\n"""))
+                        .map { it.trim('\n', '\r') }
+                        .filter { it.isNotBlank() }
+                        .ifEmpty { listOf(doc.textContent) }
+                    val wordModel = com.example.document.model.WordDocumentModel(
+                        title = title,
+                        subtitle = "Exported from SmartBubble Library",
+                        sections = listOf(
+                            com.example.document.model.WordSection(
+                                heading = "Document Content",
+                                paragraphs = paragraphs
+                            )
+                        )
                     )
+                    // The export file name is sanitized separately from the visible title (which
+                    // may contain "/" or other characters invalid on the filesystem).
+                    val exportDir = File(context.cacheDir, "pdf_exports").apply { mkdirs() }
+                    val target = File(exportDir, DocumentFileNames.pdfExportFileName(doc.title, doc.id))
+                    val partial = File(exportDir, target.name + ".part")
+                    try {
+                        com.example.document.pdf.PdfEngine()
+                            .generatePdf(wordModel, partial, TemplateProfile.defaultProfile())
+                        if (!partial.isFile || partial.length() == 0L) {
+                            throw IllegalStateException("Generated PDF is empty.")
+                        }
+                        if (target.exists()) target.delete()
+                        if (!partial.renameTo(target)) {
+                            partial.copyTo(target, overwrite = true)
+                        }
+                    } finally {
+                        if (partial.exists()) partial.delete()
+                    }
+                    target
+                }
+                deliveryManager.openFile(pdfFile, DeliveryManager.MIME_PDF)
+                _snackBarMessage.value = "PDF Export ready & opened."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "exportDocumentAsPdf failed", e)
+                _snackBarMessage.value = str(
+                    R.string.msg_pdf_export_failed,
+                    e.message ?: e.javaClass.simpleName
                 )
-            )
-            com.example.document.pdf.PdfEngine().generatePdf(wordModel, pdfFile, TemplateProfile.defaultProfile())
-            deliveryManager.openFile(pdfFile, DeliveryManager.MIME_PDF)
-            _snackBarMessage.value = "PDF Export ready & opened."
+            }
         }
     }
 
     fun renameDocument(doc: DocumentEntity, newTitle: String) {
         if (newTitle.isBlank()) return
         viewModelScope.launch {
-            val updated = doc.copy(title = newTitle)
-            database.documentDao().updateDocument(updated)
-            _snackBarMessage.value = context.getString(R.string.msg_document_renamed, newTitle)
+            try {
+                // Only the visible title changes; the physical file name stays independent.
+                val title = DocumentFileNames.displayTitle(newTitle)
+                database.documentDao().updateTitle(doc.id, title)
+                _snackBarMessage.value = str(R.string.msg_document_renamed, title)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportError("renameDocument", e)
+            }
         }
     }
 
     fun deleteDocument(doc: DocumentEntity) {
         viewModelScope.launch {
-            File(doc.filePath).delete()
-            database.documentDao().deleteDocument(doc)
-            _snackBarMessage.value = context.getString(R.string.msg_document_deleted)
+            try {
+                withContext(Dispatchers.IO) {
+                    val dao = database.documentDao()
+                    dao.deleteDocument(doc)
+                    // Older versions could point several Library entries at one shared file;
+                    // only delete the file once no other entry references it.
+                    if (doc.filePath.isNotBlank() && dao.countDocumentsWithPath(doc.filePath) == 0) {
+                        File(doc.filePath).delete()
+                    }
+                }
+                _snackBarMessage.value = str(R.string.msg_document_deleted)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportError("deleteDocument", e)
+            }
         }
     }
 
     fun importTemplateFromUri(uri: Uri, userDefinedName: String) {
         viewModelScope.launch {
+            var persistentTemplateFile: File? = null
+            var saved = false
             try {
-                val extension = getMimeExtension(uri)
-                val templateDir = File(context.filesDir, "templates").apply { mkdirs() }
-                val persistentTemplateFile = File(templateDir, "template_${UUID.randomUUID()}.$extension")
+                // Copying and analysing the file is blocking I/O: keep it off the main thread.
+                val (file, profile) = withContext(Dispatchers.IO) {
+                    val extension = getMimeExtension(uri)
+                    val templateDir = File(context.filesDir, "templates").apply { mkdirs() }
+                    val target = File(templateDir, "template_${UUID.randomUUID()}.$extension")
+                    persistentTemplateFile = target
 
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(persistentTemplateFile).use { output ->
-                        input.copyTo(output)
+                    val input = context.contentResolver.openInputStream(uri)
+                        ?: throw java.io.IOException("The selected file could not be opened.")
+                    input.use { stream ->
+                        FileOutputStream(target).use { output -> stream.copyTo(output) }
                     }
+                    if (target.length() == 0L) {
+                        throw java.io.IOException("The selected file is empty.")
+                    }
+                    target to templateAnalysisEngine.analyzeFile(target, userDefinedName)
                 }
-                val profile = templateAnalysisEngine.analyzeFile(persistentTemplateFile, userDefinedName)
                 val templateEntity = TemplateEntity(
                     id = profile.templateId,
                     name = profile.name,
                     fileType = profile.originalFileType,
-                    originalFilePath = persistentTemplateFile.absolutePath,
-                    fileSize = persistentTemplateFile.length(),
+                    originalFilePath = file.absolutePath,
+                    fileSize = file.length(),
                     profileJson = profile.toJson(),
                     compatibilityStatus = "Compatible",
                     thumbnailColorHex = profile.primaryColorHex
                 )
                 database.templateDao().insertTemplate(templateEntity)
-                _snackBarMessage.value = context.getString(R.string.msg_template_imported, profile.name)
+                saved = true
+                _snackBarMessage.value = str(R.string.msg_template_imported, profile.name)
+            } catch (e: CancellationException) {
+                if (!saved) withContext(NonCancellable + Dispatchers.IO) { persistentTemplateFile?.delete() }
+                throw e
             } catch (e: Exception) {
+                Log.e(TAG, "importTemplateFromUri failed", e)
+                // Do not leave an orphaned partial copy behind.
+                if (!saved) withContext(Dispatchers.IO) { persistentTemplateFile?.delete() }
                 _snackBarMessage.value = "Template import failed: ${e.message}"
             }
         }
@@ -590,15 +611,16 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     private val isUpdatingDefault = java.util.concurrent.atomic.AtomicBoolean(false)
 
     fun deleteTemplate(template: TemplateEntity) {
-        viewModelScope.launch {
-            if (template.originalFilePath.isNotBlank()) {
-                File(template.originalFilePath).delete()
-            }
+        launchSafely("deleteTemplate") {
             if (_selectedTemplateForChat.value?.id == template.id) {
                 _selectedTemplateForChat.value = null
             }
+            // Remove the record first, then its file (off the main thread).
             database.templateDao().deleteTemplate(template)
-            _snackBarMessage.value = context.getString(R.string.msg_template_deleted)
+            if (template.originalFilePath.isNotBlank()) {
+                withContext(Dispatchers.IO) { File(template.originalFilePath).delete() }
+            }
+            _snackBarMessage.value = str(R.string.msg_template_deleted)
         }
     }
 
@@ -606,25 +628,30 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         if (!isUpdatingDefault.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
-                when (template.fileType.uppercase()) {
-                    "DOCX" -> {
-                        database.templateDao().clearDefaultWord()
-                        database.templateDao().updateTemplate(template.copy(isDefaultWord = true))
-                    }
-                    "PPTX" -> {
-                        database.templateDao().clearDefaultPpt()
-                        database.templateDao().updateTemplate(template.copy(isDefaultPpt = true))
-                    }
-                    "XLSX" -> {
-                        database.templateDao().clearDefaultExcel()
-                        database.templateDao().updateTemplate(template.copy(isDefaultExcel = true))
-                    }
-                    else -> {
-                        database.templateDao().clearDefaultWord()
-                        database.templateDao().updateTemplate(template.copy(isDefaultWord = true))
+                val dao = database.templateDao()
+                // Clear + set in one transaction so a type can never end up with two defaults.
+                // Targeted flag updates avoid overwriting other fields with a stale UI snapshot.
+                database.withTransaction {
+                    when (template.fileType.uppercase()) {
+                        "PPTX" -> {
+                            dao.clearDefaultPpt()
+                            dao.setDefaultPptFlag(template.id, true)
+                        }
+                        "XLSX" -> {
+                            dao.clearDefaultExcel()
+                            dao.setDefaultExcelFlag(template.id, true)
+                        }
+                        else -> { // "DOCX" and any other type (unchanged behaviour)
+                            dao.clearDefaultWord()
+                            dao.setDefaultWordFlag(template.id, true)
+                        }
                     }
                 }
-                _snackBarMessage.value = context.getString(R.string.msg_template_set_default, template.name, template.fileType)
+                _snackBarMessage.value = str(R.string.msg_template_set_default, template.name, template.fileType)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportError("setDefaultTemplate", e)
             } finally {
                 isUpdatingDefault.set(false)
             }
@@ -635,14 +662,17 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         if (!isUpdatingDefault.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
-                val updated = when (template.fileType.uppercase()) {
-                    "DOCX" -> template.copy(isDefaultWord = false)
-                    "PPTX" -> template.copy(isDefaultPpt = false)
-                    "XLSX" -> template.copy(isDefaultExcel = false)
-                    else -> template.copy(isDefaultWord = false)
+                val dao = database.templateDao()
+                when (template.fileType.uppercase()) {
+                    "PPTX" -> dao.setDefaultPptFlag(template.id, false)
+                    "XLSX" -> dao.setDefaultExcelFlag(template.id, false)
+                    else -> dao.setDefaultWordFlag(template.id, false)
                 }
-                database.templateDao().updateTemplate(updated)
-                _snackBarMessage.value = context.getString(R.string.msg_template_removed_default, template.name)
+                _snackBarMessage.value = str(R.string.msg_template_removed_default, template.name)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportError("removeDefaultTemplate", e)
             } finally {
                 isUpdatingDefault.set(false)
             }
@@ -655,9 +685,19 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         _isPreviewLoading.value = true
         _previewResult.value = null
         viewModelScope.launch(Dispatchers.IO) {
-            val result = templatePreviewEngine.loadPreview(template)
-            _previewResult.value = result
-            _isPreviewLoading.value = false
+            val result = try {
+                templatePreviewEngine.loadPreview(template)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "openTemplatePreview failed", e)
+                TemplatePreviewResult.Error(e.message ?: e.javaClass.simpleName)
+            }
+            // Ignore a stale result if the user closed or switched the preview meanwhile.
+            if (_selectedPreviewTemplate.value?.id == template.id) {
+                _previewResult.value = result
+                _isPreviewLoading.value = false
+            }
         }
     }
 
@@ -675,7 +715,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 val resolvedName = if (!customName.isNullOrBlank()) {
                     customName.trim()
                 } else {
-                    context.getString(R.string.template_duplicate_name_format, template.name)
+                    str(R.string.template_duplicate_name_format, template.name)
                 }
 
                 val templateDir = File(context.filesDir, "templates").apply { mkdirs() }
@@ -734,7 +774,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 )
 
                 database.templateDao().insertTemplate(duplicatedEntity)
-                _snackBarMessage.value = context.getString(R.string.msg_template_duplicated, resolvedName)
+                _snackBarMessage.value = str(R.string.msg_template_duplicated, resolvedName)
             } catch (e: Exception) {
                 _snackBarMessage.value = "Failed to duplicate template: ${e.message}"
             }
@@ -751,82 +791,162 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    // Voice & Audio
-    fun speakText(text: String) {
-        val locale = when (appLanguage.value) {
-            "ar" -> Locale("ar")
-            "fr" -> Locale.FRENCH
-            else -> Locale.US
+    // ------------------------------------------------------------------ voice conversation
+
+    /**
+     * Starts a two-way voice conversation: listen -> transcribe -> default AI provider ->
+     * read the reply aloud -> listen again, until the user ends it or an error occurs.
+     * The caller must have been granted RECORD_AUDIO.
+     */
+    fun startVoiceConversation() {
+        if (aiRequestInFlight.get()) {
+            _snackBarMessage.value = str(R.string.voice_busy)
+            return
         }
-        _isPlayingAudio.value = true
-        voiceAssistant.speak(text, locale)
+        _voiceConversationActive.value = true
+        pendingVoiceReplyId = null
+        listenForVoiceTurn()
     }
 
-    fun stopSpeaking() {
+    /** Ends the conversation: closes the microphone (discarding unsent speech) and stops speech. */
+    fun stopVoiceConversation() {
+        endVoiceConversation()
+        voiceAssistant.cancelListening()
         voiceAssistant.stopSpeaking()
-        _isPlayingAudio.value = false
+    }
+
+    private fun endVoiceConversation() {
+        _voiceConversationActive.value = false
+        pendingVoiceReplyId = null
+    }
+
+    private fun listenForVoiceTurn() {
+        val language = VoiceText.effectiveLanguage(voiceLanguage.value, appLanguage.value)
+        voiceAssistant.startListening(VoiceText.recognitionTag(language, Locale.getDefault()))
+    }
+
+    fun onMicrophonePermissionDenied() {
+        endVoiceConversation()
+        _snackBarMessage.value = str(R.string.voice_err_permission)
+    }
+
+    /** Called when the app leaves the foreground: the mic is closed and speech stops. */
+    fun onAppBackgrounded() {
+        stopVoiceConversation()
+    }
+
+    fun setVoiceLanguage(language: String) {
+        launchSafely("setVoiceLanguage") { preferences.setVoiceLanguage(language) }
+    }
+
+    /** Reads [text] with a voice matching the language of the text itself. */
+    private fun speakMessage(messageId: String, text: String) {
+        val language = VoiceText.detectLanguage(text, appLanguage.value)
+        voiceAssistant.speak(messageId, text, VoiceText.speechLocales(language, Locale.getDefault()))
+    }
+
+    /** Per-message player: play, or pause/resume when this message is the one being read. */
+    fun toggleMessageSpeech(messageId: String, text: String) {
+        if (speakingMessageId.value == messageId) {
+            when (voiceState.value) {
+                VoiceState.SPEAKING -> voiceAssistant.pauseSpeaking()
+                VoiceState.PAUSED -> voiceAssistant.resumeSpeaking()
+                else -> speakMessage(messageId, text)
+            }
+        } else {
+            // Reading another message on request takes over from the conversation loop.
+            if (pendingVoiceReplyId != null) endVoiceConversation()
+            speakMessage(messageId, text)
+        }
+    }
+
+    /** Stops reading. Stopping the conversation's spoken reply also ends the conversation. */
+    fun stopSpeaking() {
+        if (pendingVoiceReplyId != null) endVoiceConversation()
+        voiceAssistant.stopSpeaking()
     }
 
     // AI Providers Management
     fun setDefaultProvider(provider: ProviderEntity) {
-        viewModelScope.launch {
-            database.providerDao().clearDefault()
-            database.providerDao().setAsDefault(provider.id)
-            preferences.setDefaultProvider(provider.name)
-            _snackBarMessage.value = context.getString(R.string.msg_provider_set_default, provider.name)
+        launchSafely("setDefaultProvider") {
+            providerManager.setDefault(provider.id)
+            _snackBarMessage.value = str(R.string.msg_provider_set_default, provider.name)
         }
     }
 
+    /** Real connection test: an authenticated request that also verifies the configured model. */
     fun testProviderConnection(provider: ProviderEntity) {
+        if (provider.id in _testingProviderIds.value) return
         viewModelScope.launch {
-            _snackBarMessage.value = context.getString(R.string.msg_testing_connection, provider.name)
-            val tester = AiConnectionTester()
-            val result = tester.testConnection(provider)
-            val updated = provider.copy(status = result.message)
-            database.providerDao().updateProvider(updated)
-            _snackBarMessage.value = "${provider.name}: ${result.message}"
+            _testingProviderIds.value = _testingProviderIds.value + provider.id
+            try {
+                val latency = providerManager.testConnection(provider)
+                _snackBarMessage.value = str(R.string.provider_test_success, provider.name, latency)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AiException) {
+                _snackBarMessage.value = str(R.string.provider_test_failed, provider.name, aiErrorReason(e))
+            } catch (e: Exception) {
+                reportError("testProviderConnection", e)
+            } finally {
+                _testingProviderIds.value = _testingProviderIds.value - provider.id
+            }
         }
     }
 
-    fun addProvider(name: String, type: String, baseUrl: String, apiKey: String, model: String) {
-        viewModelScope.launch {
-            val newProvider = ProviderEntity(
-                id = UUID.randomUUID().toString(),
-                name = name,
-                providerType = type,
-                baseUrl = baseUrl,
-                encryptedApiKey = KeystoreHelper.encrypt(apiKey),
-                modelName = model,
-                isDefault = false,
-                status = "Ready"
-            )
-            database.providerDao().insertProvider(newProvider)
-            _snackBarMessage.value = context.getString(R.string.msg_provider_added, name)
+    /** Adds a provider; the API key is encrypted before anything is stored. */
+    fun addProvider(input: ProviderInput) {
+        launchSafely("addProvider") {
+            try {
+                val created = providerManager.addProvider(input)
+                _snackBarMessage.value = if (created.isDefault) {
+                    str(R.string.msg_provider_added_default, created.name)
+                } else {
+                    str(R.string.msg_provider_added, created.name)
+                }
+            } catch (e: ProviderValidationException) {
+                _snackBarMessage.value = str(R.string.provider_error_invalid_fields)
+            } catch (e: CredentialSecurityException) {
+                _snackBarMessage.value = str(R.string.provider_error_secure_storage)
+            }
         }
     }
 
-    fun updateProvider(provider: ProviderEntity) {
-        viewModelScope.launch {
-            database.providerDao().updateProvider(provider)
+    /** Updates a provider; a blank API key keeps the stored key. */
+    fun updateProvider(providerId: String, input: ProviderInput) {
+        launchSafely("updateProvider") {
+            try {
+                val updated = providerManager.updateProvider(providerId, input)
+                _snackBarMessage.value = str(R.string.msg_provider_updated, updated.name)
+            } catch (e: ProviderValidationException) {
+                _snackBarMessage.value = str(R.string.provider_error_invalid_fields)
+            } catch (e: CredentialSecurityException) {
+                _snackBarMessage.value = str(R.string.provider_error_secure_storage)
+            }
         }
     }
 
+    /** Deletes the provider and its stored credential. The default is never reassigned silently. */
     fun deleteProvider(provider: ProviderEntity) {
-        viewModelScope.launch {
-            database.providerDao().deleteProvider(provider)
-            _snackBarMessage.value = context.getString(R.string.msg_provider_deleted)
+        launchSafely("deleteProvider") {
+            providerManager.deleteProvider(provider)
+            _snackBarMessage.value = if (provider.isDefault) {
+                str(R.string.msg_provider_deleted_was_default)
+            } else {
+                str(R.string.msg_provider_deleted)
+            }
         }
     }
 
     // Settings
     fun setAppLanguage(lang: String) {
-        viewModelScope.launch {
+        launchSafely("setAppLanguage") {
             preferences.setAppLanguage(lang)
         }
     }
 
     fun setAppTheme(theme: String) {
-        viewModelScope.launch {
+        launchSafely("setAppTheme") {
             preferences.setAppTheme(theme)
         }
     }
@@ -836,18 +956,28 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         if (uris.isEmpty()) return
         viewModelScope.launch {
             _isScanning.value = true
-            _scanProgress.value = context.getString(R.string.recognizing_text)
+            _scanProgress.value = str(R.string.recognizing_text)
             try {
+                var aiFailure: Exception? = null
                 val pages = ocrEngine.processPages(
                     pageUris = uris,
                     useAiEnhancement = useAi,
-                    defaultProviderName = defaultProvider.value
-                ) { pageIndex, total, msg ->
-                    _scanProgress.value = msg
+                    onProgress = { pageIndex, total, msg ->
+                        _scanProgress.value = if (msg.isEmpty()) {
+                            str(R.string.scan_progress_ai, pageIndex, total)
+                        } else {
+                            str(R.string.scan_progress_page, pageIndex, total)
+                        }
+                    },
+                    onAiEnhancementFailed = { e -> if (aiFailure == null) aiFailure = e }
+                )
+                aiFailure?.let { e ->
+                    val reason = if (e is AiException) aiErrorReason(e) else (e.message ?: e.javaClass.simpleName)
+                    _snackBarMessage.value = str(R.string.scan_ai_enhancement_failed, reason)
                 }
 
                 if (pages.isEmpty()) {
-                    _snackBarMessage.value = context.getString(R.string.scan_empty_error)
+                    _snackBarMessage.value = str(R.string.scan_empty_error)
                     _isScanning.value = false
                     return@launch
                 }
@@ -860,7 +990,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     pages = pages,
                     activePageIndex = 0,
                     selectedTemplateId = null,
-                    isAiEnhanced = useAi
+                    isAiEnhanced = useAi && aiFailure == null
                 )
             } catch (e: Exception) {
                 _snackBarMessage.value = "OCR processing failed: ${e.message}"
@@ -902,7 +1032,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     fun removeScannedPage(pageIndex: Int) {
         val current = _scannedReviewState.value ?: return
         if (current.pages.size <= 1) {
-            _snackBarMessage.value = context.getString(R.string.scan_empty_error)
+            _snackBarMessage.value = str(R.string.scan_empty_error)
             return
         }
         val currentPages = current.pages.toMutableList()
@@ -928,7 +1058,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
         viewModelScope.launch {
             _isGenerating.value = true
-            _scanProgress.value = context.getString(R.string.generate_word_doc)
+            _scanProgress.value = str(R.string.generate_word_doc)
+            var createdFile: File? = null
+            var documentSaved = false
             try {
                 // Determine template profile
                 val templateProfile = if (reviewState.selectedTemplateId != null && reviewState.selectedTemplateId != "default") {
@@ -949,17 +1081,18 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     pages = reviewState.pages
                 )
 
-                // Save Word Document
-                val documentsDir = File(context.filesDir, "generated_docs").apply { mkdirs() }
+                // Save Word Document: unique physical file, Unicode (e.g. Arabic) visible title.
                 val docId = UUID.randomUUID().toString()
-                val safeTitle = reviewState.documentTitle.replace("[^a-zA-Z0-9_\\-\\u0600-\\u06FF]".toRegex(), "_").take(48)
-                val docxFile = File(documentsDir, "$safeTitle.docx")
-
-                val docxEngine = DocxEngine()
-                docxEngine.generateDocx(wordModel, docxFile, templateProfile, templateFile)
-
-                if (!docxFile.exists() || docxFile.length() == 0L) {
-                    throw IllegalStateException("Generated DOCX file is missing or empty.")
+                val visibleTitle = DocumentFileNames.displayTitle(reviewState.documentTitle) + ".docx"
+                val docxFile = withContext(Dispatchers.IO) {
+                    val documentsDir = File(context.filesDir, "generated_docs").apply { mkdirs() }
+                    val file = DocumentFileNames.createUniqueFile(documentsDir, reviewState.documentTitle, "docx")
+                    createdFile = file
+                    DocxEngine().generateDocx(wordModel, file, templateProfile, templateFile)
+                    if (!file.exists() || file.length() == 0L) {
+                        throw IllegalStateException("Generated DOCX file is missing or empty.")
+                    }
+                    file
                 }
 
                 val allText = reviewState.pages.joinToString("\n\n") { it.rawText }
@@ -968,7 +1101,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 // Insert into Room DocumentDao
                 val docEntity = DocumentEntity(
                     id = docId,
-                    title = docxFile.name,
+                    title = visibleTitle,
                     fileType = "DOCX",
                     filePath = docxFile.absolutePath,
                     fileSize = docxFile.length(),
@@ -976,12 +1109,13 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     pageOrSlideCount = reviewState.pages.size,
                     templateId = templateProfile.templateId,
                     templateName = templateProfile.name,
-                    providerUsed = defaultProvider.value,
+                    providerUsed = "OCR",
                     summary = "Scanned Document (${reviewState.pages.size} pages) • ${docxFile.length() / 1024} KB",
                     textContent = allText,
                     isOrchestratorVerified = true
                 )
                 database.documentDao().insertDocument(docEntity)
+                documentSaved = true
 
                 // Deliver real file + clipboard
                 deliveryManager.deliverBoth(
@@ -993,7 +1127,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 )
 
                 // Add messages to active chat conversation
-                val scanActionLabel = context.getString(R.string.chat_scan_document)
+                val scanActionLabel = str(R.string.chat_scan_document)
                 val userMsg = ChatMessageEntity(
                     id = UUID.randomUUID().toString(),
                     sessionId = sessionId,
@@ -1004,9 +1138,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
                 val isArabic = reviewState.pages.any { it.isArabicDetected }
                 val assistantReply = if (isArabic) {
-                    "تم مسح ومعالجة المستند ضوئياً بنجاح وتوليد ملف Word (DOCX) أصلي قابل للتحرير بالكامل: **${docxFile.name}** (${reviewState.pages.size} صفحات). تم نسخ المحتوى النصي إلى الحافظة وحفظ الملف في مكتبتك."
+                    "تم مسح ومعالجة المستند ضوئياً بنجاح وتوليد ملف Word (DOCX) أصلي قابل للتحرير بالكامل: **${docEntity.title}** (${reviewState.pages.size} صفحات). تم نسخ المحتوى النصي إلى الحافظة وحفظ الملف في مكتبتك."
                 } else {
-                    "I've scanned and transformed your document into a genuine, fully editable Word document: **${docxFile.name}** (${reviewState.pages.size} pages). The text has been copied to your clipboard and the DOCX is saved in your Library."
+                    "I've scanned and transformed your document into a genuine, fully editable Word document: **${docEntity.title}** (${reviewState.pages.size} pages). The text has been copied to your clipboard and the DOCX is saved in your Library."
                 }
 
                 val assistantMsg = ChatMessageEntity(
@@ -1022,9 +1156,14 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 database.chatDao().insertMessage(assistantMsg)
                 database.conversationDao().updateLastMessage(sessionId, assistantReply.take(60))
 
-                _snackBarMessage.value = context.getString(R.string.msg_generated_copied)
+                _snackBarMessage.value = str(R.string.msg_generated_copied)
                 _scannedReviewState.value = null
+            } catch (e: CancellationException) {
+                if (!documentSaved) withContext(NonCancellable + Dispatchers.IO) { createdFile?.delete() }
+                throw e
             } catch (e: Exception) {
+                Log.e(TAG, "generateDocxFromScannedDocument failed", e)
+                if (!documentSaved) withContext(Dispatchers.IO) { createdFile?.delete() }
                 _snackBarMessage.value = "Failed to generate Word document: ${e.message}"
             } finally {
                 _isGenerating.value = false
@@ -1033,58 +1172,124 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    /** Real AI operation (correct / format / translate / summarize ...) on a Library document. */
     fun executeFollowUpAiAction(actionType: String, docId: String) {
+        val operation = ContentOperation.fromActionKey(actionType) ?: return
+        if (!aiRequestInFlight.compareAndSet(false, true)) return
         val sessionId = _currentSessionId.value
         viewModelScope.launch {
             _isGenerating.value = true
             try {
                 val doc = database.documentDao().getDocumentById(docId)
                 if (doc == null) {
-                    _snackBarMessage.value = "Document not found"
-                    _isGenerating.value = false
+                    _snackBarMessage.value = str(R.string.msg_file_not_found)
                     return@launch
                 }
 
-                val userActionPrompt = when (actionType.uppercase()) {
-                    "SPELLING" -> context.getString(R.string.scan_ai_spelling)
-                    "FORMAT" -> context.getString(R.string.scan_ai_format)
-                    "TRANSLATE" -> context.getString(R.string.scan_ai_translate)
-                    "SUMMARIZE" -> context.getString(R.string.scan_ai_summarize)
+                val userActionPrompt = when (operation) {
+                    ContentOperation.CORRECT -> str(R.string.scan_ai_spelling)
+                    ContentOperation.IMPROVE_FORMAT -> str(R.string.scan_ai_format)
+                    ContentOperation.TRANSLATE -> str(R.string.scan_ai_translate)
+                    ContentOperation.SUMMARIZE -> str(R.string.scan_ai_summarize)
                     else -> actionType
                 }
 
-                val userMsg = ChatMessageEntity(
-                    id = UUID.randomUUID().toString(),
-                    sessionId = sessionId,
-                    isUser = true,
-                    content = "$userActionPrompt: ${doc.title}"
+                if (database.conversationDao().getConversationById(sessionId) == null) {
+                    database.conversationDao().insertConversation(
+                        ConversationEntity(id = sessionId, title = str(R.string.new_conversation))
+                    )
+                }
+                database.chatDao().insertMessage(
+                    ChatMessageEntity(
+                        id = UUID.randomUUID().toString(),
+                        sessionId = sessionId,
+                        isUser = true,
+                        content = "$userActionPrompt: ${doc.title}"
+                    )
                 )
-                database.chatDao().insertMessage(userMsg)
 
-                val result = orchestrator.performFollowUpAiAction(
-                    actionType = actionType,
-                    documentText = doc.textContent,
-                    providerName = defaultProvider.value
+                val (result, provider) = orchestrator.performContentOperation(
+                    operation = operation,
+                    content = doc.textContent,
+                    uiLanguage = appLanguage.value
                 )
 
-                val assistantMsg = ChatMessageEntity(
-                    id = UUID.randomUUID().toString(),
-                    sessionId = sessionId,
-                    isUser = false,
-                    content = result,
-                    attachedDocId = doc.id,
-                    attachedDocTitle = doc.title,
-                    attachedDocType = doc.fileType,
-                    orchestratorNote = "AI Refinement: $userActionPrompt"
+                database.chatDao().insertMessage(
+                    ChatMessageEntity(
+                        id = UUID.randomUUID().toString(),
+                        sessionId = sessionId,
+                        isUser = false,
+                        content = result,
+                        attachedDocId = doc.id,
+                        attachedDocTitle = doc.title,
+                        attachedDocType = doc.fileType,
+                        orchestratorNote = "$userActionPrompt • ${provider.name}"
+                    )
                 )
-                database.chatDao().insertMessage(assistantMsg)
                 database.conversationDao().updateLastMessage(sessionId, result.take(60))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AiException) {
+                _snackBarMessage.value = aiErrorMessage(e, defaultProvider.value)
             } catch (e: Exception) {
-                _snackBarMessage.value = "AI action failed: ${e.message}"
+                reportError("executeFollowUpAiAction", e)
             } finally {
                 _isGenerating.value = false
+                aiRequestInFlight.set(false)
             }
         }
+    }
+
+    // ------------------------------------------------------------------ localization helpers
+
+    /** Resources in the app's selected language (the application context follows the system locale). */
+    private fun localizedResources(): android.content.res.Resources {
+        val config = android.content.res.Configuration(context.resources.configuration)
+        config.setLocale(Locale(appLanguage.value.ifBlank { "en" }))
+        return context.createConfigurationContext(config).resources
+    }
+
+    private fun str(id: Int, vararg args: Any): String =
+        if (args.isEmpty()) localizedResources().getString(id) else localizedResources().getString(id, *args)
+
+    /** Localized reason for an AI failure (provider detail appended when useful; never secrets). */
+    private fun aiErrorReason(e: AiException): String {
+        val base = str(aiErrorStringRes(e.kind))
+        val showDetail = e.kind in setOf(
+            AiErrorKind.BAD_REQUEST, AiErrorKind.MODEL_NOT_FOUND, AiErrorKind.MALFORMED_RESPONSE,
+            AiErrorKind.CONTENT_BLOCKED, AiErrorKind.PERMISSION_DENIED, AiErrorKind.UNKNOWN, AiErrorKind.INVALID_CONFIGURATION
+        )
+        return if (showDetail && !e.detail.isNullOrBlank()) "$base (${e.detail})" else base
+    }
+
+    /** Full message: names the default provider and lets the user decide what to do next. */
+    private fun aiErrorMessage(e: AiException, providerName: String): String = when (e.kind) {
+        AiErrorKind.NO_DEFAULT_PROVIDER -> str(R.string.ai_err_no_default_provider)
+        else -> str(R.string.ai_error_default_provider_failed, providerName.ifBlank { "?" }, aiErrorReason(e))
+    }
+
+    /**
+     * Launches [block] in viewModelScope; an unexpected exception is reported through the snackbar
+     * instead of propagating to the default handler (which would crash the app).
+     */
+    private fun launchSafely(operation: String, block: suspend CoroutineScope.() -> Unit) =
+        viewModelScope.launch {
+            try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportError(operation, e)
+            }
+        }
+
+    /** Logs an unexpected failure and shows the existing snackbar feedback instead of crashing. */
+    private fun reportError(operation: String, e: Throwable) {
+        Log.e(TAG, "$operation failed", e)
+        _snackBarMessage.value = str(
+            R.string.msg_operation_failed,
+            e.message ?: e.javaClass.simpleName
+        )
     }
 
     fun clearSnackBar() {

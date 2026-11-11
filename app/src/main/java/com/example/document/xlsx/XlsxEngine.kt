@@ -1,5 +1,6 @@
 package com.example.document.xlsx
 
+import com.example.document.EngineResult
 import com.example.document.model.SheetModel
 import com.example.document.model.SpreadsheetModel
 import com.example.template.domain.TemplateProfile
@@ -24,72 +25,188 @@ class XlsxEngine {
         outputFile: File,
         template: TemplateProfile = TemplateProfile.defaultProfile(),
         originalTemplateFile: File? = null
-    ): File {
+    ): File = generateXlsxDetailed(model, outputFile, template, originalTemplateFile).file
+
+    /** Generates the workbook and reports whether the uploaded template file itself was used. */
+    fun generateXlsxDetailed(
+        model: SpreadsheetModel,
+        outputFile: File,
+        template: TemplateProfile = TemplateProfile.defaultProfile(),
+        originalTemplateFile: File? = null
+    ): EngineResult {
         if (outputFile.parentFile?.exists() == false) {
             outputFile.parentFile?.mkdirs()
         }
 
         if (originalTemplateFile != null && originalTemplateFile.exists() && originalTemplateFile.length() > 0) {
-            try {
+            val reason = try {
                 if (generateFromExistingTemplate(originalTemplateFile, model, outputFile, template)) {
-                    return outputFile
+                    return EngineResult(outputFile, templateApplied = true)
                 }
+                "the template is not an Excel (XLSX) workbook with a style sheet"
             } catch (e: Exception) {
-                // Fall back to clean default generation
+                "the template file could not be read"
             }
+            generateDefaultXlsx(model, outputFile, template)
+            return EngineResult(
+                outputFile,
+                templateApplied = false,
+                notes = listOf("The template workbook could not be used ($reason); only its fonts and header colors were applied.")
+            )
         }
 
         generateDefaultXlsx(model, outputFile, template)
-        return outputFile
+        return EngineResult(outputFile, templateApplied = false)
     }
 
+    /** Cell style indices (cellXfs) used for body text, header cells and numbers. */
+    private data class CellStyles(val body: Int, val header: Int, val number: Int)
+
+    /**
+     * Uses the template workbook: keeps its styles, theme and shared parts; replaces only the
+     * worksheets. SmartBubble's header/body styles are APPENDED to the template's styles.xml so
+     * every style index the new sheets reference exists.
+     */
     private fun generateFromExistingTemplate(
         templateFile: File,
         model: SpreadsheetModel,
         outputFile: File,
         template: TemplateProfile
     ): Boolean {
-        val entries = mutableMapOf<String, ByteArray>()
-
+        val entries = linkedMapOf<String, ByteArray>()
         ZipInputStream(FileInputStream(templateFile)).use { zip ->
             var entry = zip.nextEntry
             while (entry != null) {
-                val baos = ByteArrayOutputStream()
-                zip.copyTo(baos)
-                entries[entry.name] = baos.toByteArray()
+                if (!entry.isDirectory) {
+                    val baos = ByteArrayOutputStream()
+                    zip.copyTo(baos)
+                    entries[entry.name] = baos.toByteArray()
+                }
                 zip.closeEntry()
                 entry = zip.nextEntry
             }
         }
 
-        // If styles.xml is present, keep it unchanged so the template's exact colors, borders, and fonts are preserved
-        // Remove existing worksheet files and inject generated worksheets
-        val oldSheetKeys = entries.keys.filter { it.startsWith("xl/worksheets/") }.toList()
-        for (key in oldSheetKeys) {
-            entries.remove(key)
-        }
+        fun text(name: String) = entries[name]?.let { String(it, Charsets.UTF_8) }
+        var workbook = text("xl/workbook.xml") ?: return false
+        var workbookRels = text("xl/_rels/workbook.xml.rels") ?: return false
+        var contentTypes = text("[Content_Types].xml") ?: return false
+        val stylesPath = Regex("""Target="/?(?:xl/)?([^"]*styles\.xml)"""").find(workbookRels)?.groupValues?.get(1)
+            ?.let { "xl/$it" } ?: return false
+        val styles = text(stylesPath) ?: return false
 
-        // Add model sheets
-        for (i in model.sheets.indices) {
-            val sheet = model.sheets[i]
-            val sheetNum = i + 1
-            entries["xl/worksheets/sheet$sheetNum.xml"] = buildSheetXml(sheet).toByteArray(Charsets.UTF_8)
-        }
+        val (mergedStyles, cellStyles) = appendSmartBubbleStyles(
+            styles, template.spreadsheetDefaultFont, template.tableHeaderBgHex
+        ) ?: return false
+        entries[stylesPath] = mergedStyles.toByteArray(Charsets.UTF_8)
 
-        // Update workbook.xml, rels, and content types
-        entries["xl/workbook.xml"] = buildWorkbookXml(model).toByteArray(Charsets.UTF_8)
-        entries["xl/_rels/workbook.xml.rels"] = buildWorkbookRelsXml(model.sheets.size).toByteArray(Charsets.UTF_8)
-        entries["[Content_Types].xml"] = buildContentTypesXml(model.sheets.size).toByteArray(Charsets.UTF_8)
+        // Remove the template's sheets and the parts that only make sense with them.
+        val removedPrefixes = listOf(
+            "xl/worksheets/", "xl/chartsheets/", "xl/drawings/", "xl/charts/", "xl/tables/",
+            "xl/pivotTables/", "xl/pivotCache/", "xl/queryTables/", "xl/calcChain.xml"
+        )
+        entries.keys.filter { k -> removedPrefixes.any { k.startsWith(it) } }.forEach { entries.remove(it) }
+        contentTypes = contentTypes.replace(
+            Regex("""<Override[^>]*PartName="/xl/(worksheets|chartsheets|drawings|charts|tables|pivotTables|pivotCache|queryTables)/[^"]*"[^>]*/>"""), ""
+        ).replace(Regex("""<Override[^>]*PartName="/xl/calcChain\.xml"[^>]*/>"""), "")
+        workbookRels = workbookRels.replace(
+            Regex("""<Relationship[^>]*Type="[^"]*/relationships/(worksheet|chartsheet|calcChain|pivotCacheDefinition)"[^>]*/>"""), ""
+        )
+        workbook = workbook
+            .replace(Regex("""<definedNames>[\s\S]*?</definedNames>"""), "")
+            .replace(Regex("""<pivotCaches>[\s\S]*?</pivotCaches>"""), "")
+            .replace(Regex("""\b(activeTab|firstSheet)="\d+""""), "$1=\"0\"")
+
+        val usedIds = Regex("""Id="([^"]+)"""").findAll(workbookRels).map { it.groupValues[1] }.toSet()
+        val sheetsXml = StringBuilder("<sheets>")
+        val rels = StringBuilder()
+        val overrides = StringBuilder()
+        model.sheets.forEachIndexed { i, sheet ->
+            val n = i + 1
+            var relId = "rIdSb$n"
+            var k = 0
+            while (relId in usedIds) relId = "rIdSb${n}_${++k}"
+            sheetsXml.append("<sheet name=\"${escapeXml(sheet.name)}\" sheetId=\"$n\" r:id=\"$relId\"/>")
+            rels.append("<Relationship Id=\"$relId\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet$n.xml\"/>")
+            overrides.append("<Override PartName=\"/xl/worksheets/sheet$n.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>")
+            entries["xl/worksheets/sheet$n.xml"] = buildSheetXml(sheet, cellStyles).toByteArray(Charsets.UTF_8)
+        }
+        sheetsXml.append("</sheets>")
+
+        workbook = when {
+            Regex("""<sheets\s*/>""").containsMatchIn(workbook) -> workbook.replace(Regex("""<sheets\s*/>"""), sheetsXml.toString())
+            workbook.contains("<sheets>") -> workbook.replace(Regex("""<sheets>[\s\S]*?</sheets>"""), sheetsXml.toString())
+            else -> return false
+        }
+        if (!workbook.contains("xmlns:r=")) {
+            workbook = workbook.replaceFirst("<workbook ", "<workbook xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" ")
+        }
+        workbookRels = workbookRels.replace("</Relationships>", "$rels</Relationships>")
+        contentTypes = contentTypes.replace("</Types>", "$overrides</Types>")
+            // An .xltx declares a template main part; the output must be a normal workbook.
+            .replace(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"
+            )
+
+        entries["xl/workbook.xml"] = workbook.toByteArray(Charsets.UTF_8)
+        entries["xl/_rels/workbook.xml.rels"] = workbookRels.toByteArray(Charsets.UTF_8)
+        entries["[Content_Types].xml"] = contentTypes.toByteArray(Charsets.UTF_8)
 
         ZipOutputStream(FileOutputStream(outputFile)).use { outZip ->
-            for ((name, data) in entries) {
+            val ordered = entries.entries.sortedBy { if (it.key == "[Content_Types].xml") 0 else 1 }
+            for ((name, data) in ordered) {
                 outZip.putNextEntry(ZipEntry(name))
                 outZip.write(data)
                 outZip.closeEntry()
             }
         }
-
         return true
+    }
+
+    /**
+     * Appends 2 fonts, 1 fill, 1 border and 3 cell formats to an existing styles.xml and returns
+     * the merged XML plus the new cell style indices; null if the style sheet is not usable.
+     */
+    private fun appendSmartBubbleStyles(styles: String, font: String, headerFillHex: String): Pair<String, CellStyles>? {
+        val fillHex = headerFillHex.removePrefix("#").takeLast(6).let {
+            if (Regex("[0-9A-Fa-f]{6}").matches(it)) it.uppercase() else "24D6E8"
+        }
+        val safeFont = escapeXml(font)
+        var xml = styles
+
+        fun appendTo(tag: String, itemTag: String, items: List<String>): Int? {
+            val open = Regex("""<$tag(\s[^>]*)?>""").find(xml) ?: return null
+            if (open.value.endsWith("/>")) return null
+            val close = xml.indexOf("</$tag>", open.range.last)
+            if (close < 0) return null
+            val block = xml.substring(open.range.last + 1, close)
+            val existing = Regex("""<$itemTag(\s[^>]*)?/?>""").findAll(block).count()
+            val newOpen = if (open.value.contains("count=")) {
+                open.value.replace(Regex("""count="\d+""""), "count=\"${existing + items.size}\"")
+            } else open.value
+            xml = xml.substring(0, open.range.first) + newOpen + block + items.joinToString("") + xml.substring(close)
+            return existing
+        }
+
+        val fontBase = appendTo("fonts", "font", listOf(
+            "<font><sz val=\"11\"/><color rgb=\"FF1F2937\"/><name val=\"$safeFont\"/></font>",
+            "<font><b/><sz val=\"11\"/><color rgb=\"FFFFFFFF\"/><name val=\"$safeFont\"/></font>"
+        )) ?: return null
+        val fillBase = appendTo("fills", "fill", listOf(
+            "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF$fillHex\"/><bgColor indexed=\"64\"/></patternFill></fill>"
+        )) ?: return null
+        val borderBase = appendTo("borders", "border", listOf(
+            "<border><left style=\"thin\"><color rgb=\"FFD1D5DB\"/></left><right style=\"thin\"><color rgb=\"FFD1D5DB\"/></right><top style=\"thin\"><color rgb=\"FFD1D5DB\"/></top><bottom style=\"thin\"><color rgb=\"FFD1D5DB\"/></bottom><diagonal/></border>"
+        )) ?: return null
+        val bodyFont = fontBase
+        val headerFont = fontBase + 1
+        val xfBase = appendTo("cellXfs", "xf", listOf(
+            "<xf numFmtId=\"0\" fontId=\"$bodyFont\" fillId=\"0\" borderId=\"$borderBase\" xfId=\"0\" applyFont=\"1\" applyBorder=\"1\"/>",
+            "<xf numFmtId=\"0\" fontId=\"$headerFont\" fillId=\"$fillBase\" borderId=\"$borderBase\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\" wrapText=\"1\"/></xf>",
+            "<xf numFmtId=\"0\" fontId=\"$bodyFont\" fillId=\"0\" borderId=\"$borderBase\" xfId=\"0\" applyFont=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"right\" vertical=\"center\"/></xf>"
+        )) ?: return null
+        return xml to CellStyles(body = xfBase, header = xfBase + 1, number = xfBase + 2)
     }
 
     private fun generateDefaultXlsx(
@@ -125,7 +242,7 @@ class XlsxEngine {
                 val sheet = model.sheets[i]
                 val sheetNum = i + 1
                 zip.putNextEntry(ZipEntry("xl/worksheets/sheet$sheetNum.xml"))
-                zip.write(buildSheetXml(sheet).toByteArray(Charsets.UTF_8))
+                zip.write(buildSheetXml(sheet, CellStyles(body = 0, header = 1, number = 2)).toByteArray(Charsets.UTF_8))
                 zip.closeEntry()
             }
         }
@@ -226,10 +343,14 @@ class XlsxEngine {
 </styleSheet>""".trimIndent()
     }
 
-    private fun buildSheetXml(sheet: SheetModel): String {
+    private fun buildSheetXml(sheet: SheetModel, styles: CellStyles): String {
         val sb = StringBuilder()
+        val rtl = (sheet.headers + sheet.rows.flatten().map { it.toString() }).any { t -> t.any { it in '\u0600'..'\u06FF' } }
         sb.append("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">""")
+        if (rtl) sb.append("""
+    <sheetViews><sheetView rightToLeft="1" workbookViewId="0"/></sheetViews>""")
+        sb.append("""
     <cols>""")
         val colCount = sheet.headers.size.coerceAtLeast(1)
         for (c in 1..colCount) {
@@ -242,7 +363,7 @@ class XlsxEngine {
 
         for ((colIdx, header) in sheet.headers.withIndex()) {
             val colLetter = getColumnLetter(colIdx + 1)
-            sb.append("\n            <c r=\"${colLetter}1\" s=\"1\" t=\"inlineStr\"><is><t>${escapeXml(header)}</t></is></c>")
+            sb.append("\n            <c r=\"${colLetter}1\" s=\"${styles.header}\" t=\"inlineStr\"><is><t>${escapeXml(header)}</t></is></c>")
         }
         sb.append("\n        </row>")
 
@@ -252,12 +373,17 @@ class XlsxEngine {
             for ((colIdx, cell) in row.withIndex()) {
                 val colLetter = getColumnLetter(colIdx + 1)
                 val str = cell.toString()
-                val isNum = str.replace(",", "").replace("$", "").toDoubleOrNull() != null
+                val numeric = str.replace(",", "").replace("$", "").trim()
+                val parsed = numeric.toDoubleOrNull()
+                // Only plain finite numbers become numeric cells; keep IDs with leading zeros
+                // (e.g. "007") and values such as "NaN"/"1e5"/"+5%" as text.
+                val isNum = parsed != null && parsed.isFinite() && numeric.none { it.isLetter() } &&
+                    !(numeric.length > 1 && numeric.startsWith("0") && !numeric.startsWith("0."))
                 if (isNum && !str.startsWith("+")) {
                     val cleanNum = str.replace(",", "").replace("$", "").trim()
-                    sb.append("\n            <c r=\"$colLetter$rowNum\" s=\"2\"><v>$cleanNum</v></c>")
+                    sb.append("\n            <c r=\"$colLetter$rowNum\" s=\"${styles.number}\"><v>$cleanNum</v></c>")
                 } else {
-                    sb.append("\n            <c r=\"$colLetter$rowNum\" s=\"0\" t=\"inlineStr\"><is><t>${escapeXml(str)}</t></is></c>")
+                    sb.append("\n            <c r=\"$colLetter$rowNum\" s=\"${styles.body}\" t=\"inlineStr\"><is><t>${escapeXml(str)}</t></is></c>")
                 }
             }
             sb.append("\n        </row>")
@@ -269,8 +395,8 @@ class XlsxEngine {
             val labelCol = getColumnLetter((sheet.headers.size - 1).coerceAtLeast(1))
             sb.append("""
         <row r="$rowNum" ht="24" customHeight="1">
-            <c r="$labelCol$rowNum" s="1" t="inlineStr"><is><t>${escapeXml(sheet.summaryFormulaLabel ?: "Total")}</t></is></c>
-            <c r="$totalCol$rowNum" s="1"><f>${escapeXml(sheet.summaryFormula)}</f></c>
+            ${if (labelCol != totalCol) "<c r=\"$labelCol$rowNum\" s=\"${styles.header}\" t=\"inlineStr\"><is><t>${escapeXml(sheet.summaryFormulaLabel ?: "Total")}</t></is></c>" else ""}
+            <c r="$totalCol$rowNum" s="${styles.header}"><f>${escapeXml(sheet.summaryFormula)}</f></c>
         </row>""")
         }
 
