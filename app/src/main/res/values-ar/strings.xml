@@ -48,6 +48,7 @@
     <string name="template_added_on">تاريخ الإضافة: %1$s</string>
     <string name="template_preview">معاينة التنسيق</string>
     <string name="template_set_default">تعيين كافتراضي</string>
+    <string name="template_remove_default">إزالة كافتراضي</string>
     <string name="template_delete">حذف القالب</string>
     <string name="template_empty_title">لا توجد قوالب مرفوعة</string>
     <string name="template_empty_desc">ارفع ملفاتك المرجعية بصيغة DOCX أو PPTX أو XLSX لتطبيق هويتك وخطوطك على المستندات المولدة.</string>
@@ -115,6 +116,7 @@
     <string name="msg_template_imported">تم تحليل القالب \'%1$s\' وحفظه بنجاح!</string>
     <string name="msg_template_deleted">تم حذف القالب.</string>
     <string name="msg_template_set_default">تم تعيين %1$s كقالب %2$s الافتراضي.</string>
+    <string name="msg_template_removed_default">تمت إزالة %1$s من القوالب الافتراضية.</string>
     <string name="msg_document_deleted">تم حذف المستند.</string>
     <string name="msg_document_renamed">تم تغيير الاسم إلى %1$s</string>
     <string name="msg_testing_connection">جاري اختبار الاتصال بـ %1$s...</string>

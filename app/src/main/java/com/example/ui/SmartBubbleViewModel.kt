@@ -573,10 +573,15 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    private val isUpdatingDefault = java.util.concurrent.atomic.AtomicBoolean(false)
+
     fun deleteTemplate(template: TemplateEntity) {
         viewModelScope.launch {
             if (template.originalFilePath.isNotBlank()) {
                 File(template.originalFilePath).delete()
+            }
+            if (_selectedTemplateForChat.value?.id == template.id) {
+                _selectedTemplateForChat.value = null
             }
             database.templateDao().deleteTemplate(template)
             _snackBarMessage.value = context.getString(R.string.msg_template_deleted)
@@ -584,15 +589,49 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun setDefaultTemplate(template: TemplateEntity) {
+        if (!isUpdatingDefault.compareAndSet(false, true)) return
         viewModelScope.launch {
-            val updated = when (template.fileType) {
-                "DOCX" -> template.copy(isDefaultWord = true)
-                "PPTX" -> template.copy(isDefaultPpt = true)
-                "XLSX" -> template.copy(isDefaultExcel = true)
-                else -> template.copy(isDefaultWord = true)
+            try {
+                when (template.fileType.uppercase()) {
+                    "DOCX" -> {
+                        database.templateDao().clearDefaultWord()
+                        database.templateDao().updateTemplate(template.copy(isDefaultWord = true))
+                    }
+                    "PPTX" -> {
+                        database.templateDao().clearDefaultPpt()
+                        database.templateDao().updateTemplate(template.copy(isDefaultPpt = true))
+                    }
+                    "XLSX" -> {
+                        database.templateDao().clearDefaultExcel()
+                        database.templateDao().updateTemplate(template.copy(isDefaultExcel = true))
+                    }
+                    else -> {
+                        database.templateDao().clearDefaultWord()
+                        database.templateDao().updateTemplate(template.copy(isDefaultWord = true))
+                    }
+                }
+                _snackBarMessage.value = context.getString(R.string.msg_template_set_default, template.name, template.fileType)
+            } finally {
+                isUpdatingDefault.set(false)
             }
-            database.templateDao().updateTemplate(updated)
-            _snackBarMessage.value = context.getString(R.string.msg_template_set_default, template.name, template.fileType)
+        }
+    }
+
+    fun removeDefaultTemplate(template: TemplateEntity) {
+        if (!isUpdatingDefault.compareAndSet(false, true)) return
+        viewModelScope.launch {
+            try {
+                val updated = when (template.fileType.uppercase()) {
+                    "DOCX" -> template.copy(isDefaultWord = false)
+                    "PPTX" -> template.copy(isDefaultPpt = false)
+                    "XLSX" -> template.copy(isDefaultExcel = false)
+                    else -> template.copy(isDefaultWord = false)
+                }
+                database.templateDao().updateTemplate(updated)
+                _snackBarMessage.value = context.getString(R.string.msg_template_removed_default, template.name)
+            } finally {
+                isUpdatingDefault.set(false)
+            }
         }
     }
 

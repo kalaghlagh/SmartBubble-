@@ -48,6 +48,7 @@
     <string name="template_added_on">Ajouté : %1$s</string>
     <string name="template_preview">Aperçu du profil</string>
     <string name="template_set_default">Définir par défaut</string>
+    <string name="template_remove_default">Retirer par défaut</string>
     <string name="template_delete">Supprimer le modèle</string>
     <string name="template_empty_title">Aucun modèle téléversé</string>
     <string name="template_empty_desc">Importez vos fichiers DOCX, PPTX ou XLSX de référence pour appliquer vos polices et styles aux documents générés.</string>
@@ -115,6 +116,7 @@
     <string name="msg_template_imported">Modèle \'%1$s\' analysé et enregistré !</string>
     <string name="msg_template_deleted">Modèle supprimé.</string>
     <string name="msg_template_set_default">%1$s défini comme modèle %2$s par défaut.</string>
+    <string name="msg_template_removed_default">%1$s n\'est plus le modèle par défaut.</string>
     <string name="msg_document_deleted">Document supprimé.</string>
     <string name="msg_document_renamed">Renommé en %1$s</string>
     <string name="msg_testing_connection">Test de connexion à %1$s...</string>

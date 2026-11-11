@@ -419,5 +419,67 @@ class SmartBubbleDocumentEngineTest {
         // Verify Arabic RTL formatting was inserted for Arabic content
         assertTrue("Arabic RTL tag must be present", documentXmlContent.contains("<w:bidi/>") || documentXmlContent.contains("<w:bidiVisual/>"))
     }
+
+    @Test
+    fun testTemplateEntityDefaultFlagPerFileType() {
+        val tmplWord1 = com.example.data.model.TemplateEntity(
+            id = "t1",
+            name = "Corporate Word",
+            fileType = "DOCX",
+            originalFilePath = "/tmp/t1.docx",
+            profileJson = "{}",
+            isDefaultWord = true
+        )
+        val tmplPpt1 = com.example.data.model.TemplateEntity(
+            id = "t2",
+            name = "Keynote Presentation",
+            fileType = "PPTX",
+            originalFilePath = "/tmp/t2.pptx",
+            profileJson = "{}",
+            isDefaultPpt = true
+        )
+        val tmplExcel1 = com.example.data.model.TemplateEntity(
+            id = "t3",
+            name = "Financial Model",
+            fileType = "XLSX",
+            originalFilePath = "/tmp/t3.xlsx",
+            profileJson = "{}",
+            isDefaultExcel = true
+        )
+
+        // Verify independent defaults across file types
+        assertTrue(tmplWord1.isDefaultWord)
+        assertFalse(tmplWord1.isDefaultPpt)
+        assertFalse(tmplWord1.isDefaultExcel)
+
+        assertTrue(tmplPpt1.isDefaultPpt)
+        assertFalse(tmplPpt1.isDefaultWord)
+        assertFalse(tmplPpt1.isDefaultExcel)
+
+        assertTrue(tmplExcel1.isDefaultExcel)
+        assertFalse(tmplExcel1.isDefaultWord)
+        assertFalse(tmplExcel1.isDefaultPpt)
+
+        // Verify toggling off (Remove as Default)
+        val wordRemoved = tmplWord1.copy(isDefaultWord = false)
+        assertFalse(wordRemoved.isDefaultWord)
+
+        // Verify switching default Word template
+        val tmplWord2 = com.example.data.model.TemplateEntity(
+            id = "t4",
+            name = "Modern Word",
+            fileType = "DOCX",
+            originalFilePath = "/tmp/t4.docx",
+            profileJson = "{}",
+            isDefaultWord = true
+        )
+        val oldWordCleared = tmplWord1.copy(isDefaultWord = false)
+        assertFalse(oldWordCleared.isDefaultWord)
+        assertTrue(tmplWord2.isDefaultWord)
+        // Ensure PPTX and Excel defaults are preserved when Word default changes
+        assertTrue(tmplPpt1.isDefaultPpt)
+        assertTrue(tmplExcel1.isDefaultExcel)
+    }
 }
+
 

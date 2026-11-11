@@ -254,6 +254,7 @@ fun TemplatesScreen(
                     TemplateItemCard(
                         template = template,
                         onSetDefault = { viewModel.setDefaultTemplate(template) },
+                        onRemoveDefault = { viewModel.removeDefaultTemplate(template) },
                         onDelete = { viewModel.deleteTemplate(template) },
                         onSelectForChat = {
                             viewModel.selectTemplateForChat(template)
@@ -322,6 +323,7 @@ fun TemplatesScreen(
 fun TemplateItemCard(
     template: TemplateEntity,
     onSetDefault: () -> Unit,
+    onRemoveDefault: () -> Unit,
     onDelete: () -> Unit,
     onSelectForChat: () -> Unit
 ) {
@@ -352,6 +354,13 @@ fun TemplateItemCard(
         } else {
             "${template.fileSize / 1024} KB"
         }
+    }
+
+    val isDefault = when (template.fileType.uppercase()) {
+        "DOCX" -> template.isDefaultWord
+        "PPTX" -> template.isDefaultPpt
+        "XLSX" -> template.isDefaultExcel
+        else -> template.isDefaultWord
     }
 
     Surface(
@@ -387,44 +396,60 @@ fun TemplateItemCard(
 
             Spacer(modifier = Modifier.width(14.dp))
 
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = template.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    if (template.isDefaultWord || template.isDefaultPpt || template.isDefaultExcel) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = stringResource(R.string.template_default_badge),
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
+            ) {
+                // 1. Template title on its own line
+                Text(
+                    text = template.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                // 2. Default badge directly below the template title, on its own line, before metadata
+                if (isDefault) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                        modifier = Modifier.testTag("default_badge_${template.id}")
+                    ) {
+                        Text(
+                            text = stringResource(R.string.template_default_badge),
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
                     }
                 }
-                Spacer(modifier = Modifier.height(3.dp))
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // 3. File metadata (DOCX/PPTX/XLSX, file size)
                 Text(
                     text = "${template.fileType} • $sizeFormatted",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
+
+                // 4. Added date
                 Text(
                     text = stringResource(R.string.template_added_on, formattedDate),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    fontSize = 11.sp
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
@@ -453,14 +478,29 @@ fun TemplateItemCard(
                             onSelectForChat()
                         }
                     )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.template_set_default)) },
-                        leadingIcon = { Icon(Icons.Default.CheckCircle, contentDescription = null) },
-                        onClick = {
-                            menuExpanded = false
-                            onSetDefault()
-                        }
-                    )
+
+                    if (!isDefault) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.template_set_default)) },
+                            leadingIcon = { Icon(Icons.Default.CheckCircle, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onSetDefault()
+                            },
+                            modifier = Modifier.testTag("menu_set_default_${template.id}")
+                        )
+                    } else {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.template_remove_default)) },
+                            leadingIcon = { Icon(Icons.Default.RemoveCircleOutline, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onRemoveDefault()
+                            },
+                            modifier = Modifier.testTag("menu_remove_default_${template.id}")
+                        )
+                    }
+
                     HorizontalDivider()
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.template_delete), color = MaterialTheme.colorScheme.error) },
@@ -468,7 +508,8 @@ fun TemplateItemCard(
                         onClick = {
                             menuExpanded = false
                             onDelete()
-                        }
+                        },
+                        modifier = Modifier.testTag("menu_delete_${template.id}")
                     )
                 }
             }

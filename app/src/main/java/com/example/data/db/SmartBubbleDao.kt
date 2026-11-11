@@ -58,6 +58,15 @@ interface TemplateDao {
     @Query("SELECT * FROM templates WHERE isDefaultExcel = 1 LIMIT 1")
     suspend fun getDefaultExcelTemplate(): TemplateEntity?
 
+    @Query("UPDATE templates SET isDefaultWord = 0 WHERE isDefaultWord = 1")
+    suspend fun clearDefaultWord()
+
+    @Query("UPDATE templates SET isDefaultPpt = 0 WHERE isDefaultPpt = 1")
+    suspend fun clearDefaultPpt()
+
+    @Query("UPDATE templates SET isDefaultExcel = 0 WHERE isDefaultExcel = 1")
+    suspend fun clearDefaultExcel()
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTemplate(template: TemplateEntity)
 

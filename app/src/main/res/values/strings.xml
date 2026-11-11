@@ -48,6 +48,7 @@
     <string name="template_added_on">Added: %1$s</string>
     <string name="template_preview">Preview Profile</string>
     <string name="template_set_default">Set as Default</string>
+    <string name="template_remove_default">Remove as Default</string>
     <string name="template_delete">Delete Template</string>
     <string name="template_empty_title">No Templates Uploaded</string>
     <string name="template_empty_desc">Upload your DOCX, PPTX, or XLSX reference files to apply your custom branding, typography, and styling to AI generated documents.</string>
@@ -115,6 +116,7 @@
     <string name="msg_template_imported">Template \'%1$s\' analyzed and saved!</string>
     <string name="msg_template_deleted">Template deleted.</string>
     <string name="msg_template_set_default">%1$s set as default %2$s template.</string>
+    <string name="msg_template_removed_default">%1$s removed as default template.</string>
     <string name="msg_document_deleted">Document deleted.</string>
     <string name="msg_document_renamed">Renamed to %1$s</string>
     <string name="msg_testing_connection">Testing connection to %1$s...</string>
