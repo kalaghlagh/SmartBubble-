@@ -1,11 +1,7 @@
 package com.example.core.storage
 
 import androidx.room.withTransaction
-import com.example.core.security.KeystoreHelper
 import com.example.data.db.SmartBubbleDatabase
-import com.example.data.model.ChatMessageEntity
-import com.example.data.model.ConversationEntity
-import com.example.data.model.ProviderEntity
 import com.example.data.model.TemplateEntity
 import com.example.document.docx.DocxEngine
 import com.example.document.model.PresentationModel
@@ -38,6 +34,7 @@ class PreferencesSeedFlagStore(private val preferences: PreferencesManager) : Se
  *
  * Guarantees:
  *  - Samples are inserted at most once per install (persistent [SeedFlagStore] flag).
+ *  - Only sample TEMPLATES (real reference files) are created; no AI providers or chat content.
  *  - A sample is never inserted over an existing record (insert-if-absent).
  *  - A sample template is only marked default if no template already holds that slot, so
  *    seeding can never create a second default.
@@ -192,45 +189,10 @@ class SampleDataSeeder(
     )
 
     private suspend fun insertSamplesIfAbsent(files: SampleFiles) {
-        val providerDao = database.providerDao()
         val templateDao = database.templateDao()
-        val conversationDao = database.conversationDao()
-        val chatDao = database.chatDao()
 
-        // Sample providers (content unchanged from earlier versions; provider handling is Phase 2).
-        val noDefaultProvider = providerDao.getDefaultProvider() == null
-        listOf(
-            ProviderEntity(
-                id = "p-openai",
-                name = "OpenAI",
-                providerType = "OpenAI",
-                baseUrl = "https://api.openai.com/v1",
-                encryptedApiKey = KeystoreHelper.encrypt("sk-live-smartbubble-encrypted"),
-                modelName = "GPT-4o",
-                isDefault = noDefaultProvider,
-                status = "Connected (28ms)"
-            ),
-            ProviderEntity(
-                id = "p-gemini",
-                name = "Google Gemini",
-                providerType = "Google Gemini",
-                baseUrl = "https://generativelanguage.googleapis.com",
-                encryptedApiKey = KeystoreHelper.encrypt("gemini-smartbubble-encrypted"),
-                modelName = "Gemini 1.5 Pro",
-                isDefault = false,
-                status = "Ready"
-            ),
-            ProviderEntity(
-                id = "p-claude",
-                name = "Anthropic Claude",
-                providerType = "Anthropic Claude",
-                baseUrl = "https://api.anthropic.com/v1",
-                encryptedApiKey = KeystoreHelper.encrypt("sk-ant-smartbubble-encrypted"),
-                modelName = "Claude 3.5 Sonnet",
-                isDefault = false,
-                status = "Ready"
-            )
-        ).forEach { if (providerDao.getProviderById(it.id) == null) providerDao.insertProvider(it) }
+        // No sample AI providers are created: the user adds real providers (with their own API
+        // keys) in Settings. Earlier versions seeded providers with fake keys and statuses.
 
         // Sample templates: insert-if-absent; default only when the slot is free.
         val word = wordProfile()
@@ -281,42 +243,8 @@ class SampleDataSeeder(
                 )
             )
         }
-
-        // Sample conversation and its messages, only if the conversation does not exist yet.
-        if (conversationDao.getConversationById(SampleDataPolicy.SAMPLE_CONVERSATION_ID) == null) {
-            val now = System.currentTimeMillis()
-            conversationDao.insertConversation(
-                ConversationEntity(
-                    id = SampleDataPolicy.SAMPLE_CONVERSATION_ID,
-                    title = "تقرير الذكاء الاصطناعي",
-                    lastMessagePreview = "بالطبع! إليك تقرير مختصر عن الذكاء الاصطناعي...",
-                    updatedAt = now - 120000,
-                    createdAt = now - 180000
-                )
-            )
-            chatDao.insertMessage(
-                ChatMessageEntity(
-                    id = "chat-seed-1",
-                    sessionId = SampleDataPolicy.SAMPLE_CONVERSATION_ID,
-                    isUser = true,
-                    content = "اكتب لي تقريراً مختصراً عن الذكاء الاصطناعي",
-                    timestamp = now - 180000
-                )
-            )
-            chatDao.insertMessage(
-                ChatMessageEntity(
-                    id = "chat-seed-2",
-                    sessionId = SampleDataPolicy.SAMPLE_CONVERSATION_ID,
-                    isUser = false,
-                    content = "بالطبع! إليك تقرير مختصر عن الذكاء الاصطناعي:\n\nالذكاء الاصطناعي هو مجال من علوم الحاسوب يهدف إلى تطوير أنظمة قادرة على محاكاة الذكاء البشري مثل التعلم والاستنتاج واتخاذ القرار، مع إمكانية تحويل الأفكار إلى مستندات مكتبية احترافية مثل Word و PowerPoint و Excel.",
-                    timestamp = now - 120000,
-                    attachedDocId = "doc-project-summary",
-                    attachedDocTitle = "Project Summary.pdf",
-                    attachedDocType = "PDF",
-                    orchestratorNote = "Orchestrator Verified"
-                )
-            )
-        }
+        // No sample conversation is created: it contained a pre-written "AI" answer, and the
+        // chat must only ever show real provider responses.
     }
 
     private companion object {

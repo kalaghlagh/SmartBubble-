@@ -137,6 +137,9 @@ interface ProviderDao {
 
     @Query("SELECT COUNT(*) FROM ai_providers")
     suspend fun countProviders(): Int
+
+    @Query("SELECT * FROM ai_providers ORDER BY isDefault DESC, createdAt ASC")
+    suspend fun getAllProvidersOnce(): List<ProviderEntity>
 }
 
 @Dao
@@ -155,6 +158,10 @@ interface ChatDao {
 
     @Query("SELECT COUNT(*) FROM chat_messages")
     suspend fun countMessages(): Int
+
+    /** Conversation history used as AI context (oldest first). */
+    @Query("SELECT * FROM chat_messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")
+    suspend fun getMessagesForSessionOnce(sessionId: String): List<ChatMessageEntity>
 }
 
 @Dao

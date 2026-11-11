@@ -1,6 +1,5 @@
 package com.example.core.security
 
-import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -9,12 +8,16 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.SecretKeySpec
+
+/** Thrown when secure encryption/decryption is not possible. Never carries the secret. */
+class CredentialSecurityException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
- * Android Keystore-backed AES/GCM encryption helper.
- * Ensures API keys and user credentials are encrypted with hardware-backed keys
- * and never stored in plaintext, with in-memory fallback if AndroidKeyStore provider is absent.
+ * Android Keystore-backed AES-256/GCM encryption.
+ *
+ * There is deliberately NO fallback: if the Keystore is unavailable or an operation fails, a
+ * [CredentialSecurityException] is thrown and the caller must refuse to store/use the
+ * credential. Values are never stored as plaintext or as a reversible encoding.
  */
 object KeystoreHelper {
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
@@ -23,103 +26,68 @@ object KeystoreHelper {
     private const val GCM_IV_LENGTH = 12
     private const val GCM_TAG_LENGTH = 128
 
-    @Volatile
-    private var isKeystoreAvailable = false
-    private var fallbackKey: SecretKey? = null
+    /** Format marker so encrypted values can be told apart from anything else. */
+    private const val PREFIX = "kv1:"
 
-    init {
+    @Synchronized
+    private fun secretKey(): SecretKey {
         try {
-            initKeyIfNeeded()
-            isKeystoreAvailable = true
-        } catch (e: Throwable) {
-            isKeystoreAvailable = false
-            try {
-                val keyGen = KeyGenerator.getInstance("AES")
-                keyGen.init(256)
-                fallbackKey = keyGen.generateKey()
-            } catch (ignored: Throwable) {
-                // Fallback fixed 256-bit key
-                val fixedKeyBytes = ByteArray(32) { (it * 7).toByte() }
-                fallbackKey = SecretKeySpec(fixedKeyBytes, "AES")
-            }
-        }
-    }
-
-    private fun initKeyIfNeeded() {
-        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        if (!keyStore.containsAlias(KEY_ALIAS)) {
-            val keyGenerator = KeyGenerator.getInstance(
-                KeyProperties.KEY_ALGORITHM_AES,
-                ANDROID_KEYSTORE
+            val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+            val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+            generator.init(
+                KeyGenParameterSpec.Builder(
+                    KEY_ALIAS,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                )
+                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .setKeySize(256)
+                    .build()
             )
-            val spec = KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .build()
-            keyGenerator.init(spec)
-            keyGenerator.generateKey()
+            return generator.generateKey()
+        } catch (e: Exception) {
+            throw CredentialSecurityException("Android Keystore is unavailable", e)
         }
     }
 
-    private fun getSecretKey(): SecretKey {
-        return if (isKeystoreAvailable) {
-            try {
-                val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-                keyStore.getKey(KEY_ALIAS, null) as SecretKey
-            } catch (e: Throwable) {
-                fallbackKey ?: SecretKeySpec(ByteArray(32), "AES")
-            }
-        } else {
-            fallbackKey ?: SecretKeySpec(ByteArray(32), "AES")
-        }
-    }
+    fun isEncryptedValue(value: String): Boolean = value.startsWith(PREFIX)
 
+    /** Encrypts [plainText]. Throws [CredentialSecurityException] on any failure. */
     fun encrypt(plainText: String): String {
-        if (plainText.isEmpty()) return ""
-        return try {
+        require(plainText.isNotEmpty()) { "Nothing to encrypt" }
+        try {
             val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.ENCRYPT_MODE, getSecretKey())
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey())
             val iv = cipher.iv
             val cipherText = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-            val combined = ByteArray(iv.size + cipherText.size)
-            System.arraycopy(iv, 0, combined, 0, iv.size)
-            System.arraycopy(cipherText, 0, combined, iv.size, cipherText.size)
-            Base64.encodeToString(combined, Base64.NO_WRAP)
-        } catch (e: Throwable) {
-            Base64.encodeToString(plainText.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+            return PREFIX + Base64.encodeToString(iv + cipherText, Base64.NO_WRAP)
+        } catch (e: CredentialSecurityException) {
+            throw e
+        } catch (e: Exception) {
+            throw CredentialSecurityException("Encryption failed", e)
         }
     }
 
-    fun decrypt(encryptedText: String): String {
-        if (encryptedText.isEmpty()) return ""
-        return try {
-            val combined = Base64.decode(encryptedText, Base64.NO_WRAP)
-            if (combined.size < GCM_IV_LENGTH) return ""
-            val iv = ByteArray(GCM_IV_LENGTH)
-            System.arraycopy(combined, 0, iv, 0, GCM_IV_LENGTH)
-            val cipherTextSize = combined.size - GCM_IV_LENGTH
-            val cipherText = ByteArray(cipherTextSize)
-            System.arraycopy(combined, GCM_IV_LENGTH, cipherText, 0, cipherTextSize)
-
+    /**
+     * Decrypts a value produced by [encrypt]. Also accepts the legacy un-prefixed IV+ciphertext
+     * format written by earlier versions. Throws [CredentialSecurityException] if the value
+     * cannot be decrypted (e.g. the Keystore key was lost after a device restore).
+     */
+    fun decrypt(encrypted: String): String {
+        if (encrypted.isEmpty()) throw CredentialSecurityException("No credential stored")
+        try {
+            val combined = Base64.decode(encrypted.removePrefix(PREFIX), Base64.NO_WRAP)
+            if (combined.size <= GCM_IV_LENGTH) throw CredentialSecurityException("Invalid credential format")
+            val iv = combined.copyOfRange(0, GCM_IV_LENGTH)
+            val cipherText = combined.copyOfRange(GCM_IV_LENGTH, combined.size)
             val cipher = Cipher.getInstance(TRANSFORMATION)
-            val spec = GCMParameterSpec(GCM_TAG_LENGTH, iv)
-            cipher.init(Cipher.DECRYPT_MODE, getSecretKey(), spec)
-            String(cipher.doFinal(cipherText), Charsets.UTF_8)
-        } catch (e: Throwable) {
-            try {
-                String(Base64.decode(encryptedText, Base64.NO_WRAP), Charsets.UTF_8)
-            } catch (ignored: Throwable) {
-                ""
-            }
+            cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(GCM_TAG_LENGTH, iv))
+            return String(cipher.doFinal(cipherText), Charsets.UTF_8)
+        } catch (e: CredentialSecurityException) {
+            throw e
+        } catch (e: Exception) {
+            throw CredentialSecurityException("Stored credential cannot be decrypted", e)
         }
-    }
-
-    fun maskApiKey(key: String): String {
-        if (key.length <= 8) return "••••••••"
-        return key.take(4) + "••••••••" + key.takeLast(4)
     }
 }

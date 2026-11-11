@@ -8,10 +8,17 @@ import androidx.lifecycle.viewModelScope
 import androidx.room.withTransaction
 import com.example.R
 import com.example.ai.orchestrator.CentralAiOrchestrator
-import com.example.ai.orchestrator.TaskLifecycleState
-import com.example.ai.providers.AiConnectionTester
+import com.example.ai.orchestrator.ContentOperation
+import com.example.ai.orchestrator.ContextMessage
+import com.example.ai.orchestrator.DocumentFormat
+import com.example.ai.providers.AiErrorKind
+import com.example.ai.providers.AiException
+import com.example.ai.providers.ProviderInput
+import com.example.ai.providers.ProviderManager
+import com.example.ai.providers.ProviderValidationException
+import com.example.core.security.CredentialSecurityException
+import com.example.core.security.CredentialStore
 import com.example.core.delivery.DeliveryManager
-import com.example.core.security.KeystoreHelper
 import com.example.core.storage.DocumentFileNames
 import com.example.core.storage.PreferencesManager
 import com.example.core.storage.PreferencesSeedFlagStore
@@ -63,7 +70,10 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     val database = SmartBubbleDatabase.getDatabase(context)
     val preferences = PreferencesManager(context)
     val deliveryManager = DeliveryManager(context)
-    val orchestrator = CentralAiOrchestrator(context, database, deliveryManager)
+    private val credentialStore = CredentialStore(context)
+    /** Provider management + single source of truth for the default provider (Room flag). */
+    val providerManager = ProviderManager(database, credentialStore)
+    val orchestrator = CentralAiOrchestrator(context, database, deliveryManager, providerManager)
     val templateAnalysisEngine = TemplateAnalysisEngine()
     val templatePreviewEngine = TemplatePreviewEngine()
     val ocrEngine = DocumentOcrEngine(context, orchestrator)
@@ -148,7 +158,22 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     val voiceDecibel = voiceAssistant.decibelLevel
 
     // Settings preferences
-    val defaultProvider = preferences.defaultProvider.stateIn(viewModelScope, SharingStarted.Eagerly, "OpenAI")
+    /** Name of the default provider ("" when none), read from the ai_providers table. */
+    val defaultProvider: StateFlow<String> = database.providerDao().getAllProviders()
+        .map { list -> list.firstOrNull { it.isDefault }?.name.orEmpty() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    /** Ids of providers that have an API key stored (keys themselves never leave CredentialStore). */
+    val providersWithKeys: StateFlow<Set<String>> = database.providerDao().getAllProviders()
+        .map { list -> list.filter { providerManager.hasKey(it.id) }.map { it.id }.toSet() }
+        .flowOn(Dispatchers.IO)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
+    private val _testingProviderIds = MutableStateFlow<Set<String>>(emptySet())
+    val testingProviderIds: StateFlow<Set<String>> = _testingProviderIds.asStateFlow()
+
+    /** Prevents duplicate AI requests from repeated taps or voice input while one is running. */
+    private val aiRequestInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
     val appLanguage = preferences.appLanguage.stateIn(viewModelScope, SharingStarted.Eagerly, "en")
     val appTheme = preferences.appTheme.stateIn(viewModelScope, SharingStarted.Eagerly, "dark")
 
@@ -161,6 +186,14 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Start-up data maintenance failed", e)
+            }
+            try {
+                // Move legacy in-database keys to secure storage; drop fake keys and statuses.
+                withContext(Dispatchers.IO) { providerManager.migrateLegacyProviderData() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Provider data migration failed", e)
             }
             restoreActiveConversation()
         }
@@ -193,7 +226,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             val newId = UUID.randomUUID().toString()
             val newConv = ConversationEntity(
                 id = newId,
-                title = context.getString(R.string.new_conversation),
+                title = str(R.string.new_conversation),
                 lastMessagePreview = "",
                 updatedAt = System.currentTimeMillis(),
                 createdAt = System.currentTimeMillis()
@@ -215,7 +248,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         if (newTitle.isBlank()) return
         launchSafely("renameConversation") {
             database.conversationDao().updateTitle(id, newTitle.trim())
-            _snackBarMessage.value = context.getString(R.string.msg_conversation_renamed)
+            _snackBarMessage.value = str(R.string.msg_conversation_renamed)
         }
     }
 
@@ -223,7 +256,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         launchSafely("deleteConversation") {
             database.conversationDao().deleteConversationById(id)
             database.chatDao().deleteMessagesBySessionId(id)
-            _snackBarMessage.value = context.getString(R.string.msg_conversation_deleted)
+            _snackBarMessage.value = str(R.string.msg_conversation_deleted)
 
             if (_currentSessionId.value == id) {
                 val remaining = database.conversationDao().getAllConversations().firstOrNull()
@@ -240,12 +273,15 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     fun selectTemplateForChat(template: TemplateEntity?) {
         _selectedTemplateForChat.value = template
         if (template != null) {
-            _snackBarMessage.value = context.getString(R.string.msg_template_selected, template.name)
+            _snackBarMessage.value = str(R.string.msg_template_selected, template.name)
         }
     }
 
     fun executePrompt(prompt: String, forceFormat: String? = null) {
-        if (prompt.isBlank()) return
+        val text = prompt.trim()
+        if (text.isEmpty()) return
+        // One AI request at a time: ignore repeated taps / voice results while one is running.
+        if (!aiRequestInFlight.compareAndSet(false, true)) return
         val sessionId = _currentSessionId.value
 
         viewModelScope.launch {
@@ -256,8 +292,8 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 if (conv == null) {
                     conv = ConversationEntity(
                         id = sessionId,
-                        title = context.getString(R.string.new_conversation),
-                        lastMessagePreview = prompt.take(50),
+                        title = str(R.string.new_conversation),
+                        lastMessagePreview = text.take(50),
                         updatedAt = System.currentTimeMillis()
                     )
                     database.conversationDao().insertConversation(conv)
@@ -266,82 +302,79 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 // Auto-generate conversation title from the first meaningful request
                 val genericTitles = listOf("New Conversation", "محادثة جديدة", "Nouvelle conversation", "New Chat")
                 if (genericTitles.any { conv.title.equals(it, ignoreCase = true) }) {
-                    val firstLine = prompt.lineSequence().firstOrNull()?.trim() ?: prompt.trim()
+                    val firstLine = text.lineSequence().firstOrNull()?.trim() ?: text
                     val autoTitle = if (firstLine.length > 32) firstLine.take(32) + "…" else firstLine
                     database.conversationDao().updateTitle(sessionId, autoTitle)
                 }
 
-                // Update conversation preview and timestamp
-                database.conversationDao().updateLastMessage(sessionId, prompt.take(60))
+                // Conversation context = messages stored BEFORE this one (restored after restart too).
+                val history = buildContextHistory(sessionId)
 
-                // Insert user message
-                val userMsg = ChatMessageEntity(
-                    id = UUID.randomUUID().toString(),
-                    sessionId = sessionId,
-                    isUser = true,
-                    content = prompt
-                )
-                database.chatDao().insertMessage(userMsg)
-
-                val templateProfile = _selectedTemplateForChat.value?.let {
-                    TemplateProfile.fromJson(it.profileJson)
-                }
-                val originalTemplateFile = _selectedTemplateForChat.value?.originalFilePath?.let { File(it) }?.takeIf { it.exists() }
-
-                val result = orchestrator.executeUserRequest(
-                    userPrompt = prompt,
-                    defaultProviderName = defaultProvider.value,
-                    selectedTemplate = templateProfile,
-                    templateFile = originalTemplateFile,
-                    forceFormat = forceFormat
+                database.conversationDao().updateLastMessage(sessionId, text.take(60))
+                database.chatDao().insertMessage(
+                    ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = sessionId, isUser = true, content = text)
                 )
 
-                if (result.state == TaskLifecycleState.COMPLETED) {
-                    val assistantMsg = ChatMessageEntity(
+                val result = orchestrator.handleChatTurn(
+                    history = history,
+                    userMessage = text,
+                    uiLanguage = appLanguage.value,
+                    selectedTemplate = _selectedTemplateForChat.value,
+                    forceFormat = DocumentFormat.parse(forceFormat)
+                )
+
+                // Only the provider's real answer is stored; failures are never saved as replies.
+                val doc = result.document
+                database.chatDao().insertMessage(
+                    ChatMessageEntity(
                         id = UUID.randomUUID().toString(),
                         sessionId = sessionId,
                         isUser = false,
-                        content = result.conversationalReply,
-                        attachedDocId = result.documentEntity?.id,
-                        attachedDocTitle = result.documentEntity?.title,
-                        attachedDocType = result.documentEntity?.fileType,
-                        orchestratorNote = if (originalTemplateFile != null) "Template Preserved" else "Orchestrator Verified"
+                        content = result.reply,
+                        attachedDocId = doc?.id,
+                        attachedDocTitle = doc?.title,
+                        attachedDocType = doc?.fileType,
+                        orchestratorNote = when {
+                            doc == null -> result.provider.name
+                            result.templateApplied -> "Template Preserved • ${result.provider.name}"
+                            else -> "Orchestrator Verified • ${result.provider.name}"
+                        }
                     )
-                    database.chatDao().insertMessage(assistantMsg)
-                    database.conversationDao().updateLastMessage(sessionId, result.conversationalReply.take(60))
-                    _snackBarMessage.value = context.getString(R.string.msg_generated_copied)
-                } else {
-                    val errorMsg = ChatMessageEntity(
-                        id = UUID.randomUUID().toString(),
-                        sessionId = sessionId,
-                        isUser = false,
-                        content = "Generation failed: ${result.errorMessage ?: "Unknown error"}"
-                    )
-                    database.chatDao().insertMessage(errorMsg)
-                }
+                )
+                database.conversationDao().updateLastMessage(sessionId, result.reply.take(60))
+                if (doc != null) _snackBarMessage.value = str(R.string.msg_generated_copied)
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: AiException) {
+                Log.w(TAG, "AI request failed: ${e.kind}")
+                _snackBarMessage.value = aiErrorMessage(e, defaultProvider.value)
             } catch (e: Exception) {
-                Log.e(TAG, "executePrompt failed", e)
-                // Same feedback as an orchestrator failure; best effort if the database itself failed.
-                try {
-                    database.chatDao().insertMessage(
-                        ChatMessageEntity(
-                            id = UUID.randomUUID().toString(),
-                            sessionId = sessionId,
-                            isUser = false,
-                            content = "Generation failed: ${e.message ?: "Unknown error"}"
-                        )
-                    )
-                } catch (inner: Exception) {
-                    if (inner is CancellationException) throw inner
-                    reportError("executePrompt", e)
-                }
+                reportError("executePrompt", e)
             } finally {
                 // Always release the loading state, even after an error.
                 _isGenerating.value = false
+                aiRequestInFlight.set(false)
             }
         }
+    }
+
+    /**
+     * Stored messages of [sessionId] as AI context. The text of an attached document is included
+     * once (on its most recent mention) so the user can ask about generated/scanned documents.
+     */
+    private suspend fun buildContextHistory(sessionId: String): List<ContextMessage> {
+        val messages = database.chatDao().getMessagesForSessionOnce(sessionId)
+        val seenDocs = mutableSetOf<String>()
+        val out = ArrayList<ContextMessage>(messages.size)
+        for (m in messages.asReversed()) {
+            val docId = m.attachedDocId
+            val docText = if (docId != null && seenDocs.add(docId)) {
+                database.documentDao().getDocumentById(docId)?.textContent
+            } else null
+            out += ContextMessage(m.isUser, m.content, docText, m.attachedDocTitle)
+        }
+        out.reverse()
+        return out
     }
 
     private fun mimeTypeFor(doc: DocumentEntity): String = when (doc.fileType) {
@@ -354,7 +387,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     fun openDocument(doc: DocumentEntity) {
         val file = File(doc.filePath)
         if (!file.isFile) {
-            _snackBarMessage.value = context.getString(R.string.msg_file_not_found)
+            _snackBarMessage.value = str(R.string.msg_file_not_found)
             return
         }
         deliveryManager.openFile(file, mimeTypeFor(doc))
@@ -363,7 +396,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     fun shareDocument(doc: DocumentEntity) {
         val file = File(doc.filePath)
         if (!file.isFile) {
-            _snackBarMessage.value = context.getString(R.string.msg_file_not_found)
+            _snackBarMessage.value = str(R.string.msg_file_not_found)
             return
         }
         deliveryManager.shareFile(file, mimeTypeFor(doc), doc.title)
@@ -421,7 +454,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "exportDocumentAsPdf failed", e)
-                _snackBarMessage.value = context.getString(
+                _snackBarMessage.value = str(
                     R.string.msg_pdf_export_failed,
                     e.message ?: e.javaClass.simpleName
                 )
@@ -436,7 +469,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 // Only the visible title changes; the physical file name stays independent.
                 val title = DocumentFileNames.displayTitle(newTitle)
                 database.documentDao().updateTitle(doc.id, title)
-                _snackBarMessage.value = context.getString(R.string.msg_document_renamed, title)
+                _snackBarMessage.value = str(R.string.msg_document_renamed, title)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -457,7 +490,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                         File(doc.filePath).delete()
                     }
                 }
-                _snackBarMessage.value = context.getString(R.string.msg_document_deleted)
+                _snackBarMessage.value = str(R.string.msg_document_deleted)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -500,7 +533,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 )
                 database.templateDao().insertTemplate(templateEntity)
                 saved = true
-                _snackBarMessage.value = context.getString(R.string.msg_template_imported, profile.name)
+                _snackBarMessage.value = str(R.string.msg_template_imported, profile.name)
             } catch (e: CancellationException) {
                 if (!saved) withContext(NonCancellable + Dispatchers.IO) { persistentTemplateFile?.delete() }
                 throw e
@@ -525,7 +558,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             if (template.originalFilePath.isNotBlank()) {
                 withContext(Dispatchers.IO) { File(template.originalFilePath).delete() }
             }
-            _snackBarMessage.value = context.getString(R.string.msg_template_deleted)
+            _snackBarMessage.value = str(R.string.msg_template_deleted)
         }
     }
 
@@ -552,7 +585,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                         }
                     }
                 }
-                _snackBarMessage.value = context.getString(R.string.msg_template_set_default, template.name, template.fileType)
+                _snackBarMessage.value = str(R.string.msg_template_set_default, template.name, template.fileType)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -573,7 +606,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     "XLSX" -> dao.setDefaultExcelFlag(template.id, false)
                     else -> dao.setDefaultWordFlag(template.id, false)
                 }
-                _snackBarMessage.value = context.getString(R.string.msg_template_removed_default, template.name)
+                _snackBarMessage.value = str(R.string.msg_template_removed_default, template.name)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -620,7 +653,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 val resolvedName = if (!customName.isNullOrBlank()) {
                     customName.trim()
                 } else {
-                    context.getString(R.string.template_duplicate_name_format, template.name)
+                    str(R.string.template_duplicate_name_format, template.name)
                 }
 
                 val templateDir = File(context.filesDir, "templates").apply { mkdirs() }
@@ -679,7 +712,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 )
 
                 database.templateDao().insertTemplate(duplicatedEntity)
-                _snackBarMessage.value = context.getString(R.string.msg_template_duplicated, resolvedName)
+                _snackBarMessage.value = str(R.string.msg_template_duplicated, resolvedName)
             } catch (e: Exception) {
                 _snackBarMessage.value = "Failed to duplicate template: ${e.message}"
             }
@@ -715,51 +748,72 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     // AI Providers Management
     fun setDefaultProvider(provider: ProviderEntity) {
         launchSafely("setDefaultProvider") {
-            database.providerDao().clearDefault()
-            database.providerDao().setAsDefault(provider.id)
-            preferences.setDefaultProvider(provider.name)
-            _snackBarMessage.value = context.getString(R.string.msg_provider_set_default, provider.name)
+            providerManager.setDefault(provider.id)
+            _snackBarMessage.value = str(R.string.msg_provider_set_default, provider.name)
         }
     }
 
+    /** Real connection test: an authenticated request that also verifies the configured model. */
     fun testProviderConnection(provider: ProviderEntity) {
-        launchSafely("testProviderConnection") {
-            _snackBarMessage.value = context.getString(R.string.msg_testing_connection, provider.name)
-            val tester = AiConnectionTester()
-            val result = tester.testConnection(provider)
-            val updated = provider.copy(status = result.message)
-            database.providerDao().updateProvider(updated)
-            _snackBarMessage.value = "${provider.name}: ${result.message}"
+        if (provider.id in _testingProviderIds.value) return
+        viewModelScope.launch {
+            _testingProviderIds.value = _testingProviderIds.value + provider.id
+            try {
+                val latency = providerManager.testConnection(provider)
+                _snackBarMessage.value = str(R.string.provider_test_success, provider.name, latency)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AiException) {
+                _snackBarMessage.value = str(R.string.provider_test_failed, provider.name, aiErrorReason(e))
+            } catch (e: Exception) {
+                reportError("testProviderConnection", e)
+            } finally {
+                _testingProviderIds.value = _testingProviderIds.value - provider.id
+            }
         }
     }
 
-    fun addProvider(name: String, type: String, baseUrl: String, apiKey: String, model: String) {
+    /** Adds a provider; the API key is encrypted before anything is stored. */
+    fun addProvider(input: ProviderInput) {
         launchSafely("addProvider") {
-            val newProvider = ProviderEntity(
-                id = UUID.randomUUID().toString(),
-                name = name,
-                providerType = type,
-                baseUrl = baseUrl,
-                encryptedApiKey = KeystoreHelper.encrypt(apiKey),
-                modelName = model,
-                isDefault = false,
-                status = "Ready"
-            )
-            database.providerDao().insertProvider(newProvider)
-            _snackBarMessage.value = context.getString(R.string.msg_provider_added, name)
+            try {
+                val created = providerManager.addProvider(input)
+                _snackBarMessage.value = if (created.isDefault) {
+                    str(R.string.msg_provider_added_default, created.name)
+                } else {
+                    str(R.string.msg_provider_added, created.name)
+                }
+            } catch (e: ProviderValidationException) {
+                _snackBarMessage.value = str(R.string.provider_error_invalid_fields)
+            } catch (e: CredentialSecurityException) {
+                _snackBarMessage.value = str(R.string.provider_error_secure_storage)
+            }
         }
     }
 
-    fun updateProvider(provider: ProviderEntity) {
+    /** Updates a provider; a blank API key keeps the stored key. */
+    fun updateProvider(providerId: String, input: ProviderInput) {
         launchSafely("updateProvider") {
-            database.providerDao().updateProvider(provider)
+            try {
+                val updated = providerManager.updateProvider(providerId, input)
+                _snackBarMessage.value = str(R.string.msg_provider_updated, updated.name)
+            } catch (e: ProviderValidationException) {
+                _snackBarMessage.value = str(R.string.provider_error_invalid_fields)
+            } catch (e: CredentialSecurityException) {
+                _snackBarMessage.value = str(R.string.provider_error_secure_storage)
+            }
         }
     }
 
+    /** Deletes the provider and its stored credential. The default is never reassigned silently. */
     fun deleteProvider(provider: ProviderEntity) {
         launchSafely("deleteProvider") {
-            database.providerDao().deleteProvider(provider)
-            _snackBarMessage.value = context.getString(R.string.msg_provider_deleted)
+            providerManager.deleteProvider(provider)
+            _snackBarMessage.value = if (provider.isDefault) {
+                str(R.string.msg_provider_deleted_was_default)
+            } else {
+                str(R.string.msg_provider_deleted)
+            }
         }
     }
 
@@ -781,18 +835,28 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         if (uris.isEmpty()) return
         viewModelScope.launch {
             _isScanning.value = true
-            _scanProgress.value = context.getString(R.string.recognizing_text)
+            _scanProgress.value = str(R.string.recognizing_text)
             try {
+                var aiFailure: Exception? = null
                 val pages = ocrEngine.processPages(
                     pageUris = uris,
                     useAiEnhancement = useAi,
-                    defaultProviderName = defaultProvider.value
-                ) { pageIndex, total, msg ->
-                    _scanProgress.value = msg
+                    onProgress = { pageIndex, total, msg ->
+                        _scanProgress.value = if (msg.isEmpty()) {
+                            str(R.string.scan_progress_ai, pageIndex, total)
+                        } else {
+                            str(R.string.scan_progress_page, pageIndex, total)
+                        }
+                    },
+                    onAiEnhancementFailed = { e -> if (aiFailure == null) aiFailure = e }
+                )
+                aiFailure?.let { e ->
+                    val reason = if (e is AiException) aiErrorReason(e) else (e.message ?: e.javaClass.simpleName)
+                    _snackBarMessage.value = str(R.string.scan_ai_enhancement_failed, reason)
                 }
 
                 if (pages.isEmpty()) {
-                    _snackBarMessage.value = context.getString(R.string.scan_empty_error)
+                    _snackBarMessage.value = str(R.string.scan_empty_error)
                     _isScanning.value = false
                     return@launch
                 }
@@ -805,7 +869,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     pages = pages,
                     activePageIndex = 0,
                     selectedTemplateId = null,
-                    isAiEnhanced = useAi
+                    isAiEnhanced = useAi && aiFailure == null
                 )
             } catch (e: Exception) {
                 _snackBarMessage.value = "OCR processing failed: ${e.message}"
@@ -847,7 +911,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     fun removeScannedPage(pageIndex: Int) {
         val current = _scannedReviewState.value ?: return
         if (current.pages.size <= 1) {
-            _snackBarMessage.value = context.getString(R.string.scan_empty_error)
+            _snackBarMessage.value = str(R.string.scan_empty_error)
             return
         }
         val currentPages = current.pages.toMutableList()
@@ -873,7 +937,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
         viewModelScope.launch {
             _isGenerating.value = true
-            _scanProgress.value = context.getString(R.string.generate_word_doc)
+            _scanProgress.value = str(R.string.generate_word_doc)
             var createdFile: File? = null
             var documentSaved = false
             try {
@@ -924,7 +988,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     pageOrSlideCount = reviewState.pages.size,
                     templateId = templateProfile.templateId,
                     templateName = templateProfile.name,
-                    providerUsed = defaultProvider.value,
+                    providerUsed = "OCR",
                     summary = "Scanned Document (${reviewState.pages.size} pages) • ${docxFile.length() / 1024} KB",
                     textContent = allText,
                     isOrchestratorVerified = true
@@ -942,7 +1006,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 )
 
                 // Add messages to active chat conversation
-                val scanActionLabel = context.getString(R.string.chat_scan_document)
+                val scanActionLabel = str(R.string.chat_scan_document)
                 val userMsg = ChatMessageEntity(
                     id = UUID.randomUUID().toString(),
                     sessionId = sessionId,
@@ -971,7 +1035,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 database.chatDao().insertMessage(assistantMsg)
                 database.conversationDao().updateLastMessage(sessionId, assistantReply.take(60))
 
-                _snackBarMessage.value = context.getString(R.string.msg_generated_copied)
+                _snackBarMessage.value = str(R.string.msg_generated_copied)
                 _scannedReviewState.value = null
             } catch (e: CancellationException) {
                 if (!documentSaved) withContext(NonCancellable + Dispatchers.IO) { createdFile?.delete() }
@@ -987,58 +1051,100 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    /** Real AI operation (correct / format / translate / summarize ...) on a Library document. */
     fun executeFollowUpAiAction(actionType: String, docId: String) {
+        val operation = ContentOperation.fromActionKey(actionType) ?: return
+        if (!aiRequestInFlight.compareAndSet(false, true)) return
         val sessionId = _currentSessionId.value
         viewModelScope.launch {
             _isGenerating.value = true
             try {
                 val doc = database.documentDao().getDocumentById(docId)
                 if (doc == null) {
-                    _snackBarMessage.value = "Document not found"
-                    _isGenerating.value = false
+                    _snackBarMessage.value = str(R.string.msg_file_not_found)
                     return@launch
                 }
 
-                val userActionPrompt = when (actionType.uppercase()) {
-                    "SPELLING" -> context.getString(R.string.scan_ai_spelling)
-                    "FORMAT" -> context.getString(R.string.scan_ai_format)
-                    "TRANSLATE" -> context.getString(R.string.scan_ai_translate)
-                    "SUMMARIZE" -> context.getString(R.string.scan_ai_summarize)
+                val userActionPrompt = when (operation) {
+                    ContentOperation.CORRECT -> str(R.string.scan_ai_spelling)
+                    ContentOperation.IMPROVE_FORMAT -> str(R.string.scan_ai_format)
+                    ContentOperation.TRANSLATE -> str(R.string.scan_ai_translate)
+                    ContentOperation.SUMMARIZE -> str(R.string.scan_ai_summarize)
                     else -> actionType
                 }
 
-                val userMsg = ChatMessageEntity(
-                    id = UUID.randomUUID().toString(),
-                    sessionId = sessionId,
-                    isUser = true,
-                    content = "$userActionPrompt: ${doc.title}"
+                if (database.conversationDao().getConversationById(sessionId) == null) {
+                    database.conversationDao().insertConversation(
+                        ConversationEntity(id = sessionId, title = str(R.string.new_conversation))
+                    )
+                }
+                database.chatDao().insertMessage(
+                    ChatMessageEntity(
+                        id = UUID.randomUUID().toString(),
+                        sessionId = sessionId,
+                        isUser = true,
+                        content = "$userActionPrompt: ${doc.title}"
+                    )
                 )
-                database.chatDao().insertMessage(userMsg)
 
-                val result = orchestrator.performFollowUpAiAction(
-                    actionType = actionType,
-                    documentText = doc.textContent,
-                    providerName = defaultProvider.value
+                val (result, provider) = orchestrator.performContentOperation(
+                    operation = operation,
+                    content = doc.textContent,
+                    uiLanguage = appLanguage.value
                 )
 
-                val assistantMsg = ChatMessageEntity(
-                    id = UUID.randomUUID().toString(),
-                    sessionId = sessionId,
-                    isUser = false,
-                    content = result,
-                    attachedDocId = doc.id,
-                    attachedDocTitle = doc.title,
-                    attachedDocType = doc.fileType,
-                    orchestratorNote = "AI Refinement: $userActionPrompt"
+                database.chatDao().insertMessage(
+                    ChatMessageEntity(
+                        id = UUID.randomUUID().toString(),
+                        sessionId = sessionId,
+                        isUser = false,
+                        content = result,
+                        attachedDocId = doc.id,
+                        attachedDocTitle = doc.title,
+                        attachedDocType = doc.fileType,
+                        orchestratorNote = "$userActionPrompt • ${provider.name}"
+                    )
                 )
-                database.chatDao().insertMessage(assistantMsg)
                 database.conversationDao().updateLastMessage(sessionId, result.take(60))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AiException) {
+                _snackBarMessage.value = aiErrorMessage(e, defaultProvider.value)
             } catch (e: Exception) {
-                _snackBarMessage.value = "AI action failed: ${e.message}"
+                reportError("executeFollowUpAiAction", e)
             } finally {
                 _isGenerating.value = false
+                aiRequestInFlight.set(false)
             }
         }
+    }
+
+    // ------------------------------------------------------------------ localization helpers
+
+    /** Resources in the app's selected language (the application context follows the system locale). */
+    private fun localizedResources(): android.content.res.Resources {
+        val config = android.content.res.Configuration(context.resources.configuration)
+        config.setLocale(Locale(appLanguage.value.ifBlank { "en" }))
+        return context.createConfigurationContext(config).resources
+    }
+
+    private fun str(id: Int, vararg args: Any): String =
+        if (args.isEmpty()) localizedResources().getString(id) else localizedResources().getString(id, *args)
+
+    /** Localized reason for an AI failure (provider detail appended when useful; never secrets). */
+    private fun aiErrorReason(e: AiException): String {
+        val base = str(aiErrorStringRes(e.kind))
+        val showDetail = e.kind in setOf(
+            AiErrorKind.BAD_REQUEST, AiErrorKind.MODEL_NOT_FOUND, AiErrorKind.MALFORMED_RESPONSE,
+            AiErrorKind.CONTENT_BLOCKED, AiErrorKind.PERMISSION_DENIED, AiErrorKind.UNKNOWN, AiErrorKind.INVALID_CONFIGURATION
+        )
+        return if (showDetail && !e.detail.isNullOrBlank()) "$base (${e.detail})" else base
+    }
+
+    /** Full message: names the default provider and lets the user decide what to do next. */
+    private fun aiErrorMessage(e: AiException, providerName: String): String = when (e.kind) {
+        AiErrorKind.NO_DEFAULT_PROVIDER -> str(R.string.ai_err_no_default_provider)
+        else -> str(R.string.ai_error_default_provider_failed, providerName.ifBlank { "?" }, aiErrorReason(e))
     }
 
     /**
@@ -1059,7 +1165,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     /** Logs an unexpected failure and shows the existing snackbar feedback instead of crashing. */
     private fun reportError(operation: String, e: Throwable) {
         Log.e(TAG, "$operation failed", e)
-        _snackBarMessage.value = context.getString(
+        _snackBarMessage.value = str(
             R.string.msg_operation_failed,
             e.message ?: e.javaClass.simpleName
         )

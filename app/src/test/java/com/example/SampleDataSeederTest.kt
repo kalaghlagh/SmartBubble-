@@ -9,12 +9,10 @@ import com.example.core.storage.SeedFlagStore
 import com.example.data.db.SmartBubbleDatabase
 import com.example.data.model.ConversationEntity
 import com.example.data.model.TemplateEntity
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -70,15 +68,16 @@ class SampleDataSeederTest {
 
         assertTrue(flag.seeded)
         assertEquals(3, db.templateDao().countTemplates())
-        assertEquals(3, db.providerDao().countProviders())
-        assertNotNull(db.conversationDao().getConversationById(SampleDataPolicy.SAMPLE_CONVERSATION_ID))
+        // No fake AI providers (keys/statuses) and no pre-written AI conversation are seeded.
+        assertEquals(0, db.providerDao().countProviders())
+        assertNull(db.conversationDao().getConversationById(SampleDataPolicy.SAMPLE_CONVERSATION_ID))
+        assertEquals(0, db.chatDao().countMessages())
         assertEquals(Triple(1, 1, 1), defaultsPerSlot())
         assertTrue(File(filesDir, "templates/Company_Report_Template.docx").length() > 0)
 
         // Second run in the same session changes nothing.
         newSeeder().runStartupTasks()
         assertEquals(3, db.templateDao().countTemplates())
-        assertEquals(2, db.chatDao().getMessagesForSession(SampleDataPolicy.SAMPLE_CONVERSATION_ID).first().size)
     }
 
     @Test
@@ -86,16 +85,11 @@ class SampleDataSeederTest {
         newSeeder().runStartupTasks()
 
         db.templateDao().deleteTemplateById(SampleDataPolicy.SAMPLE_WORD_TEMPLATE_ID)
-        db.conversationDao().deleteConversationById(SampleDataPolicy.SAMPLE_CONVERSATION_ID)
-        db.chatDao().deleteMessagesBySessionId(SampleDataPolicy.SAMPLE_CONVERSATION_ID)
-        db.providerDao().getProviderById("p-gemini")?.let { db.providerDao().deleteProvider(it) }
 
         newSeeder().runStartupTasks() // simulated app restart
         newSeeder().runStartupTasks() // and another one
 
         assertNull(db.templateDao().getTemplateById(SampleDataPolicy.SAMPLE_WORD_TEMPLATE_ID))
-        assertNull(db.conversationDao().getConversationById(SampleDataPolicy.SAMPLE_CONVERSATION_ID))
-        assertNull(db.providerDao().getProviderById("p-gemini"))
         assertEquals(2, db.templateDao().countTemplates())
     }
 
@@ -103,15 +97,11 @@ class SampleDataSeederTest {
     fun deletingEverything_doesNotBringSamplesBack() = runBlocking {
         newSeeder().runStartupTasks()
         db.templateDao().getAllTemplatesOnce().forEach { db.templateDao().deleteTemplate(it) }
-        db.providerDao().getAllProviders().first().forEach { db.providerDao().deleteProvider(it) }
-        db.conversationDao().deleteConversationById(SampleDataPolicy.SAMPLE_CONVERSATION_ID)
-        db.chatDao().deleteMessagesBySessionId(SampleDataPolicy.SAMPLE_CONVERSATION_ID)
 
         newSeeder().runStartupTasks()
 
         assertEquals(0, db.templateDao().countTemplates())
         assertEquals(0, db.providerDao().countProviders())
-        assertEquals(0, db.conversationDao().countConversations())
     }
 
     @Test

@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
-import com.example.core.security.KeystoreHelper
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -14,6 +13,7 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "sm
 class PreferencesManager(private val context: Context) {
 
     companion object {
+        // Legacy (unused): the default provider is the ai_providers.isDefault flag in Room.
         val KEY_DEFAULT_PROVIDER = stringPreferencesKey("default_ai_provider")
         val KEY_USER_NAME = stringPreferencesKey("user_display_name")
         val KEY_DELIVERY_MODE = stringPreferencesKey("delivery_mode") // "BOTH", "FILE_ONLY", "CLIPBOARD_ONLY"
@@ -33,21 +33,10 @@ class PreferencesManager(private val context: Context) {
         val KEY_NOTEBOOKLM_EMAIL = stringPreferencesKey("notebooklm_email")
         val KEY_NOTEBOOKLM_CONNECTED = booleanPreferencesKey("notebooklm_connected")
 
-        // Encrypted API keys
-        val KEY_ENC_OPENAI = stringPreferencesKey("enc_key_openai")
-        val KEY_ENC_CLAUDE = stringPreferencesKey("enc_key_claude")
-        val KEY_ENC_GEMINI = stringPreferencesKey("enc_key_gemini")
-        val KEY_ENC_DEEPSEEK = stringPreferencesKey("enc_key_deepseek")
-        val KEY_ENC_OPENROUTER = stringPreferencesKey("enc_key_openrouter")
-        val KEY_CUSTOM_ENDPOINT = stringPreferencesKey("custom_endpoint_url")
-        val KEY_ENC_CUSTOM = stringPreferencesKey("enc_key_custom")
+        // API keys are never stored here: see CredentialStore (Android Keystore, excluded from backup).
         val KEY_ACTIVE_CONVERSATION_ID = stringPreferencesKey("active_conversation_id")
         // One-time sample data seeding marker (never reset, so deleted samples are never recreated)
         val KEY_SAMPLE_DATA_SEEDED = booleanPreferencesKey("sample_data_seeded_v1")
-    }
-
-    val defaultProvider: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[KEY_DEFAULT_PROVIDER] ?: "Anthropic Claude 3.5 Sonnet"
     }
 
     val userName: Flow<String> = context.dataStore.data.map { prefs ->
@@ -105,10 +94,6 @@ class PreferencesManager(private val context: Context) {
         context.dataStore.edit { it[KEY_SAMPLE_DATA_SEEDED] = true }
     }
 
-    suspend fun setDefaultProvider(provider: String) {
-        context.dataStore.edit { it[KEY_DEFAULT_PROVIDER] = provider }
-    }
-
     suspend fun setAppLanguage(lang: String) {
         context.dataStore.edit { it[KEY_LANGUAGE] = lang }
     }
@@ -137,35 +122,6 @@ class PreferencesManager(private val context: Context) {
         context.dataStore.edit {
             it[KEY_NOTEBOOKLM_CONNECTED] = connected
             it[KEY_NOTEBOOKLM_EMAIL] = email
-        }
-    }
-
-    suspend fun saveEncryptedApiKey(provider: String, plainKey: String) {
-        val encrypted = KeystoreHelper.encrypt(plainKey)
-        context.dataStore.edit { prefs ->
-            when (provider) {
-                "OpenAI" -> prefs[KEY_ENC_OPENAI] = encrypted
-                "Claude" -> prefs[KEY_ENC_CLAUDE] = encrypted
-                "Gemini" -> prefs[KEY_ENC_GEMINI] = encrypted
-                "DeepSeek" -> prefs[KEY_ENC_DEEPSEEK] = encrypted
-                "OpenRouter" -> prefs[KEY_ENC_OPENROUTER] = encrypted
-                "Custom" -> prefs[KEY_ENC_CUSTOM] = encrypted
-            }
-        }
-    }
-
-    fun getEncryptedApiKeyFlow(provider: String): Flow<String> {
-        val keyPref = when (provider) {
-            "OpenAI" -> KEY_ENC_OPENAI
-            "Claude" -> KEY_ENC_CLAUDE
-            "Gemini" -> KEY_ENC_GEMINI
-            "DeepSeek" -> KEY_ENC_DEEPSEEK
-            "OpenRouter" -> KEY_ENC_OPENROUTER
-            else -> KEY_ENC_CUSTOM
-        }
-        return context.dataStore.data.map { prefs ->
-            val enc = prefs[keyPref] ?: ""
-            KeystoreHelper.decrypt(enc)
         }
     }
 }

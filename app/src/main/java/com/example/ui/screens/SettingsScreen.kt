@@ -6,6 +6,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -21,10 +24,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
+import com.example.ai.providers.AiProviderType
+import com.example.ai.providers.ProviderField
+import com.example.ai.providers.ProviderInput
+import com.example.ai.providers.ProviderStatus
+import com.example.ai.providers.ProviderValidator
 import com.example.data.model.ProviderEntity
+import com.example.ui.aiErrorStringRes
 import com.example.ui.SmartBubbleViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -34,6 +46,9 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val providers by viewModel.allProviders.collectAsState()
+    val providersWithKeys by viewModel.providersWithKeys.collectAsState()
+    val testingProviderIds by viewModel.testingProviderIds.collectAsState()
+    var editingProvider by remember { mutableStateOf<ProviderEntity?>(null) }
     val appLanguage by viewModel.appLanguage.collectAsState()
     val appTheme by viewModel.appTheme.collectAsState()
 
@@ -156,11 +171,29 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(16.dp))
 
                         // Provider Cards
+                        if (providers.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.settings_no_providers),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 12.dp)
+                            )
+                        } else if (providers.none { it.isDefault }) {
+                            Text(
+                                text = stringResource(R.string.settings_choose_default_provider),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(bottom = 12.dp)
+                            )
+                        }
                         providers.forEach { provider ->
                             ProviderItemRow(
                                 provider = provider,
+                                hasKey = provider.id in providersWithKeys,
+                                isTesting = provider.id in testingProviderIds,
                                 onTest = { viewModel.testProviderConnection(provider) },
                                 onSetDefault = { viewModel.setDefaultProvider(provider) },
+                                onEdit = { editingProvider = provider },
                                 onDelete = { viewModel.deleteProvider(provider) }
                             )
                             Spacer(modifier = Modifier.height(12.dp))
@@ -247,11 +280,26 @@ fun SettingsScreen(
 
     // Add Provider Dialog
     if (showAddProviderDialog) {
-        AddProviderDialog(
+        ProviderDialog(
+            existing = null,
+            hasStoredKey = false,
             onDismiss = { showAddProviderDialog = false },
-            onAdd = { name, type, url, key, model ->
-                viewModel.addProvider(name, type, url, key, model)
+            onSave = { input ->
+                viewModel.addProvider(input)
                 showAddProviderDialog = false
+            }
+        )
+    }
+
+    // Edit Provider Dialog
+    editingProvider?.let { provider ->
+        ProviderDialog(
+            existing = provider,
+            hasStoredKey = provider.id in providersWithKeys,
+            onDismiss = { editingProvider = null },
+            onSave = { input ->
+                viewModel.updateProvider(provider.id, input)
+                editingProvider = null
             }
         )
     }
@@ -389,10 +437,14 @@ fun SettingsScreen(
 @Composable
 fun ProviderItemRow(
     provider: ProviderEntity,
+    hasKey: Boolean,
+    isTesting: Boolean,
     onTest: () -> Unit,
     onSetDefault: () -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val type = AiProviderType.fromStorageKey(provider.providerType)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -404,18 +456,21 @@ fun ProviderItemRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     // Provider Logo Icon
                     Box(
                         modifier = Modifier
                             .size(38.dp)
                             .clip(CircleShape)
                             .background(
-                                when {
-                                    provider.name.contains("OpenAI", ignoreCase = true) -> Color(0xFF10A37F)
-                                    provider.name.contains("Gemini", ignoreCase = true) -> Color(0xFF1D52D8)
-                                    provider.name.contains("Claude", ignoreCase = true) -> Color(0xFFD97706)
-                                    else -> MaterialTheme.colorScheme.primary
+                                when (type) {
+                                    AiProviderType.OPENAI -> Color(0xFF10A37F)
+                                    AiProviderType.GEMINI -> Color(0xFF1D52D8)
+                                    AiProviderType.ANTHROPIC -> Color(0xFFD97706)
+                                    AiProviderType.OPENAI_COMPATIBLE -> MaterialTheme.colorScheme.primary
                                 }
                             ),
                         contentAlignment = Alignment.Center
@@ -437,9 +492,15 @@ fun ProviderItemRow(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "${provider.modelName} • ${provider.status}",
+                            text = "${providerTypeLabel(type)} • ${provider.modelName}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        val status = providerStatusText(provider, hasKey, isTesting)
+                        Text(
+                            text = status.first,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (status.second) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -463,7 +524,7 @@ fun ProviderItemRow(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Action Buttons matching mockup: [Test Connection] [Set as Default] [Delete]
+            // Action Buttons: [Test Connection] [Set as Default] [Edit] [Delete]
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -471,15 +532,20 @@ fun ProviderItemRow(
             ) {
                 Button(
                     onClick = onTest,
+                    enabled = !isTesting && hasKey,
                     modifier = Modifier.weight(1.2f),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text(
-                        text = stringResource(R.string.settings_test_connection),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                    if (isTesting) {
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(
+                            text = stringResource(R.string.settings_test_connection),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
 
                 if (!provider.isDefault) {
@@ -498,12 +564,24 @@ fun ProviderItemRow(
                 }
 
                 IconButton(
+                    onClick = onEdit,
+                    modifier = Modifier.size(36.dp).testTag("edit_provider_${provider.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = stringResource(R.string.provider_edit),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                IconButton(
                     onClick = onDelete,
                     modifier = Modifier.size(36.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.DeleteOutline,
-                        contentDescription = "Delete",
+                        contentDescription = stringResource(R.string.provider_delete),
                         tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(20.dp)
                     )
@@ -511,6 +589,28 @@ fun ProviderItemRow(
             }
         }
     }
+}
+
+@Composable
+private fun providerTypeLabel(type: AiProviderType): String = when (type) {
+    AiProviderType.OPENAI -> "OpenAI"
+    AiProviderType.ANTHROPIC -> "Anthropic Claude"
+    AiProviderType.GEMINI -> "Google Gemini"
+    AiProviderType.OPENAI_COMPATIBLE -> stringResource(R.string.provider_type_compatible)
+}
+
+/** Localized status text and whether it is an error. Only real test results are shown. */
+@Composable
+private fun providerStatusText(provider: ProviderEntity, hasKey: Boolean, isTesting: Boolean): Pair<String, Boolean> {
+    if (isTesting) return stringResource(R.string.provider_status_testing) to false
+    if (!hasKey) return stringResource(R.string.provider_status_needs_key) to true
+    ProviderStatus.latencyOf(provider.status)?.let {
+        return stringResource(R.string.provider_status_connected, it) to false
+    }
+    ProviderStatus.errorOf(provider.status)?.let {
+        return stringResource(R.string.provider_status_error, stringResource(aiErrorStringRes(it))) to true
+    }
+    return stringResource(R.string.provider_status_not_tested) to false
 }
 
 @Composable
@@ -565,26 +665,67 @@ fun SettingsNavRow(
     }
 }
 
+/**
+ * Add / edit provider dialog. The API key is masked by default (explicit show/hide toggle) and is
+ * never pre-filled: when editing, an empty key field keeps the key that is already stored.
+ */
 @Composable
-fun AddProviderDialog(
+fun ProviderDialog(
+    existing: ProviderEntity?,
+    hasStoredKey: Boolean,
     onDismiss: () -> Unit,
-    onAdd: (name: String, type: String, url: String, key: String, model: String) -> Unit
+    onSave: (ProviderInput) -> Unit
 ) {
-    var name by remember { mutableStateOf("") }
-    var type by remember { mutableStateOf("OpenAI") }
-    var url by remember { mutableStateOf("https://api.openai.com/v1") }
+    val initialType = existing?.let { AiProviderType.fromStorageKey(it.providerType) } ?: AiProviderType.OPENAI
+    var type by remember { mutableStateOf(initialType) }
+    var name by remember { mutableStateOf(existing?.name ?: "") }
+    var url by remember { mutableStateOf(existing?.baseUrl?.ifBlank { initialType.defaultBaseUrl } ?: initialType.defaultBaseUrl) }
+    var model by remember { mutableStateOf(existing?.modelName ?: "") }
     var key by remember { mutableStateOf("") }
-    var model by remember { mutableStateOf("GPT-4o") }
+    var showKey by remember { mutableStateOf(false) }
+    var invalid by remember { mutableStateOf(emptySet<ProviderField>()) }
+    val requireKey = existing == null || !hasStoredKey
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.provider_add_dialog_title)) },
+        title = {
+            Text(stringResource(if (existing == null) R.string.provider_add_dialog_title else R.string.provider_edit_dialog_title))
+        },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = stringResource(R.string.provider_type_label),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                AiProviderType.values().toList().chunked(2).forEach { rowTypes ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        rowTypes.forEach { option ->
+                            FilterChip(
+                                selected = type == option,
+                                onClick = {
+                                    // Replace the URL only if it is still the previous type's default.
+                                    if (url.isBlank() || url == type.defaultBaseUrl) url = option.defaultBaseUrl
+                                    type = option
+                                },
+                                label = { Text(providerTypeLabel(option), fontSize = 12.sp) },
+                                modifier = Modifier.testTag("provider_type_${option.name}")
+                            )
+                        }
+                    }
+                }
+
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text(stringResource(R.string.provider_name_label)) },
+                    isError = ProviderField.NAME in invalid,
+                    supportingText = if (ProviderField.NAME in invalid) {
+                        { Text(stringResource(R.string.provider_error_name_required)) }
+                    } else null,
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -593,7 +734,12 @@ fun AddProviderDialog(
                     value = url,
                     onValueChange = { url = it },
                     label = { Text(stringResource(R.string.provider_url_label)) },
+                    isError = ProviderField.BASE_URL in invalid,
+                    supportingText = if (ProviderField.BASE_URL in invalid) {
+                        { Text(stringResource(R.string.provider_error_url_invalid)) }
+                    } else null,
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -601,30 +747,67 @@ fun AddProviderDialog(
                     value = model,
                     onValueChange = { model = it },
                     label = { Text(stringResource(R.string.provider_model_label)) },
+                    placeholder = {
+                        Text(stringResource(R.string.provider_model_hint, modelExample(type)))
+                    },
+                    isError = ProviderField.MODEL in invalid,
+                    supportingText = if (ProviderField.MODEL in invalid) {
+                        { Text(stringResource(R.string.provider_error_model_required)) }
+                    } else null,
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                val keySupport: String? = when {
+                    ProviderField.API_KEY in invalid -> stringResource(R.string.provider_error_key_required)
+                    !requireKey -> stringResource(R.string.provider_key_saved)
+                    else -> null
+                }
                 OutlinedTextField(
                     value = key,
                     onValueChange = { key = it },
                     label = { Text(stringResource(R.string.provider_key_label)) },
+                    placeholder = if (!requireKey) {
+                        { Text(stringResource(R.string.provider_key_keep_hint)) }
+                    } else null,
+                    isError = ProviderField.API_KEY in invalid,
+                    supportingText = if (keySupport != null) {
+                        { Text(keySupport) }
+                    } else null,
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+                    trailingIcon = {
+                        IconButton(onClick = { showKey = !showKey }) {
+                            Icon(
+                                imageVector = if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = stringResource(if (showKey) R.string.provider_key_hide else R.string.provider_key_show)
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("provider_api_key_field")
                 )
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    val finalName = name.trim().ifBlank { "Custom Provider" }
-                    val finalUrl = url.trim().ifBlank { "https://api.openai.com/v1" }
-                    val finalModel = model.trim().ifBlank { "default-model" }
-                    val finalKey = key.trim().ifBlank { "placeholder-key" }
-                    onAdd(finalName, type, finalUrl, finalKey, finalModel)
+                    val input = ProviderInput(
+                        name = name.trim(),
+                        type = type,
+                        baseUrl = url.trim(),
+                        model = model.trim(),
+                        apiKey = key.trim()
+                    )
+                    invalid = ProviderValidator.validate(input, requireKey)
+                    if (invalid.isEmpty()) {
+                        onSave(input)
+                        key = ""
+                    }
                 }
             ) {
-                Text(stringResource(R.string.action_add))
+                Text(stringResource(if (existing == null) R.string.action_add else R.string.action_save))
             }
         },
         dismissButton = {
@@ -633,4 +816,12 @@ fun AddProviderDialog(
             }
         }
     )
+}
+
+/** Example model ids shown as a hint only (never pre-filled). */
+private fun modelExample(type: AiProviderType): String = when (type) {
+    AiProviderType.OPENAI -> "gpt-4.1"
+    AiProviderType.ANTHROPIC -> "claude-sonnet-5-5"
+    AiProviderType.GEMINI -> "gemini-2.5-flash"
+    AiProviderType.OPENAI_COMPATIBLE -> "deepseek-chat"
 }

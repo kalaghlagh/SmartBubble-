@@ -23,8 +23,9 @@ class DocumentOcrEngine(
     suspend fun processPages(
         pageUris: List<Uri>,
         useAiEnhancement: Boolean = true,
-        defaultProviderName: String = "OpenAI",
-        onProgress: (pageIndex: Int, total: Int, message: String) -> Unit = { _, _, _ -> }
+        onProgress: (pageIndex: Int, total: Int, message: String) -> Unit = { _, _, _ -> },
+        /** Called when AI clean-up of a page fails; the page then keeps its raw OCR text. */
+        onAiEnhancementFailed: (Exception) -> Unit = {}
     ): List<ScannedPageData> = withContext(Dispatchers.IO) {
         val results = mutableListOf<ScannedPageData>()
 
@@ -58,18 +59,17 @@ class DocumentOcrEngine(
 
                 // If user selected AI enhancement or if Arabic is detected, use the Central AI Orchestrator
                 if (useAiEnhancement && orchestrator != null) {
-                    onProgress(index + 1, pageUris.size, "Analyzing layout and Arabic/multilingual text with $defaultProviderName...")
+                    onProgress(index + 1, pageUris.size, "")
                     try {
-                        val aiEnhanced = orchestrator.enhanceScannedPageText(
-                            rawExtractedText = rawText,
-                            pageIndex = index,
-                            providerName = defaultProviderName
-                        )
+                        val aiEnhanced = orchestrator.enhanceScannedPageText(rawText)
                         if (aiEnhanced.isNotBlank()) {
                             rawText = aiEnhanced
                         }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
                     } catch (e: Exception) {
-                        // Fall back to local extracted OCR text
+                        // Keep the real OCR text (never a fabricated one) and report the failure.
+                        onAiEnhancementFailed(e)
                     }
                 }
 

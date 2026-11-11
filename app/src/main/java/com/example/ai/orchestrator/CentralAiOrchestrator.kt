@@ -1,30 +1,39 @@
 package com.example.ai.orchestrator
 
 import android.content.Context
+import com.example.ai.providers.AiErrorKind
+import com.example.ai.providers.AiException
+import com.example.ai.providers.AiMessage
+import com.example.ai.providers.AiProviderClient
+import com.example.ai.providers.AiRequest
+import com.example.ai.providers.AiRole
+import com.example.ai.providers.Json
+import com.example.ai.providers.ProviderManager
 import com.example.core.delivery.DeliveryManager
-import com.example.core.delivery.DeliveryResult
 import com.example.core.storage.DocumentFileNames
 import com.example.data.db.SmartBubbleDatabase
 import com.example.data.model.DocumentEntity
+import com.example.data.model.ProviderEntity
+import com.example.data.model.TemplateEntity
+import com.example.document.DocumentFileValidator
+import com.example.document.EngineResult
 import com.example.document.docx.DocxEngine
-import com.example.document.model.PresentationModel
-import com.example.document.model.SheetModel
-import com.example.document.model.SlideModel
-import com.example.document.model.SpreadsheetModel
-import com.example.document.model.WordDocumentModel
-import com.example.document.model.WordSection
-import com.example.document.model.WordTable
 import com.example.document.pdf.PdfEngine
 import com.example.document.pptx.PptxEngine
 import com.example.document.xlsx.XlsxEngine
-import com.example.template.domain.TemplateMode
 import com.example.template.domain.TemplateProfile
+import com.example.template.preview.TemplatePreviewData
+import com.example.template.preview.TemplatePreviewEngine
+import com.example.template.preview.TemplatePreviewResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.DateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 
 enum class TaskLifecycleState {
@@ -40,539 +49,362 @@ enum class TaskLifecycleState {
     NEEDS_CLARIFICATION
 }
 
-data class GenerationTaskResult(
-    val state: TaskLifecycleState,
-    val documentEntity: DocumentEntity? = null,
-    val deliveryResult: DeliveryResult? = null,
-    val conversationalReply: String = "",
-    val errorMessage: String? = null
+/** Result of one chat turn handled by the orchestrator. */
+data class ChatTurnResult(
+    val reply: String,
+    val provider: ProviderEntity,
+    val document: DocumentEntity? = null,
+    val templateApplied: Boolean = false
 )
 
+/**
+ * The Central AI Orchestrator. Every AI task in the app goes through it, and it always uses the
+ * user's DEFAULT provider (ai_providers.isDefault, managed by [ProviderManager]) for
+ * understanding, planning, content generation and validation. It never switches providers on
+ * its own: if the default provider is missing or fails, an [AiException] is thrown and the UI
+ * explains the problem so the user can decide what to do.
+ *
+ * Specialized providers: not used. The orchestrator has a single execution path through the
+ * default provider; delegating sub-tasks to other providers requires an explicit configuration
+ * that does not exist yet (see Phase 2 report).
+ *
+ * Document flow: plan (default provider) -> structured JSON content (default provider) ->
+ * local schema validation, with one repair round by the default provider -> document engine ->
+ * file validation -> Library + reply composed only after the file exists.
+ */
 class CentralAiOrchestrator(
     private val context: Context,
     private val database: SmartBubbleDatabase,
-    private val deliveryManager: DeliveryManager
+    private val deliveryManager: DeliveryManager,
+    private val providerManager: ProviderManager
 ) {
     private val docxEngine = DocxEngine()
     private val pptxEngine = PptxEngine()
     private val xlsxEngine = XlsxEngine()
     private val pdfEngine = PdfEngine()
+    private val previewEngine = TemplatePreviewEngine()
 
     private val _currentState = MutableStateFlow(TaskLifecycleState.CREATED)
     val currentState: StateFlow<TaskLifecycleState> = _currentState.asStateFlow()
 
-    private val _statusMessage = MutableStateFlow("Idle")
+    private val _statusMessage = MutableStateFlow("")
     val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
 
-    suspend fun executeUserRequest(
-        userPrompt: String,
-        defaultProviderName: String = "Claude 3.5 Sonnet",
-        selectedTemplate: TemplateProfile? = null,
-        templateFile: File? = null,
-        templateMode: TemplateMode = TemplateMode.SMART_ADAPTATION,
-        forceFormat: String? = null // "DOCX", "PPTX", "XLSX", "PDF"
-    ): GenerationTaskResult = withContext(Dispatchers.IO) {
-        var createdFile: File? = null
-        var documentSaved = false
+    // ------------------------------------------------------------------ chat + documents
+
+    /**
+     * Handles a user message in a conversation.
+     * @param history earlier messages of the conversation (oldest first), without the new message
+     * @param selectedTemplate template the user attached to the chat (optional)
+     * @param forceFormat when set, a document of this format is produced without planning
+     */
+    suspend fun handleChatTurn(
+        history: List<ContextMessage>,
+        userMessage: String,
+        uiLanguage: String,
+        selectedTemplate: TemplateEntity?,
+        forceFormat: DocumentFormat? = null
+    ): ChatTurnResult = withContext(Dispatchers.IO) {
         try {
-            // Stage 1: CREATED
-            _currentState.value = TaskLifecycleState.CREATED
-            _statusMessage.value = "Request received by Central Orchestrator ($defaultProviderName)..."
-
-            // Stage 2: ANALYZING user intent
             _currentState.value = TaskLifecycleState.ANALYZING
-            _statusMessage.value = "Central Orchestrator analyzing intent and planning pipeline..."
+            val (provider, client) = providerManager.defaultClient()
+            val conversation = ConversationContext.build(history, userMessage)
 
-            val isDocReq = forceFormat != null || isDocumentCreationRequest(userPrompt)
-            val detectedFormat = if (isDocReq) (forceFormat ?: detectDesiredFormat(userPrompt)) else null
-            val template = if (detectedFormat != null) {
-                selectedTemplate ?: loadDefaultTemplateForFormat(detectedFormat)
-            } else TemplateProfile.defaultProfile()
-
-            val templateFileToUse = templateFile ?: (if (detectedFormat != null) loadDefaultTemplateFileForFormat(detectedFormat) else null)
-
-            if (detectedFormat == null) {
-                // Pure conversational response
-                val isArabic = userPrompt.any { it in '\u0600'..'\u06FF' }
-                val isFrench = userPrompt.contains("bonjour", ignoreCase = true) || userPrompt.contains("merci", ignoreCase = true)
-                val reply = when {
-                    isArabic -> "بالطبع! إليك ملخص حول استفسارك:\nالذكاء الاصطناعي هو مجال متقدم في علوم الحاسوب يهدف إلى تطوير خوارزميات وأنظمة قادرة على محاكاة القدرات الذهنية البشرية، مثل التعلم والاستنتاج وصياغة المستندات التلقائية. يمكنك أيضاً أن تطلب مني إنشاء ملف Word أو PowerPoint أو Excel بناءً على أي موضوع."
-                    isFrench -> "Certainement ! Voici une réponse détaillée à votre question. SmartBubble peut également compiler des documents Word, des présentations PowerPoint ou des feuilles Excel sur mesure avec vos modèles personnels."
-                    else -> "I'd be glad to help with that. You can ask me conversational questions or prompt me to draft professional letters, executive reports, PowerPoint decks, or financial Excel sheets using your uploaded templates."
-                }
-                _currentState.value = TaskLifecycleState.COMPLETED
-                _statusMessage.value = "Completed successfully"
-                return@withContext GenerationTaskResult(
-                    state = TaskLifecycleState.COMPLETED,
-                    conversationalReply = reply
-                )
+            val plan: Plan = if (forceFormat != null) {
+                Plan.Document(forceFormat, title = null, brief = userMessage, reply = null)
+            } else {
+                planTurn(client, conversation, uiLanguage, selectedTemplate)
             }
 
-            // Stage 3: GENERATING structured content schema
-            _currentState.value = TaskLifecycleState.GENERATING
-            _statusMessage.value = "Synthesizing structured document schema ($detectedFormat)..."
+            when (plan) {
+                is Plan.Chat -> {
+                    _currentState.value = TaskLifecycleState.COMPLETED
+                    ChatTurnResult(reply = plan.reply, provider = provider)
+                }
+                is Plan.Document -> generateDocument(client, provider, conversation, plan, uiLanguage, selectedTemplate)
+            }
+        } catch (e: Exception) {
+            _currentState.value = TaskLifecycleState.FAILED
+            throw e
+        }
+    }
 
-            // Stage 4: VALIDATING schema integrity
-            _currentState.value = TaskLifecycleState.VALIDATING
-            _statusMessage.value = "Central Orchestrator validating schema and template compatibility..."
+    private sealed class Plan {
+        data class Chat(val reply: String) : Plan()
+        data class Document(val format: DocumentFormat, val title: String?, val brief: String, val reply: String?) : Plan()
+    }
 
-            // Stage 5: RENDERING actual Office / PDF file using Genuine Document Engines
-            _currentState.value = TaskLifecycleState.RENDERING
-            _statusMessage.value = "Document Engine compiling real $detectedFormat file..."
-
-            val documentsDir = File(context.filesDir, "generated_docs").apply { mkdirs() }
-            val docId = UUID.randomUUID().toString()
-            val extension = detectedFormat.lowercase()
-            // Visible title is unchanged; the physical file name is unique per document so a new
-            // generation can never overwrite a file that another Library entry points to.
-            val displayTitle = "${generateDocumentTitle(userPrompt, detectedFormat)}.$extension"
-            val outputFile = DocumentFileNames.createUniqueFile(
-                documentsDir, generateDocumentTitle(userPrompt, detectedFormat), extension
+    private suspend fun planTurn(
+        client: AiProviderClient,
+        conversation: List<AiMessage>,
+        uiLanguage: String,
+        selectedTemplate: TemplateEntity?
+    ): Plan {
+        val templateNote = selectedTemplate?.let {
+            "The user selected the ${it.fileType} template \"${it.name}\". If they ask for a document, prefer the ${it.fileType} format unless they ask for another one."
+        }
+        val response = client.complete(
+            AiRequest(
+                system = OrchestratorPrompts.planner(uiLanguage, templateNote),
+                messages = conversation,
+                expectJson = true,
+                maxOutputTokens = 16_000
             )
-            createdFile = outputFile
+        )
+        val obj = Json.extractObject(response.text)
+        if (obj == null) {
+            // The model answered in plain text: that IS its answer (never fabricated).
+            if (response.truncated) throw AiException(AiErrorKind.TRUNCATED_RESPONSE)
+            return Plan.Chat(response.text.trim())
+        }
+        val intent = (obj["intent"] as? String)?.lowercase()
+        val reply = (obj["reply"] as? String)?.trim().orEmpty()
+        if (intent == "document") {
+            val format = DocumentFormat.parse(obj["format"] as? String) ?: DocumentFormat.DOCX
+            val brief = (obj["brief"] as? String)?.trim().orEmpty()
+            return Plan.Document(format, (obj["title"] as? String)?.trim(), brief.ifEmpty { conversation.last().text }, reply.ifEmpty { null })
+        }
+        if (reply.isEmpty()) {
+            if (response.truncated) throw AiException(AiErrorKind.TRUNCATED_RESPONSE)
+            throw AiException(AiErrorKind.EMPTY_RESPONSE)
+        }
+        return Plan.Chat(reply)
+    }
 
-            var textContent = ""
-            var pageOrSlideCount = 1
-            var wordCount = 0
+    private data class TemplateChoice(val profile: TemplateProfile, val file: File?, val entity: TemplateEntity?, val note: String?)
 
-            when (detectedFormat) {
-                "DOCX" -> {
-                    val wordModel = synthesizeWordModel(userPrompt, template)
-                    docxEngine.generateDocx(wordModel, outputFile, template, templateFileToUse)
-                    textContent = extractTextFromWord(wordModel)
-                    pageOrSlideCount = (wordModel.sections.size + 1).coerceAtLeast(1)
-                    wordCount = textContent.split("\\s+".toRegex()).size
+    /** Picks the template for [format]: the chat-selected one if it matches, else the default. */
+    private suspend fun chooseTemplate(format: DocumentFormat, selected: TemplateEntity?): TemplateChoice {
+        val wantedType = if (format == DocumentFormat.PDF) "DOCX" else format.name
+        var note: String? = null
+        val entity = when {
+            selected != null && selected.fileType.equals(wantedType, ignoreCase = true) -> selected
+            else -> {
+                if (selected != null) {
+                    note = "The selected template \"${selected.name}\" is a ${selected.fileType} template and cannot be applied to a ${format.name} file; your default ${format.name} template was used instead (if any)."
                 }
-                "PPTX" -> {
-                    val pptModel = synthesizePresentationModel(userPrompt, template)
-                    pptxEngine.generatePptx(pptModel, outputFile, template, templateFileToUse)
-                    textContent = extractTextFromPpt(pptModel)
-                    pageOrSlideCount = pptModel.slides.size
-                    wordCount = textContent.split("\\s+".toRegex()).size
-                }
-                "XLSX" -> {
-                    val xlsxModel = synthesizeSpreadsheetModel(userPrompt, template)
-                    xlsxEngine.generateXlsx(xlsxModel, outputFile, template, templateFileToUse)
-                    textContent = extractTextFromXlsx(xlsxModel)
-                    pageOrSlideCount = xlsxModel.sheets.size
-                    wordCount = textContent.split("\\s+".toRegex()).size
-                }
-                else -> {
-                    val wordModel = synthesizeWordModel(userPrompt, template)
-                    pdfEngine.generatePdf(wordModel, outputFile, template)
-                    textContent = extractTextFromWord(wordModel)
-                    pageOrSlideCount = 2
-                    wordCount = textContent.split("\\s+".toRegex()).size
+                val dao = database.templateDao()
+                when (format) {
+                    DocumentFormat.PPTX -> dao.getDefaultPptTemplate()
+                    DocumentFormat.XLSX -> dao.getDefaultExcelTemplate()
+                    else -> dao.getDefaultWordTemplate()
                 }
             }
+        }
+        if (entity == null) return TemplateChoice(TemplateProfile.defaultProfile(), null, null, note)
+        val profile = TemplateProfile.fromJson(entity.profileJson)
+        val file = File(entity.originalFilePath).takeIf { it.isFile && it.length() > 0 }
+        if (file == null) {
+            note = listOfNotNull(note, "The template file \"${entity.name}\" is missing; only its saved colors and fonts were used.").joinToString(" ")
+        }
+        if (format == DocumentFormat.PDF) {
+            note = listOfNotNull(note, "PDF output uses the template's colors and margins only; its layout cannot be reproduced in PDF.").joinToString(" ")
+            return TemplateChoice(profile, null, entity, note)
+        }
+        return TemplateChoice(profile, file, entity, note)
+    }
 
-            // Verify file exists and has valid length
-            if (!outputFile.exists() || outputFile.length() == 0L) {
-                throw IllegalStateException("Generated file verification failed: empty output.")
+    /** Short description of the template's real structure so the AI can fit its content. */
+    private suspend fun describeTemplate(entity: TemplateEntity?): String? {
+        entity ?: return null
+        val data = when (val r = previewEngine.loadPreview(entity)) {
+            is TemplatePreviewResult.Success -> r.data
+            is TemplatePreviewResult.Fallback -> r.data
+            is TemplatePreviewResult.Error -> null
+        } ?: return "template \"${entity.name}\" (${entity.fileType})."
+        val outline = when (data) {
+            is TemplatePreviewData.DocxPreview ->
+                "Word template \"${entity.name}\" with sections: " + data.sections.take(12).joinToString("; ") { it.heading }
+            is TemplatePreviewData.PptxPreview ->
+                "presentation template \"${entity.name}\" whose slides cover: " + data.slides.take(12).joinToString("; ") { it.title }
+            is TemplatePreviewData.XlsxPreview ->
+                "workbook template \"${entity.name}\" with sheets: " + data.sheets.take(8).joinToString("; ") { "${it.name} (${it.headers.joinToString(", ")})" }
+        }
+        return outline.take(1_500)
+    }
+
+    private suspend fun generateDocument(
+        client: AiProviderClient,
+        provider: ProviderEntity,
+        conversation: List<AiMessage>,
+        plan: Plan.Document,
+        uiLanguage: String,
+        selectedTemplate: TemplateEntity?
+    ): ChatTurnResult {
+        _currentState.value = TaskLifecycleState.GENERATING
+        val template = chooseTemplate(plan.format, selectedTemplate)
+        val templateDescription = describeTemplate(template.entity)
+
+        val writerMessages = conversation.dropLast(1) + AiMessage(
+            AiRole.USER,
+            buildString {
+                append(conversation.last().text)
+                append("\n\n[Document brief] ").append(plan.brief)
+                plan.title?.let { append("\n[Suggested title] ").append(it) }
+            }
+        )
+        val date = DateFormat.getDateInstance(DateFormat.LONG, Locale.forLanguageTag(uiLanguage)).format(Date())
+        val parsed = requestStructuredContent(client, writerMessages, plan.format, uiLanguage, templateDescription, date)
+
+        // Render the real file.
+        _currentState.value = TaskLifecycleState.RENDERING
+        val documentsDir = File(context.filesDir, "generated_docs").apply { mkdirs() }
+        val outputFile = DocumentFileNames.createUniqueFile(documentsDir, parsed.document.title, plan.format.extension)
+        var saved = false
+        try {
+            val engineResult: EngineResult = when (val doc = parsed.document) {
+                is ParsedDocument.Word -> if (plan.format == DocumentFormat.PDF) {
+                    pdfEngine.generatePdf(doc.model, outputFile, template.profile)
+                    EngineResult(outputFile, templateApplied = false)
+                } else {
+                    docxEngine.generateDocxDetailed(doc.model, outputFile, template.profile, template.file)
+                }
+                is ParsedDocument.Presentation -> pptxEngine.generatePptxDetailed(doc.model, outputFile, template.profile, template.file)
+                is ParsedDocument.Spreadsheet -> xlsxEngine.generateXlsxDetailed(doc.model, outputFile, template.profile, template.file)
             }
 
-            // Stage 6: SAVING to Room Database
+            _currentState.value = TaskLifecycleState.VALIDATING
+            DocumentFileValidator.validate(outputFile, plan.format.extension)?.let { problem ->
+                throw IllegalStateException(problem)
+            }
+
             _currentState.value = TaskLifecycleState.SAVING
-            _statusMessage.value = "Saving verified file to Document Library..."
-
-            val mimeType = when (detectedFormat) {
-                "DOCX" -> DeliveryManager.MIME_DOCX
-                "PPTX" -> DeliveryManager.MIME_PPTX
-                "XLSX" -> DeliveryManager.MIME_XLSX
-                else -> DeliveryManager.MIME_PDF
-            }
-
+            val visibleTitle = DocumentFileNames.displayTitle(parsed.document.title) + "." + plan.format.extension
+            val plain = parsed.document.plainText
+            val counts = countsOf(parsed.document)
             val docEntity = DocumentEntity(
-                id = docId,
-                title = displayTitle,
-                fileType = detectedFormat,
+                id = UUID.randomUUID().toString(),
+                title = visibleTitle,
+                fileType = plan.format.name,
                 filePath = outputFile.absolutePath,
                 fileSize = outputFile.length(),
-                wordCount = wordCount,
-                pageOrSlideCount = pageOrSlideCount,
-                templateId = template.templateId,
-                templateName = template.name,
-                providerUsed = defaultProviderName,
-                summary = "Generated by $defaultProviderName • ${template.name} • ${outputFile.length() / 1024} KB",
-                textContent = textContent,
+                wordCount = plain.split(Regex("\\s+")).count { it.isNotBlank() },
+                pageOrSlideCount = counts,
+                templateId = template.entity?.id,
+                templateName = template.entity?.name,
+                providerUsed = provider.name,
+                summary = "${provider.name} • ${provider.modelName} • ${outputFile.length() / 1024} KB",
+                textContent = plain,
                 isOrchestratorVerified = true
             )
             database.documentDao().insertDocument(docEntity)
-            documentSaved = true
+            saved = true
 
-            // Stage 7: OPENING / DELIVERING (BOTH = Real File + Clipboard)
             _currentState.value = TaskLifecycleState.OPENING
-            _statusMessage.value = "Executing BOTH delivery (Office file verified + clipboard populated)..."
+            deliveryManager.deliverBoth(outputFile, plain, mimeTypeFor(plan.format), docEntity.title, openImmediately = false)
 
-            val delivery = deliveryManager.deliverBoth(
-                file = outputFile,
-                textContent = textContent,
-                mimeType = mimeType,
-                title = docEntity.title,
-                openImmediately = false
-            )
-
-            // Stage 8: COMPLETED
+            // The reply is composed only now that the file exists and was validated.
+            val notes = (listOfNotNull(template.note) + engineResult.notes + parsed.warnings).distinct()
+            val reply = buildString {
+                plan.reply?.let { append(it).append("\n\n") }
+                append("**").append(docEntity.title).append("** (").append(outputFile.length() / 1024).append(" KB)")
+                if (engineResult.templateApplied && template.entity != null) {
+                    append(" — template: ").append(template.entity.name)
+                }
+                if (notes.isNotEmpty()) {
+                    append("\n\n")
+                    notes.forEach { append("• ").append(it).append('\n') }
+                }
+            }.trim()
             _currentState.value = TaskLifecycleState.COMPLETED
-            _statusMessage.value = "Completed successfully • Ready for inspection"
-
-            val reply = "I've structured, validated, and generated the complete $detectedFormat file: **${docEntity.title}** (${outputFile.length() / 1024} KB). Text content has been copied to your clipboard, and the document is saved in your Library ready for export or opening in Office."
-
-            GenerationTaskResult(
-                state = TaskLifecycleState.COMPLETED,
-                documentEntity = docEntity,
-                deliveryResult = delivery,
-                conversationalReply = reply
-            )
-
-        } catch (e: Exception) {
-            // Never leave an empty/partial file behind for a document that was not saved.
-            if (!documentSaved) createdFile?.delete()
-            _currentState.value = TaskLifecycleState.FAILED
-            _statusMessage.value = "Error: ${e.message}"
-            GenerationTaskResult(
-                state = TaskLifecycleState.FAILED,
-                errorMessage = e.message
-            )
+            return ChatTurnResult(reply, provider, docEntity, engineResult.templateApplied)
+        } finally {
+            if (!saved) outputFile.delete()
         }
     }
 
-    suspend fun enhanceScannedPageText(
-        rawExtractedText: String,
-        pageIndex: Int,
-        providerName: String = "OpenAI"
-    ): String = withContext(Dispatchers.Default) {
+    /** Asks for structured JSON, validates it, and gives the default provider one repair round. */
+    private suspend fun requestStructuredContent(
+        client: AiProviderClient,
+        messages: List<AiMessage>,
+        format: DocumentFormat,
+        uiLanguage: String,
+        templateDescription: String?,
+        date: String
+    ): DocumentSchemaParser.Result {
+        val system = OrchestratorPrompts.documentWriter(format, uiLanguage, templateDescription)
+        val first = client.complete(AiRequest(system, messages, expectJson = true, maxOutputTokens = 16_000))
+        val firstError = try {
+            if (first.truncated) "The JSON was cut off because it was too long; make it more concise."
+            else return DocumentSchemaParser.parse(first.text, format, date)
+        } catch (e: DocumentSchemaException) {
+            e.message ?: "Invalid structure."
+        }
+
+        _currentState.value = TaskLifecycleState.VALIDATING
+        val repairMessages = messages + AiMessage(AiRole.ASSISTANT, first.text.take(20_000)) +
+            AiMessage(AiRole.USER, OrchestratorPrompts.repair(firstError))
+        val second = client.complete(AiRequest(system, repairMessages, expectJson = true, maxOutputTokens = 16_000))
+        if (second.truncated) throw AiException(AiErrorKind.TRUNCATED_RESPONSE)
+        return try {
+            DocumentSchemaParser.parse(second.text, format, date)
+        } catch (e: DocumentSchemaException) {
+            throw AiException(AiErrorKind.MALFORMED_RESPONSE, e.message)
+        }
+    }
+
+    private fun countsOf(doc: ParsedDocument): Int = when (doc) {
+        is ParsedDocument.Word -> doc.model.sections.size.coerceAtLeast(1)
+        is ParsedDocument.Presentation -> doc.model.slides.size + 1 // + title slide
+        is ParsedDocument.Spreadsheet -> doc.model.sheets.size
+    }
+
+    private fun mimeTypeFor(format: DocumentFormat) = when (format) {
+        DocumentFormat.DOCX -> DeliveryManager.MIME_DOCX
+        DocumentFormat.PPTX -> DeliveryManager.MIME_PPTX
+        DocumentFormat.XLSX -> DeliveryManager.MIME_XLSX
+        DocumentFormat.PDF -> DeliveryManager.MIME_PDF
+    }
+
+    // ------------------------------------------------------------------ content operations
+
+    /**
+     * Rewrite / summarize / translate / correct / format / expand / shorten / answer questions
+     * about [content], using the default provider. Returns the provider's actual output.
+     */
+    suspend fun performContentOperation(
+        operation: ContentOperation,
+        content: String,
+        uiLanguage: String,
+        instruction: String? = null,
+        targetLanguage: String? = null
+    ): Pair<String, ProviderEntity> = withContext(Dispatchers.IO) {
+        if (content.isBlank() && operation != ContentOperation.GENERATE) {
+            throw AiException(AiErrorKind.BAD_REQUEST, "No content to process")
+        }
+        val (provider, client) = providerManager.defaultClient()
+        val user = buildString {
+            if (!instruction.isNullOrBlank()) append(instruction.trim()).append("\n\n")
+            if (content.isNotBlank()) append("--- CONTENT ---\n").append(content.take(MAX_CONTENT_CHARS))
+        }
+        val response = client.complete(
+            AiRequest(
+                system = OrchestratorPrompts.contentOperation(operation, uiLanguage, targetLanguage),
+                messages = listOf(AiMessage(AiRole.USER, user)),
+                maxOutputTokens = 16_000
+            )
+        )
+        val text = response.text.trim()
+        if (text.isEmpty()) throw AiException(AiErrorKind.EMPTY_RESPONSE)
+        (if (response.truncated) "$text\n\n…" else text) to provider
+    }
+
+    /** AI clean-up of OCR text from one scanned page (default provider). */
+    suspend fun enhanceScannedPageText(rawExtractedText: String): String = withContext(Dispatchers.IO) {
         if (rawExtractedText.isBlank()) return@withContext rawExtractedText
-
-        // Central AI Orchestrator structural layout and multilingual/Arabic correction pipeline
-        val lines = rawExtractedText.lines().map { it.trim() }.filter { it.isNotEmpty() }
-        val sb = StringBuilder()
-
-        for (line in lines) {
-            val isArabic = line.any { it in '\u0600'..'\u06FF' }
-
-            // Clean common OCR artifacts
-            var cleaned = line
-                .replace("\\s{2,}".toRegex(), " ")
-                .replace("~", "-")
-                .trim()
-
-            // If table pattern like tabs or multiple spaces separating words/numbers
-            if (cleaned.contains("\t") || cleaned.matches(".*\\S+\\s{2,}\\S+.*".toRegex())) {
-                val parts = cleaned.split("[\t]+|\\s{2,}".toRegex()).filter { it.isNotBlank() }
-                if (parts.size >= 2) {
-                    cleaned = "| " + parts.joinToString(" | ") + " |"
-                }
-            }
-
-            // Ensure Arabic text direction and word order integrity
-            if (isArabic) {
-                cleaned = cleaned.replace("«", "\"").replace("»", "\"")
-            }
-
-            sb.appendLine(cleaned)
-        }
-
-        sb.toString().trim()
-    }
-
-    suspend fun performFollowUpAiAction(
-        actionType: String,
-        documentText: String,
-        targetLanguage: String? = null,
-        providerName: String = "OpenAI"
-    ): String = withContext(Dispatchers.Default) {
-        when (actionType.uppercase()) {
-            "SPELLING" -> {
-                val isArabic = documentText.any { it in '\u0600'..'\u06FF' }
-                if (isArabic) {
-                    "تمت مراجعة النص وتصحيح الأخطاء الإملائية والمطبعية الناتجة عن المسح الضوئي، مع ضبط علامات الترقيم وتوحيد همزات الوصل والقطع في كامل المستند.\n\n" + documentText
-                } else {
-                    "Spelling, grammatical corrections, and OCR scan artifacts have been polished and verified across all sections while retaining original formatting:\n\n" + documentText
-                }
-            }
-            "FORMAT" -> {
-                val isArabic = documentText.any { it in '\u0600'..'\u06FF' }
-                if (isArabic) {
-                    "تم تحسين التنسيق وتوحيد الهوامش، العناوين الرئيسية، القوائم النقطية، وتنسيق الجداول لضمان أعلى معايير الإخراج المكتبي الاحترافي.\n\n" + documentText
-                } else {
-                    "Document formatting, visual hierarchy, line spacing, list indentations, and table borders have been restructured into an executive layout:\n\n" + documentText
-                }
-            }
-            "TRANSLATE" -> {
-                val isArabic = documentText.any { it in '\u0600'..'\u06FF' }
-                if (isArabic) {
-                    "Here is the verified professional English translation of your scanned document:\n\n" +
-                    "### Executive Translation\n" +
-                    documentText.lines().joinToString("\n") { line ->
-                        if (line.isBlank()) ""
-                        else "English: [Translated Content] - " + line.take(80)
-                    }
-                } else {
-                    "إليك الترجمة العربية الرسمية المعتمدة للمستند الممسوح ضوئياً:\n\n" +
-                    "### الترجمة المعتمدة\n" +
-                    documentText.lines().joinToString("\n") { line ->
-                        if (line.isBlank()) ""
-                        else "ترجمة: " + line.take(80)
-                    }
-                }
-            }
-            "SUMMARIZE" -> {
-                val isArabic = documentText.any { it in '\u0600'..'\u06FF' }
-                if (isArabic) {
-                    "### ملخص تنفيذي للمستند الممسوح ضوئياً\n\n" +
-                    "• **الموضوع الرئيسي:** وثيقة رسمية تتضمن بنوداً تنظيمية وملاحظات تشغيلية مجدولة.\n" +
-                    "• **أبرز النقاط المستخرجة:** تم استخلاص البيانات الأساسية والجداول المرفقة بنجاح.\n" +
-                    "• **التوصية:** المستند جاهز للتحرير كملف Word DOCX أو المشاركة عبر البريد والتطبيقات.\n\n" +
-                    "إجمالي عدد الكلمات: ${documentText.split("\\s+".toRegex()).size} كلمة."
-                } else {
-                    "### Scanned Document Executive Summary\n\n" +
-                    "• **Core Subject:** Official documentation containing structured operational terms and tabular records.\n" +
-                    "• **Key Highlights:** Fully extracted structural data, headings, and data columns with complete fidelity.\n" +
-                    "• **Action Item:** Ready for direct DOCX editing in Microsoft Word, Google Docs, or export.\n\n" +
-                    "Total extracted word count: ${documentText.split("\\s+".toRegex()).size} words."
-                }
-            }
-            else -> documentText
-        }
-    }
-
-    private suspend fun loadDefaultTemplateForFormat(format: String): TemplateProfile {
-        val tDao = database.templateDao()
-        val defaultEntity = when (format) {
-            "DOCX" -> tDao.getDefaultWordTemplate()
-            "PPTX" -> tDao.getDefaultPptTemplate()
-            "XLSX" -> tDao.getDefaultExcelTemplate()
-            else -> tDao.getDefaultWordTemplate()
-        }
-        return if (defaultEntity != null) {
-            TemplateProfile.fromJson(defaultEntity.profileJson)
-        } else {
-            TemplateProfile.defaultProfile()
-        }
-    }
-
-    private suspend fun loadDefaultTemplateFileForFormat(format: String): File? {
-        val tDao = database.templateDao()
-        val defaultEntity = when (format) {
-            "DOCX" -> tDao.getDefaultWordTemplate()
-            "PPTX" -> tDao.getDefaultPptTemplate()
-            "XLSX" -> tDao.getDefaultExcelTemplate()
-            else -> tDao.getDefaultWordTemplate()
-        }
-        val path = defaultEntity?.originalFilePath
-        return if (!path.isNullOrBlank()) {
-            val f = File(path)
-            if (f.exists() && f.length() > 0) f else null
-        } else null
-    }
-
-    private fun isDocumentCreationRequest(prompt: String): Boolean {
-        val lower = prompt.lowercase()
-        val keywords = listOf(
-            "create", "draft", "generate", "write", "prepare", "make", "letter",
-            "report", "doc", "slide", "presentation", "deck", "spreadsheet",
-            "sheet", "excel", "table", "contract", "proposal", "invoice", "summary",
-            "اكتب", "أنشئ", "اصنع", "تقرير", "خطاب", "عرض", "جدول", "مستند", "ملف", "اتفاقية", "عقد", "ميزانية",
-            "rédiger", "créer", "générer", "lettre", "rapport", "présentation", "feuille"
-        )
-        return keywords.any { lower.contains(it) }
-    }
-
-    private fun detectDesiredFormat(prompt: String): String {
-        val lower = prompt.lowercase()
-        return when {
-            lower.contains("slide") || lower.contains("presentation") || lower.contains("deck") || lower.contains("pitch") || lower.contains("powerpoint") || lower.contains("pptx") -> "PPTX"
-            lower.contains("excel") || lower.contains("sheet") || lower.contains("spreadsheet") || lower.contains("budget") || lower.contains("table") || lower.contains("xlsx") || (lower.contains("invoice") && lower.contains("calc")) -> "XLSX"
-            lower.contains("pdf") || lower.contains("print") -> "PDF"
-            else -> "DOCX" // Default office document
-        }
-    }
-
-    private fun generateDocumentTitle(prompt: String, format: String): String {
-        val lower = prompt.lowercase()
-        return when {
-            lower.contains("partnership") || lower.contains("agreement") -> "Strategic_Partnership_Agreement"
-            lower.contains("budget") -> "Operating_Budget_Model"
-            lower.contains("investor") || lower.contains("strategy") -> "Investor_Strategy_Deck"
-            lower.contains("report") -> "Executive_Summary_Report"
-            lower.contains("contract") -> "Enterprise_Commercial_Contract"
-            else -> "SmartBubble_${format}_Document"
-        }
-    }
-
-    private fun synthesizeWordModel(prompt: String, template: TemplateProfile): WordDocumentModel {
-        val title = when {
-            prompt.contains("partnership", ignoreCase = true) -> "Commercial Partnership Agreement"
-            prompt.contains("contract", ignoreCase = true) -> "Enterprise Services Contract"
-            prompt.contains("report", ignoreCase = true) -> "Corporate Executive Report"
-            else -> "Executive Business Brief"
-        }
-
-        return WordDocumentModel(
-            title = title,
-            subtitle = "SmartBubble Technologies & Apex Enterprise Solutions",
-            organization = "Smart Bubble Autonomous Workspace",
-            date = "November 2026",
-            sections = listOf(
-                WordSection(
-                    heading = "1. Executive Summary & Objective",
-                    paragraphs = listOf(
-                        "This agreement outlines the strategic engagement between the parties, setting forth commercial licensing, SLA guarantees, and enterprise governance standards.",
-                        "Smart Bubble provides native document generation, multi-provider AI orchestration, and automated workflow assistance under strict compliance parameters."
-                    )
-                ),
-                WordSection(
-                    heading = "2. Scope of Services & Deliverables",
-                    paragraphs = listOf(
-                        "The scope encompasses 500 enterprise seats with dedicated throughput allocation, custom template integration, and priority technical support."
-                    ),
-                    bulletPoints = listOf(
-                        "Multi-turn AI Assistant access with central orchestrator validation",
-                        "High-speed generation of genuine DOCX, PPTX, XLSX, and PDF documents",
-                        "Enterprise Knowledge Center integration and Google NotebookLM synchronization",
-                        "End-to-end encrypted Keystore credential storage and zero-knowledge privacy"
-                    )
-                ),
-                WordSection(
-                    heading = "3. Service Level Agreement (SLA) & Terms",
-                    paragraphs = listOf(
-                        "A guaranteed 99.9% uptime uptime standard is established, with 24/7 dedicated engineering escalation protocols and a maximum 15-minute response window for critical priority tickets."
-                    )
-                )
-            ),
-            table = WordTable(
-                headers = listOf("Tier Tier", "User Seats", "Monthly Rate", "SLA Support Level"),
-                rows = listOf(
-                    listOf("Standard", "1 - 50", "$15 / user", "Standard 8x5"),
-                    listOf("Professional", "51 - 250", "$28 / user", "Priority 24x7"),
-                    listOf("Enterprise Dedicated", "251 - 500+", "Custom Tier", "Dedicated Executive SLA")
-                )
-            ),
-            signatoryName = "Alexander Wright",
-            signatoryTitle = "Managing Director, Global Enterprise Systems"
-        )
-    }
-
-    private fun synthesizePresentationModel(prompt: String, template: TemplateProfile): PresentationModel {
-        return PresentationModel(
-            title = "Corporate Growth Strategy & AI Office Transformation",
-            subtitle = "Smart Bubble Strategic Operations",
-            presenter = "Alexander Wright, Executive Lead",
-            slides = listOf(
-                SlideModel(
-                    title = "Smart Bubble Executive Overview",
-                    subtitle = "One Intelligent Workspace",
-                    bulletPoints = listOf(
-                        "Native Android AI Office Assistant",
-                        "Unified Central AI Orchestrator architecture",
-                        "Direct compilation of DOCX, PPTX, XLSX, and PDF files",
-                        "Personal document templates with strict design preservation"
-                    ),
-                    calloutMetric = "500+",
-                    calloutLabel = "Enterprise Seats Deployed"
-                ),
-                SlideModel(
-                    title = "Multi-Provider AI Orchestration",
-                    subtitle = "Central Dispatch & Validation",
-                    bulletPoints = listOf(
-                        "Claude 3.5 Sonnet acts as Central Orchestrator",
-                        "Specialized coordination with GPT-4o, Gemini, and DeepSeek",
-                        "Hardware-backed Keystore encryption for all credentials",
-                        "Guaranteed structured schema validation prior to rendering"
-                    ),
-                    calloutMetric = "99.9%",
-                    calloutLabel = "Accuracy & Syntactic Compliance"
-                ),
-                SlideModel(
-                    title = "Enterprise Roadmap & Milestones",
-                    subtitle = "Execution Timeline",
-                    bulletPoints = listOf(
-                        "Phase 1: Knowledge Center & NotebookLM sync rollout",
-                        "Phase 2: Automated multi-language RTL Arabic localization",
-                        "Phase 3: High-throughput batch document synthesis",
-                        "Phase 4: Continuous offline Keystore validation"
-                    ),
-                    calloutMetric = "6 Weeks",
-                    calloutLabel = "Complete Onboarding Cycle"
-                )
+        val (_, client) = providerManager.defaultClient()
+        val response = client.complete(
+            AiRequest(
+                system = OrchestratorPrompts.OCR_CLEANUP,
+                messages = listOf(AiMessage(AiRole.USER, rawExtractedText.take(MAX_CONTENT_CHARS))),
+                maxOutputTokens = 16_000
             )
         )
+        if (response.truncated) throw AiException(AiErrorKind.TRUNCATED_RESPONSE)
+        response.text.trim().ifEmpty { throw AiException(AiErrorKind.EMPTY_RESPONSE) }
     }
 
-    private fun synthesizeSpreadsheetModel(prompt: String, template: TemplateProfile): SpreadsheetModel {
-        return SpreadsheetModel(
-            workbookTitle = "FY2026_Operating_Financial_Model",
-            sheets = listOf(
-                SheetModel(
-                    name = "Q3 Operating Budget",
-                    headers = listOf("Department", "Q1 Budget", "Q2 Budget", "Q3 Allocation", "Status"),
-                    rows = listOf(
-                        listOf("Engineering & AI", 125000, 140000, 165000, "Approved"),
-                        listOf("Product Architecture", 85000, 92000, 98000, "Approved"),
-                        listOf("Security & Compliance", 45000, 48000, 55000, "Approved"),
-                        listOf("Enterprise Operations", 60000, 65000, 72000, "Review")
-                    ),
-                    summaryFormulaLabel = "Total Q3 Allocation",
-                    summaryFormula = "SUM(D2:D5)"
-                ),
-                SheetModel(
-                    name = "SLA Performance Metrics",
-                    headers = listOf("Metric Description", "Target SLA", "Actual Performance", "Compliance Status"),
-                    rows = listOf(
-                        listOf("System Uptime", "99.9%", "99.98%", "Compliant"),
-                        listOf("Mean Time to Respond", "< 15 mins", "4.2 mins", "Compliant"),
-                        listOf("Document Generation Speed", "< 3.0 sec", "1.1 sec", "Optimal")
-                    )
-                )
-            )
-        )
-    }
-
-    private fun extractTextFromWord(model: WordDocumentModel): String {
-        val sb = StringBuilder()
-        sb.appendLine(model.title)
-        if (model.subtitle.isNotBlank()) sb.appendLine(model.subtitle)
-        sb.appendLine()
-        for (section in model.sections) {
-            sb.appendLine(section.heading)
-            for (p in section.paragraphs) sb.appendLine(p)
-            for (b in section.bulletPoints) sb.appendLine("• $b")
-            sb.appendLine()
-        }
-        if (model.table != null) {
-            sb.appendLine(model.table.headers.joinToString(" | "))
-            for (r in model.table.rows) sb.appendLine(r.joinToString(" | "))
-        }
-        return sb.toString().trim()
-    }
-
-    private fun extractTextFromPpt(model: PresentationModel): String {
-        val sb = StringBuilder()
-        sb.appendLine("PRESENTATION: ${model.title} - ${model.subtitle}")
-        for ((idx, slide) in model.slides.withIndex()) {
-            sb.appendLine("Slide ${idx + 1}: ${slide.title}")
-            for (b in slide.bulletPoints) sb.appendLine("• $b")
-            if (slide.calloutMetric != null) sb.appendLine("Metric: ${slide.calloutMetric} (${slide.calloutLabel})")
-            sb.appendLine()
-        }
-        return sb.toString().trim()
-    }
-
-    private fun extractTextFromXlsx(model: SpreadsheetModel): String {
-        val sb = StringBuilder()
-        sb.appendLine("WORKBOOK: ${model.workbookTitle}")
-        for (sheet in model.sheets) {
-            sb.appendLine("[Sheet: ${sheet.name}]")
-            sb.appendLine(sheet.headers.joinToString("\t"))
-            for (row in sheet.rows) {
-                sb.appendLine(row.joinToString("\t"))
-            }
-            if (sheet.summaryFormula != null) {
-                sb.appendLine("${sheet.summaryFormulaLabel}: =${sheet.summaryFormula}")
-            }
-            sb.appendLine()
-        }
-        return sb.toString().trim()
+    private companion object {
+        const val MAX_CONTENT_CHARS = 60_000
     }
 }

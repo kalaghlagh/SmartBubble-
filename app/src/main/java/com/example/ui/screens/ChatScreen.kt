@@ -315,9 +315,9 @@ fun ChatScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = defaultProvider,
+                                text = defaultProvider.ifBlank { stringResource(R.string.chat_no_default_provider) },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = if (defaultProvider.isBlank()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                                 fontSize = 11.sp
                             )
                         }
@@ -507,6 +507,8 @@ fun ChatScreen(
                                 inputMessage = ""
                                 viewModel.executePrompt(prompt)
                             },
+                            // One request at a time; the text is kept until it can be sent.
+                            enabled = !isGenerating,
                             modifier = Modifier
                                 .size(46.dp)
                                 .clip(CircleShape)
