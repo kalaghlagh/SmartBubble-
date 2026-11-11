@@ -188,4 +188,236 @@ class SmartBubbleDocumentEngineTest {
         assertEquals("DOCX", extractedProfile.originalFileType)
         assertTrue(extractedProfile.isAnalysisComplete)
     }
+
+    @Test
+    fun testDocxTemplateFidelityPreservesOriginalFile() {
+        val docxEngine = DocxEngine()
+        val templateFile = tempFolder.newFile("brand_template.docx")
+        val outputFile = tempFolder.newFile("generated_contract.docx")
+
+        // 1. Create a template document with specific sectPr and text
+        val templateModel = WordDocumentModel(
+            title = "Company Master Template",
+            sections = listOf(
+                WordSection(
+                    heading = "Template Guidelines",
+                    paragraphs = listOf("This is the untouched master template.")
+                )
+            )
+        )
+        val profile = TemplateProfile.defaultProfile().copy(
+            primaryColorHex = "#2E7D32",
+            headingFont = "Georgia",
+            headerText = "ACME Master Template"
+        )
+        docxEngine.generateDocx(templateModel, templateFile, profile)
+        val originalSize = templateFile.length()
+        val originalLastModified = templateFile.lastModified()
+        assertTrue(originalSize > 0)
+
+        // 2. Generate a new document based on the template
+        val newModel = WordDocumentModel(
+            title = "Generated Business Proposal",
+            sections = listOf(
+                WordSection(
+                    heading = "Executive Summary",
+                    paragraphs = listOf("Proposal content injected using the master template styles.")
+                )
+            )
+        )
+        val result = docxEngine.generateDocx(
+            model = newModel,
+            outputFile = outputFile,
+            template = profile,
+            originalTemplateFile = templateFile
+        )
+
+        // 3. Verify original template is preserved completely
+        assertTrue("Template file must continue to exist", templateFile.exists())
+        assertEquals("Template file size must remain intact", originalSize, templateFile.length())
+
+        // 4. Verify output file is a new distinct file with valid OOXML structure
+        assertTrue("Target file must exist", result.exists())
+        assertTrue("Target file must be non-empty", result.length() > 0)
+        assertNotEquals(templateFile.absolutePath, result.absolutePath)
+
+        val entries = mutableListOf<String>()
+        ZipInputStream(FileInputStream(result)).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null) {
+                entries.add(entry.name)
+                zip.closeEntry()
+                entry = zip.nextEntry
+            }
+        }
+        assertTrue(entries.contains("word/document.xml"))
+        assertTrue(entries.contains("word/styles.xml"))
+    }
+
+    @Test
+    fun testPptxTemplateFidelityPreservesOriginalFile() {
+        val pptxEngine = PptxEngine()
+        val templateFile = tempFolder.newFile("corporate_deck_theme.pptx")
+        val outputFile = tempFolder.newFile("quarterly_results.pptx")
+
+        val initialModel = PresentationModel(
+            title = "Corporate Template Theme",
+            subtitle = "Theme Master",
+            slides = listOf(
+                SlideModel(title = "Master Layout Slide", bulletPoints = listOf("Master format"))
+            )
+        )
+        pptxEngine.generatePptx(initialModel, templateFile)
+        val originalSize = templateFile.length()
+        assertTrue(originalSize > 0)
+
+        val newModel = PresentationModel(
+            title = "Q4 Results Presentation",
+            subtitle = "Financial Performance",
+            slides = listOf(
+                SlideModel(
+                    title = "Revenue Growth",
+                    bulletPoints = listOf("Revenue up 25% YoY", "New customer acquisition at ATH"),
+                    calloutMetric = "+25%"
+                )
+            )
+        )
+        val result = pptxEngine.generatePptx(
+            model = newModel,
+            outputFile = outputFile,
+            originalTemplateFile = templateFile
+        )
+
+        assertTrue(templateFile.exists())
+        assertEquals(originalSize, templateFile.length())
+        assertTrue(result.exists())
+        assertTrue(result.length() > 0)
+    }
+
+    @Test
+    fun testXlsxTemplateFidelityPreservesOriginalFile() {
+        val xlsxEngine = XlsxEngine()
+        val templateFile = tempFolder.newFile("corporate_ledger_theme.xlsx")
+        val outputFile = tempFolder.newFile("monthly_expenses.xlsx")
+
+        val initialModel = SpreadsheetModel(
+            workbookTitle = "Template Ledger",
+            sheets = listOf(
+                SheetModel(
+                    name = "Template Sheet",
+                    headers = listOf("Item", "Category", "Cost"),
+                    rows = listOf(listOf("Sample", "Office", 100))
+                )
+            )
+        )
+        xlsxEngine.generateXlsx(initialModel, templateFile)
+        val originalSize = templateFile.length()
+        assertTrue(originalSize > 0)
+
+        val newModel = SpreadsheetModel(
+            workbookTitle = "November Expenses",
+            sheets = listOf(
+                SheetModel(
+                    name = "Expenses",
+                    headers = listOf("Expense", "Vendor", "Amount"),
+                    rows = listOf(
+                        listOf("Cloud Hosting", "GCP", 2400),
+                        listOf("SaaS License", "JetBrains", 499)
+                    ),
+                    summaryFormulaLabel = "Total",
+                    summaryFormula = "SUM(C2:C3)"
+                )
+            )
+        )
+        val result = xlsxEngine.generateXlsx(
+            model = newModel,
+            outputFile = outputFile,
+            originalTemplateFile = templateFile
+        )
+
+        assertTrue(templateFile.exists())
+        assertEquals(originalSize, templateFile.length())
+        assertTrue(result.exists())
+        assertTrue(result.length() > 0)
+    }
+
+    @Test
+    fun testScannedDocumentReconstruction_ArabicAndMultilingual() {
+        val sampleOcrText = """
+            اتفاقية تقديم خدمات تقنية
+            
+            مقدمة الاتفاقية:
+            تم الاتفاق بين الطرفين على تنفيذ الخدمات التقنية وفق الشروط المنصوص عليها.
+            
+            • البند الأول: الالتزام بالجودة والمعايير المهنية
+            • البند الثاني: حماية البيانات وسرية المعلومات
+            • البند الثالث: الدعم الفني على مدار الساعة
+            
+            رقم البند | الوصف | التكلفة | الحالة
+            1 | تطوير واجهة المستخدم | 4500 | مكتمل
+            2 | دمج الذكاء الاصطناعي | 8000 | جاري التنفيذ
+        """.trimIndent()
+
+        val reconstructed = com.example.ocr.ScannedDocumentStructureReconstructor.reconstructPage(
+            pageIndex = 0,
+            imageUriString = "content://media/scanned_0.jpg",
+            rawText = sampleOcrText
+        )
+
+        assertEquals("اتفاقية تقديم خدمات تقنية", reconstructed.recognizedTitle)
+        assertTrue(reconstructed.isArabicDetected)
+        assertTrue(reconstructed.paragraphs.isNotEmpty())
+        assertEquals(3, reconstructed.bulletPoints.size)
+        assertNotNull(reconstructed.table)
+        assertEquals(4, reconstructed.table?.headers?.size)
+        assertEquals(2, reconstructed.table?.rows?.size)
+    }
+
+    @Test
+    fun testDocxGenerationFromScannedDocument_RtlAndMultiPage() {
+        val engine = DocxEngine()
+        val outputFile = tempFolder.newFile("scanned_output.docx")
+
+        val page1 = com.example.ocr.ScannedDocumentStructureReconstructor.reconstructPage(
+            pageIndex = 0,
+            imageUriString = "content://media/scanned_0.jpg",
+            rawText = "Document Title Page 1\n\nExecutive Overview\nThis is paragraph one on page 1.\n• Item Alpha\n• Item Beta"
+        )
+
+        val page2 = com.example.ocr.ScannedDocumentStructureReconstructor.reconstructPage(
+            pageIndex = 1,
+            imageUriString = "content://media/scanned_1.jpg",
+            rawText = "الصفحة الثانية: التقرير المالي\n\nالبيان | القيمة | النسبة\nالإيرادات | 50000 | 100%\nالتكاليف | 30000 | 60%"
+        )
+
+        val wordModel = com.example.ocr.ScannedDocumentStructureReconstructor.buildWordDocumentModel(
+            title = "Scanned Comprehensive Dossier",
+            pages = listOf(page1, page2)
+        )
+
+        val resultFile = engine.generateDocx(wordModel, outputFile)
+        assertTrue(resultFile.exists())
+        assertTrue(resultFile.length() > 0)
+
+        // Read XML inside docx
+        var documentXmlContent = ""
+        ZipInputStream(FileInputStream(resultFile)).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null) {
+                if (entry.name == "word/document.xml") {
+                    documentXmlContent = zip.bufferedReader().readText()
+                    break
+                }
+                zip.closeEntry()
+                entry = zip.nextEntry
+            }
+        }
+
+        assertTrue(documentXmlContent.isNotBlank())
+        // Verify page break was inserted between page 1 and page 2
+        assertTrue("Page break must be present", documentXmlContent.contains("<w:br w:type=\"page\"/>"))
+        // Verify Arabic RTL formatting was inserted for Arabic content
+        assertTrue("Arabic RTL tag must be present", documentXmlContent.contains("<w:bidi/>") || documentXmlContent.contains("<w:bidiVisual/>"))
+    }
 }
+

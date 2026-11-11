@@ -7,7 +7,17 @@
     <string name="nav_library">Bibliothèque</string>
     <string name="nav_settings">Paramètres</string>
 
-    <!-- Chat Screen -->
+    <!-- Chat Screen & Drawer Menu -->
+    <string name="chat_menu">Menu</string>
+    <string name="new_conversation">Nouvelle conversation</string>
+    <string name="conversations_title">Conversations</string>
+    <string name="no_conversations">Aucune conversation pour le moment</string>
+    <string name="conversation_rename">Renommer</string>
+    <string name="conversation_delete">Supprimer</string>
+    <string name="conversation_rename_title">Renommer la conversation</string>
+    <string name="conversation_delete_title">Supprimer la conversation</string>
+    <string name="conversation_delete_confirm">Voulez-vous vraiment supprimer cette conversation et tous ses messages ?</string>
+    <string name="conversation_title_hint">Titre de la conversation</string>
     <string name="chat_placeholder">Écrivez votre message ici…</string>
     <string name="chat_new_session">Nouvelle discussion</string>
     <string name="chat_select_template">Appliquer un modèle</string>
@@ -20,6 +30,13 @@
     <string name="chat_export_pdf">Exporter en PDF</string>
     <string name="chat_listening">Écoute en cours…</string>
     <string name="chat_voice_hint">Mode vocal actif. Parlez maintenant.</string>
+    <string name="chat_send">Envoyer</string>
+    <string name="chat_mic">Vocal</string>
+    <string name="chat_attach_template">Joindre un modèle</string>
+    <string name="chat_remove_template">Retirer le modèle</string>
+    <string name="chat_compiling_doc">SmartBubble compile le document…</string>
+    <string name="chat_template_badge">Modèle : %1$s (%2$s)</string>
+    <string name="chat_copied_toast">Copié dans le presse-papiers</string>
 
     <!-- Templates Screen -->
     <string name="templates_title">Mes Modèles</string>
@@ -28,12 +45,19 @@
     <string name="filter_docs">Docs</string>
     <string name="filter_pptx">PPTX</string>
     <string name="filter_xlsx">XLSX</string>
-    <string name="template_added_on">Ajouté: %1$s</string>
+    <string name="template_added_on">Ajouté : %1$s</string>
     <string name="template_preview">Aperçu du profil</string>
     <string name="template_set_default">Définir par défaut</string>
     <string name="template_delete">Supprimer le modèle</string>
     <string name="template_empty_title">Aucun modèle téléversé</string>
     <string name="template_empty_desc">Importez vos fichiers DOCX, PPTX ou XLSX de référence pour appliquer vos polices et styles aux documents générés.</string>
+    <string name="template_name_dialog_title">Nommer votre modèle</string>
+    <string name="template_name_dialog_desc">Spécifiez un nom pour ce modèle afin que SmartBubble préserve les polices, marges, couleurs et structures.</string>
+    <string name="template_name_hint">Nom du modèle</string>
+    <string name="template_analyze_button">Analyser et importer</string>
+    <string name="template_use_in_chat">Utiliser dans la discussion</string>
+    <string name="template_default_badge">Par défaut</string>
+    <string name="template_search_hint">Rechercher des modèles…</string>
 
     <!-- Library Screen -->
     <string name="library_title">Bibliothèque</string>
@@ -47,6 +71,8 @@
     <string name="file_delete">Supprimer</string>
     <string name="file_open">Ouvrir le fichier</string>
     <string name="file_share">Partager le fichier</string>
+    <string name="library_file_name">Nom du fichier</string>
+    <string name="library_more_options">Options</string>
 
     <!-- Settings Screen -->
     <string name="settings_title">Paramètres</string>
@@ -63,7 +89,80 @@
     <string name="theme_light">Clair</string>
     <string name="theme_dark">Sombre</string>
     <string name="theme_system">Système</string>
-
     <string name="security_notice_title">Avis de sécurité sur l\'appareil</string>
     <string name="security_notice_desc">Les clés d\'accès sont chiffrées localement avec Android Keystore sur votre appareil. Un proxy serveur privé est recommandé en entreprise.</string>
+    <string name="provider_add_dialog_title">Ajouter un fournisseur IA</string>
+    <string name="provider_name_label">Nom du fournisseur (ex. OpenAI Travail)</string>
+    <string name="provider_url_label">URL de base / Point de terminaison</string>
+    <string name="provider_model_label">Nom du modèle (ex. GPT-4o, Claude 3.5)</string>
+    <string name="provider_key_label">Clé API</string>
+    <string name="provider_connected_status">Connecté (%1$d ms)</string>
+    <string name="provider_ready_status">Prêt</string>
+    <string name="about_app_desc">SmartBubble est un assistant bureautique IA qui compile des documents professionnels validés DOCX, PPTX, XLSX et PDF à partir de vos modèles personnels.</string>
+
+    <!-- Common Actions -->
+    <string name="action_cancel">Annuler</string>
+    <string name="action_save">Enregistrer</string>
+    <string name="action_close">Fermer</string>
+    <string name="action_ok">OK</string>
+    <string name="action_add">Ajouter</string>
+    <string name="action_clear">Effacer</string>
+    <string name="action_back">Retour</string>
+
+    <!-- Notifications & Messages -->
+    <string name="msg_generated_copied">Document généré et copié dans le presse-papiers !</string>
+    <string name="msg_template_selected">Modèle sélectionné : %1$s</string>
+    <string name="msg_template_imported">Modèle \'%1$s\' analysé et enregistré !</string>
+    <string name="msg_template_deleted">Modèle supprimé.</string>
+    <string name="msg_template_set_default">%1$s défini comme modèle %2$s par défaut.</string>
+    <string name="msg_document_deleted">Document supprimé.</string>
+    <string name="msg_document_renamed">Renommé en %1$s</string>
+    <string name="msg_testing_connection">Test de connexion à %1$s...</string>
+    <string name="msg_provider_set_default">%1$s défini comme Orchestrateur IA Central.</string>
+    <string name="msg_provider_added">Fournisseur %1$s ajouté.</string>
+    <string name="msg_provider_deleted">Fournisseur supprimé.</string>
+    <string name="msg_conversation_deleted">Conversation supprimée.</string>
+    <string name="msg_conversation_renamed">Conversation renommée.</string>
+    <string name="template_fidelity_used">Généré à partir du modèle : %1$s</string>
+    <string name="template_fidelity_default">Formatage bureautique standard</string>
+
+    <!-- Document Scanning & OCR -->
+    <string name="chat_attach_file">Joindre un fichier</string>
+    <string name="chat_select_image">Sélectionner une image</string>
+    <string name="chat_scan_document">Numériser un document</string>
+    <string name="chat_attachment_title">Options de pièce jointe</string>
+    <string name="scanning_title">Numérisation en cours</string>
+    <string name="recognizing_text">Reconnaissance du texte…</string>
+    <string name="review_extracted_text">Vérifier le texte extrait</string>
+    <string name="generate_word_doc">Créer un document Word</string>
+    <string name="scan_retake">Reprendre la photo</string>
+    <string name="scan_add_page">Ajouter une page</string>
+    <string name="scan_remove_page">Supprimer la page</string>
+    <string name="scan_continue">Continuer</string>
+    <string name="scan_save_document">Enregistrer le document</string>
+    <string name="scan_original_page">Page d\'origine</string>
+    <string name="scan_extracted_content">Texte extrait</string>
+    <string name="scan_page_indicator">Page %1$d sur %2$d</string>
+    <string name="scan_doc_title_label">Titre du document</string>
+    <string name="scan_template_option">Appliquer la mise en forme</string>
+    <string name="scan_template_original">Mise en page originale reconstituée</string>
+    <string name="scan_template_default">Style standard SmartBubble</string>
+    <string name="scan_template_custom">Modèle : %1$s</string>
+    <string name="scan_warning_low_confidence">Faible confiance ou texte vide détecté. Vous pouvez modifier le texte ci-dessus avant de continuer.</string>
+    <string name="scan_pages_badge">%1$d pages numérisées</string>
+    <string name="scan_ai_spelling">Corriger les fautes d\'orthographe</string>
+    <string name="scan_ai_format">Améliorer la mise en forme</string>
+    <string name="scan_ai_translate">Traduire le document</string>
+    <string name="scan_ai_summarize">Résumer le document</string>
+    <string name="scan_service_unavailable">Service de numérisation non disponible. Veuillez sélectionner des photos depuis la galerie.</string>
+    <string name="scan_empty_error">Aucun texte détecté sur les pages numérisées. Veuillez reprendre la photo ou saisir le texte.</string>
+    <string name="scan_consent_title">Analyse du texte et de la structure par l\'IA</string>
+    <string name="scan_consent_desc">Envoyer la page numérisée à l\'Orchestrateur IA Central (%1$s) pour une reconnaissance précise de l\'arabe et des tableaux ?</string>
+    <string name="scan_consent_agree">Améliorer avec l\'IA</string>
+    <string name="scan_consent_local_only">Traitement local uniquement</string>
+    <string name="scan_ai_enhancement">Analyse intelligente multilingue</string>
+    <string name="scan_on_device_ocr">OCR sur l\'appareil</string>
+    <string name="scan_table_detected">Tableau détecté (%1$d lignes)</string>
+    <string name="scan_table_headers">En-têtes (séparés par des virgules)</string>
+    <string name="scan_table_rows">Lignes (une par ligne, séparées par des virgules)</string>
 </resources>

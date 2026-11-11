@@ -293,7 +293,7 @@ fun SettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showLanguageDialog = false }) {
-                    Text("Close")
+                    Text(stringResource(R.string.action_close))
                 }
             }
         )
@@ -336,7 +336,7 @@ fun SettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showThemeDialog = false }) {
-                    Text("Close")
+                    Text(stringResource(R.string.action_close))
                 }
             }
         )
@@ -360,7 +360,7 @@ fun SettingsScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "SmartBubble is an AI Office & Content Creation assistant that compiles professional, validated DOCX, PPTX, XLSX, and PDF documents.",
+                        text = stringResource(R.string.about_app_desc),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(modifier = Modifier.height(4.dp))
@@ -379,7 +379,7 @@ fun SettingsScreen(
             },
             confirmButton = {
                 Button(onClick = { showAboutDialog = false }) {
-                    Text("OK")
+                    Text(stringResource(R.string.action_ok))
                 }
             }
         )
@@ -578,13 +578,13 @@ fun AddProviderDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add AI Provider") },
+        title = { Text(stringResource(R.string.provider_add_dialog_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Provider Name (e.g. Work OpenAI)") },
+                    label = { Text(stringResource(R.string.provider_name_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -592,7 +592,7 @@ fun AddProviderDialog(
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    label = { Text("Base URL / API Endpoint") },
+                    label = { Text(stringResource(R.string.provider_url_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -600,7 +600,7 @@ fun AddProviderDialog(
                 OutlinedTextField(
                     value = model,
                     onValueChange = { model = it },
-                    label = { Text("Model Name (e.g. GPT-4o, Claude 3.5)") },
+                    label = { Text(stringResource(R.string.provider_model_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -608,7 +608,7 @@ fun AddProviderDialog(
                 OutlinedTextField(
                     value = key,
                     onValueChange = { key = it },
-                    label = { Text("API Key") },
+                    label = { Text(stringResource(R.string.provider_key_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -624,12 +624,12 @@ fun AddProviderDialog(
                     onAdd(finalName, type, finalUrl, finalKey, finalModel)
                 }
             ) {
-                Text("Add")
+                Text(stringResource(R.string.action_add))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )

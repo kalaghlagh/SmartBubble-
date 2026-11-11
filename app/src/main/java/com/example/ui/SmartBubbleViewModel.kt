@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.R
 import com.example.ai.orchestrator.CentralAiOrchestrator
 import com.example.ai.orchestrator.TaskLifecycleState
 import com.example.ai.providers.AiConnectionTester
@@ -14,17 +15,19 @@ import com.example.core.voice.VoiceAssistantManager
 import com.example.core.voice.VoiceState
 import com.example.data.db.SmartBubbleDatabase
 import com.example.data.model.ChatMessageEntity
+import com.example.data.model.ConversationEntity
 import com.example.data.model.DocumentEntity
 import com.example.data.model.ProviderEntity
 import com.example.data.model.TemplateEntity
 import com.example.template.analysis.TemplateAnalysisEngine
-import com.example.template.domain.TemplateMode
 import com.example.template.domain.TemplateProfile
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.stateIn
+import com.example.ocr.DocumentOcrEngine
+import com.example.ocr.ScannedDocumentStructureReconstructor
+import com.example.document.model.ScannedPageData
+import com.example.document.model.ScannedDocumentReviewState
+import com.example.document.docx.DocxEngine
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
@@ -46,16 +49,36 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     val deliveryManager = DeliveryManager(context)
     val orchestrator = CentralAiOrchestrator(context, database, deliveryManager)
     val templateAnalysisEngine = TemplateAnalysisEngine()
+    val ocrEngine = DocumentOcrEngine(context, orchestrator)
+
+    // Document Scanning & OCR Review State
+    private val _scannedReviewState = MutableStateFlow<ScannedDocumentReviewState?>(null)
+    val scannedReviewState: StateFlow<ScannedDocumentReviewState?> = _scannedReviewState.asStateFlow()
+
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
+    private val _scanProgress = MutableStateFlow<String?>(null)
+    val scanProgress: StateFlow<String?> = _scanProgress.asStateFlow()
 
     // Navigation State
     private val _currentTab = MutableStateFlow(AppNavTab.CHAT)
     val currentTab: StateFlow<AppNavTab> = _currentTab.asStateFlow()
 
-    // Active Chat Session
+    // Active Chat Session / Conversation ID
     private val _currentSessionId = MutableStateFlow("session-smartbubble")
     val currentSessionId: StateFlow<String> = _currentSessionId.asStateFlow()
 
-    val chatMessages = database.chatDao().getMessagesForSession("session-smartbubble")
+    // Persistent Conversations List
+    val allConversations: StateFlow<List<ConversationEntity>> = database.conversationDao().getAllConversations()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Dynamic Chat Messages for the currently active conversation
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val chatMessages: StateFlow<List<ChatMessageEntity>> = _currentSessionId
+        .flatMapLatest { sessionId ->
+            database.chatDao().getMessagesForSession(sessionId)
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val allDocuments = database.documentDao().getAllDocuments()
@@ -94,11 +117,25 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
     // Settings preferences
     val defaultProvider = preferences.defaultProvider.stateIn(viewModelScope, SharingStarted.Eagerly, "OpenAI")
-    val appLanguage = preferences.appLanguage.stateIn(viewModelScope, SharingStarted.Eagerly, "ar")
+    val appLanguage = preferences.appLanguage.stateIn(viewModelScope, SharingStarted.Eagerly, "en")
     val appTheme = preferences.appTheme.stateIn(viewModelScope, SharingStarted.Eagerly, "dark")
 
     init {
         seedInitialDataIfNeeded()
+        restoreActiveConversation()
+    }
+
+    private fun restoreActiveConversation() {
+        viewModelScope.launch {
+            preferences.activeConversationId.firstOrNull()?.let { savedId ->
+                if (savedId.isNotBlank()) {
+                    val exists = database.conversationDao().getConversationById(savedId)
+                    if (exists != null) {
+                        _currentSessionId.value = savedId
+                    }
+                }
+            }
+        }
     }
 
     private fun seedInitialDataIfNeeded() {
@@ -144,7 +181,10 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 )
             }
 
-            // Seed initial templates matching mockup
+            // Ensure templates directory exists
+            val templateDir = File(context.filesDir, "templates").apply { mkdirs() }
+
+            // Seed initial templates matching mockup with genuine reference files
             val t1 = database.templateDao().getTemplateById("tmpl-company-report")
             if (t1 == null) {
                 val profileDoc = TemplateProfile.defaultProfile().copy(
@@ -154,13 +194,28 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     primaryColorHex = "#1D52D8",
                     headingFont = "Segoe UI Semibold"
                 )
+                val docxTemplateFile = File(templateDir, "Company_Report_Template.docx")
+                if (!docxTemplateFile.exists()) {
+                    val sampleModel = com.example.document.model.WordDocumentModel(
+                        title = "Corporate Executive Report",
+                        subtitle = "Standard Enterprise Template Format",
+                        sections = listOf(
+                            com.example.document.model.WordSection(
+                                heading = "Executive Summary",
+                                paragraphs = listOf("This reference document defines standard margins, header/footer branding, and typography for enterprise reports.")
+                            )
+                        )
+                    )
+                    com.example.document.docx.DocxEngine().generateDocx(sampleModel, docxTemplateFile, profileDoc)
+                }
+
                 database.templateDao().insertTemplate(
                     TemplateEntity(
                         id = profileDoc.templateId,
                         name = profileDoc.name,
                         fileType = "DOCX",
-                        originalFilePath = "",
-                        fileSize = 250880L, // 245 KB
+                        originalFilePath = docxTemplateFile.absolutePath,
+                        fileSize = if (docxTemplateFile.exists()) docxTemplateFile.length() else 250880L,
                         profileJson = profileDoc.toJson(),
                         isDefaultWord = true,
                         compatibilityStatus = "Compatible",
@@ -174,13 +229,28 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     originalFileType = "PPTX",
                     primaryColorHex = "#E05D26"
                 )
+                val pptxTemplateFile = File(templateDir, "Presentation_Theme.pptx")
+                if (!pptxTemplateFile.exists()) {
+                    val samplePpt = com.example.document.model.PresentationModel(
+                        title = "Presentation Theme Deck",
+                        subtitle = "16:9 Standard Corporate Slide Master",
+                        slides = listOf(
+                            com.example.document.model.SlideModel(
+                                title = "Theme Architecture",
+                                bulletPoints = listOf("Master layout placeholders", "Brand color accents")
+                            )
+                        )
+                    )
+                    com.example.document.pptx.PptxEngine().generatePptx(samplePpt, pptxTemplateFile, profilePpt)
+                }
+
                 database.templateDao().insertTemplate(
                     TemplateEntity(
                         id = profilePpt.templateId,
                         name = profilePpt.name,
                         fileType = "PPTX",
-                        originalFilePath = "",
-                        fileSize = 2202009L, // 2.1 MB
+                        originalFilePath = pptxTemplateFile.absolutePath,
+                        fileSize = if (pptxTemplateFile.exists()) pptxTemplateFile.length() else 2202009L,
                         profileJson = profilePpt.toJson(),
                         isDefaultPpt = true,
                         compatibilityStatus = "Compatible",
@@ -194,13 +264,31 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     originalFileType = "XLSX",
                     primaryColorHex = "#107C41"
                 )
+                val xlsxTemplateFile = File(templateDir, "Business_Data_Template.xlsx")
+                if (!xlsxTemplateFile.exists()) {
+                    val sampleXlsx = com.example.document.model.SpreadsheetModel(
+                        workbookTitle = "Business Data Workbook",
+                        sheets = listOf(
+                            com.example.document.model.SheetModel(
+                                name = "Data Summary",
+                                headers = listOf("Category", "Target", "Actual", "Performance"),
+                                rows = listOf(
+                                    listOf("Revenue", 100000, 105000, "+5%"),
+                                    listOf("Efficiency", 95, 98, "+3%")
+                                )
+                            )
+                        )
+                    )
+                    com.example.document.xlsx.XlsxEngine().generateXlsx(sampleXlsx, xlsxTemplateFile, profileXlsx)
+                }
+
                 database.templateDao().insertTemplate(
                     TemplateEntity(
                         id = profileXlsx.templateId,
                         name = profileXlsx.name,
                         fileType = "XLSX",
-                        originalFilePath = "",
-                        fileSize = 184320L, // 180 KB
+                        originalFilePath = xlsxTemplateFile.absolutePath,
+                        fileSize = if (xlsxTemplateFile.exists()) xlsxTemplateFile.length() else 184320L,
                         profileJson = profileXlsx.toJson(),
                         isDefaultExcel = true,
                         compatibilityStatus = "Compatible",
@@ -209,159 +297,45 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 )
             }
 
-            // Seed initial documents in Library matching mockup
-            val doc1 = database.documentDao().getDocumentById("doc-rec-letter")
-            if (doc1 == null) {
-                val docDir = File(context.filesDir, "generated_docs").apply { mkdirs() }
-
-                // 1. Recommendation Letter.docx
-                val f1 = File(docDir, "Recommendation Letter.docx")
-                if (!f1.exists()) {
-                    val m1 = com.example.document.model.WordDocumentModel(
-                        title = "Professional Letter of Recommendation",
-                        subtitle = "Candidate: Senior Principal Architect",
-                        sections = listOf(
-                            com.example.document.model.WordSection(
-                                heading = "Recommendation Assessment",
-                                paragraphs = listOf("It is an absolute pleasure to provide this highest recommendation for enterprise leadership, architecture, and system engineering excellence.")
-                            )
-                        )
-                    )
-                    com.example.document.docx.DocxEngine().generateDocx(m1, f1, TemplateProfile.defaultProfile())
-                }
-                database.documentDao().insertDocument(
-                    DocumentEntity(
-                        id = "doc-rec-letter",
-                        title = "Recommendation Letter.docx",
-                        fileType = "DOCX",
-                        filePath = f1.absolutePath,
-                        fileSize = if (f1.exists()) f1.length() else 250880L,
-                        wordCount = 680,
-                        pageOrSlideCount = 2,
-                        templateName = "Company Report Template",
-                        providerUsed = "OpenAI GPT-4o",
-                        textContent = "Professional Letter of Recommendation\nCandidate: Senior Principal Architect\nPrepared by SmartBubble"
-                    )
-                )
-
-                // 2. Annual Report.pptx
-                val f2 = File(docDir, "Annual Report.pptx")
-                if (!f2.exists()) {
-                    val m2 = com.example.document.model.PresentationModel(
-                        title = "Annual Strategic Review",
-                        subtitle = "Fiscal Performance & Innovation Strategy",
-                        slides = listOf(
-                            com.example.document.model.SlideModel(
-                                title = "Executive Highlights",
-                                bulletPoints = listOf("45% year-over-year revenue growth", "Global enterprise footprint expansion"),
-                                calloutMetric = "+45%",
-                                calloutLabel = "YoY Revenue"
-                            )
-                        )
-                    )
-                    com.example.document.pptx.PptxEngine().generatePptx(m2, f2, TemplateProfile.defaultProfile())
-                }
-                database.documentDao().insertDocument(
-                    DocumentEntity(
-                        id = "doc-annual-report",
-                        title = "Annual Report.pptx",
-                        fileType = "PPTX",
-                        filePath = f2.absolutePath,
-                        fileSize = if (f2.exists()) f2.length() else 1887436L,
-                        wordCount = 890,
-                        pageOrSlideCount = 8,
-                        templateName = "Presentation Theme",
-                        providerUsed = "OpenAI GPT-4o",
-                        textContent = "Annual Strategic Review - Fiscal Performance & Innovation Strategy"
-                    )
-                )
-
-                // 3. Sales Data.xlsx
-                val f3 = File(docDir, "Sales Data.xlsx")
-                if (!f3.exists()) {
-                    val m3 = com.example.document.model.SpreadsheetModel(
-                        workbookTitle = "Quarterly Sales Data",
-                        sheets = listOf(
-                            com.example.document.model.SheetModel(
-                                name = "Regional Breakdown",
-                                headers = listOf("Region", "Q1 Actual", "Q2 Actual", "Forecast"),
-                                rows = listOf(
-                                    listOf("North America", "$1,450,000", "$1,620,000", "$1,800,000"),
-                                    listOf("EMEA", "$980,000", "$1,120,000", "$1,300,000")
-                                )
-                            )
-                        )
-                    )
-                    com.example.document.xlsx.XlsxEngine().generateXlsx(m3, f3, TemplateProfile.defaultProfile())
-                }
-                database.documentDao().insertDocument(
-                    DocumentEntity(
-                        id = "doc-sales-data",
-                        title = "Sales Data.xlsx",
-                        fileType = "XLSX",
-                        filePath = f3.absolutePath,
-                        fileSize = if (f3.exists()) f3.length() else 122880L,
-                        wordCount = 340,
-                        pageOrSlideCount = 2,
-                        templateName = "Business Data Template",
-                        providerUsed = "OpenAI GPT-4o",
-                        textContent = "Quarterly Sales Data\nRegional Breakdown and Financial Projections"
-                    )
-                )
-
-                // 4. Project Summary.pdf
-                val f4 = File(docDir, "Project Summary.pdf")
-                if (!f4.exists()) {
-                    val m4 = com.example.document.model.WordDocumentModel(
-                        title = "Executive Project Summary",
-                        subtitle = "Autonomous Document Creation & Smart Verification",
-                        sections = listOf(
-                            com.example.document.model.WordSection(
-                                heading = "Overview",
-                                paragraphs = listOf("SmartBubble verified end-to-end multi-format file synthesis, ensuring exact formatting and enterprise compliance.")
-                            )
-                        )
-                    )
-                    com.example.document.pdf.PdfEngine().generatePdf(m4, f4, TemplateProfile.defaultProfile())
-                }
-                database.documentDao().insertDocument(
-                    DocumentEntity(
-                        id = "doc-project-summary",
-                        title = "Project Summary.pdf",
-                        fileType = "PDF",
-                        filePath = f4.absolutePath,
-                        fileSize = if (f4.exists()) f4.length() else 430080L,
-                        wordCount = 520,
-                        pageOrSlideCount = 3,
-                        providerUsed = "OpenAI GPT-4o",
-                        textContent = "Executive Project Summary\nAutonomous Document Creation & Smart Verification"
+            // Seed initial conversation entity
+            val existingConv = database.conversationDao().getConversationById("session-smartbubble")
+            if (existingConv == null) {
+                database.conversationDao().insertConversation(
+                    ConversationEntity(
+                        id = "session-smartbubble",
+                        title = "تقرير الذكاء الاصطناعي",
+                        lastMessagePreview = "بالطبع! إليك تقرير مختصر عن الذكاء الاصطناعي...",
+                        updatedAt = System.currentTimeMillis() - 120000,
+                        createdAt = System.currentTimeMillis() - 180000
                     )
                 )
             }
 
-            // Seed initial conversation message matching Arabic mockup
-            val existingChat = database.chatDao().getMessagesForSession("session-smartbubble")
-            val msg1 = ChatMessageEntity(
-                id = "chat-seed-1",
-                sessionId = "session-smartbubble",
-                isUser = true,
-                content = "اكتب لي تقريراً مختصراً عن الذكاء الاصطناعي",
-                timestamp = System.currentTimeMillis() - 180000
-            )
-            database.chatDao().insertMessage(msg1)
+            // Seed initial messages for session-smartbubble
+            val existingChat = database.chatDao().getMessagesForSession("session-smartbubble").firstOrNull()
+            if (existingChat.isNullOrEmpty()) {
+                val msg1 = ChatMessageEntity(
+                    id = "chat-seed-1",
+                    sessionId = "session-smartbubble",
+                    isUser = true,
+                    content = "اكتب لي تقريراً مختصراً عن الذكاء الاصطناعي",
+                    timestamp = System.currentTimeMillis() - 180000
+                )
+                database.chatDao().insertMessage(msg1)
 
-            val msg2 = ChatMessageEntity(
-                id = "chat-seed-2",
-                sessionId = "session-smartbubble",
-                isUser = false,
-                content = "بالطبع! إليك تقرير مختصر عن الذكاء الاصطناعي:\n\nالذكاء الاصطناعي هو مجال من علوم الحاسوب يهدف إلى تطوير أنظمة قادرة على محاكاة الذكاء البشري مثل التعلم والاستنتاج واتخاذ القرار، مع إمكانية تحويل الأفكار إلى مستندات مكتبية احترافية مثل Word و PowerPoint و Excel.",
-                timestamp = System.currentTimeMillis() - 120000,
-                attachedDocId = "doc-project-summary",
-                attachedDocTitle = "Project Summary.pdf",
-                attachedDocType = "PDF",
-                orchestratorNote = "Orchestrator Verified"
-            )
-            database.chatDao().insertMessage(msg2)
+                val msg2 = ChatMessageEntity(
+                    id = "chat-seed-2",
+                    sessionId = "session-smartbubble",
+                    isUser = false,
+                    content = "بالطبع! إليك تقرير مختصر عن الذكاء الاصطناعي:\n\nالذكاء الاصطناعي هو مجال من علوم الحاسوب يهدف إلى تطوير أنظمة قادرة على محاكاة الذكاء البشري مثل التعلم والاستنتاج واتخاذ القرار، مع إمكانية تحويل الأفكار إلى مستندات مكتبية احترافية مثل Word و PowerPoint و Excel.",
+                    timestamp = System.currentTimeMillis() - 120000,
+                    attachedDocId = "doc-project-summary",
+                    attachedDocTitle = "Project Summary.pdf",
+                    attachedDocType = "PDF",
+                    orchestratorNote = "Orchestrator Verified"
+                )
+                database.chatDao().insertMessage(msg2)
+            }
         }
     }
 
@@ -369,20 +343,97 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         _currentTab.value = tab
     }
 
+    // Conversation Management Actions
+    fun startNewConversation() {
+        viewModelScope.launch {
+            val newId = UUID.randomUUID().toString()
+            val newConv = ConversationEntity(
+                id = newId,
+                title = context.getString(R.string.new_conversation),
+                lastMessagePreview = "",
+                updatedAt = System.currentTimeMillis(),
+                createdAt = System.currentTimeMillis()
+            )
+            database.conversationDao().insertConversation(newConv)
+            _currentSessionId.value = newId
+            preferences.setActiveConversationId(newId)
+        }
+    }
+
+    fun selectConversation(id: String) {
+        viewModelScope.launch {
+            _currentSessionId.value = id
+            preferences.setActiveConversationId(id)
+        }
+    }
+
+    fun renameConversation(id: String, newTitle: String) {
+        if (newTitle.isBlank()) return
+        viewModelScope.launch {
+            database.conversationDao().updateTitle(id, newTitle.trim())
+            _snackBarMessage.value = context.getString(R.string.msg_conversation_renamed)
+        }
+    }
+
+    fun deleteConversation(id: String) {
+        viewModelScope.launch {
+            database.conversationDao().deleteConversationById(id)
+            database.chatDao().deleteMessagesBySessionId(id)
+            _snackBarMessage.value = context.getString(R.string.msg_conversation_deleted)
+
+            if (_currentSessionId.value == id) {
+                val remaining = database.conversationDao().getAllConversations().firstOrNull()
+                val nextConv = remaining?.firstOrNull()
+                if (nextConv != null) {
+                    selectConversation(nextConv.id)
+                } else {
+                    startNewConversation()
+                }
+            }
+        }
+    }
+
     fun selectTemplateForChat(template: TemplateEntity?) {
         _selectedTemplateForChat.value = template
         if (template != null) {
-            _snackBarMessage.value = "Selected template: ${template.name}"
+            _snackBarMessage.value = context.getString(R.string.msg_template_selected, template.name)
         }
     }
 
     fun executePrompt(prompt: String, forceFormat: String? = null) {
         if (prompt.isBlank()) return
+        val sessionId = _currentSessionId.value
+
         viewModelScope.launch {
             _isGenerating.value = true
+
+            // Ensure conversation exists in Room
+            var conv = database.conversationDao().getConversationById(sessionId)
+            if (conv == null) {
+                conv = ConversationEntity(
+                    id = sessionId,
+                    title = context.getString(R.string.new_conversation),
+                    lastMessagePreview = prompt.take(50),
+                    updatedAt = System.currentTimeMillis()
+                )
+                database.conversationDao().insertConversation(conv)
+            }
+
+            // Auto-generate conversation title from the first meaningful request
+            val genericTitles = listOf("New Conversation", "محادثة جديدة", "Nouvelle conversation", "New Chat")
+            if (genericTitles.any { conv.title.equals(it, ignoreCase = true) }) {
+                val firstLine = prompt.lineSequence().firstOrNull()?.trim() ?: prompt.trim()
+                val autoTitle = if (firstLine.length > 32) firstLine.take(32) + "…" else firstLine
+                database.conversationDao().updateTitle(sessionId, autoTitle)
+            }
+
+            // Update conversation preview and timestamp
+            database.conversationDao().updateLastMessage(sessionId, prompt.take(60))
+
+            // Insert user message
             val userMsg = ChatMessageEntity(
                 id = UUID.randomUUID().toString(),
-                sessionId = _currentSessionId.value,
+                sessionId = sessionId,
                 isUser = true,
                 content = prompt
             )
@@ -391,31 +442,34 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             val templateProfile = _selectedTemplateForChat.value?.let {
                 TemplateProfile.fromJson(it.profileJson)
             }
+            val originalTemplateFile = _selectedTemplateForChat.value?.originalFilePath?.let { File(it) }?.takeIf { it.exists() }
 
             val result = orchestrator.executeUserRequest(
                 userPrompt = prompt,
                 defaultProviderName = defaultProvider.value,
                 selectedTemplate = templateProfile,
+                templateFile = originalTemplateFile,
                 forceFormat = forceFormat
             )
 
             if (result.state == TaskLifecycleState.COMPLETED) {
                 val assistantMsg = ChatMessageEntity(
                     id = UUID.randomUUID().toString(),
-                    sessionId = _currentSessionId.value,
+                    sessionId = sessionId,
                     isUser = false,
                     content = result.conversationalReply,
                     attachedDocId = result.documentEntity?.id,
                     attachedDocTitle = result.documentEntity?.title,
                     attachedDocType = result.documentEntity?.fileType,
-                    orchestratorNote = "Orchestrator Verified & Export Ready"
+                    orchestratorNote = if (originalTemplateFile != null) "Template Preserved" else "Orchestrator Verified"
                 )
                 database.chatDao().insertMessage(assistantMsg)
-                _snackBarMessage.value = "Generated & copied to clipboard!"
+                database.conversationDao().updateLastMessage(sessionId, result.conversationalReply.take(60))
+                _snackBarMessage.value = context.getString(R.string.msg_generated_copied)
             } else {
                 val errorMsg = ChatMessageEntity(
                     id = UUID.randomUUID().toString(),
-                    sessionId = _currentSessionId.value,
+                    sessionId = sessionId,
                     isUser = false,
                     content = "Generation failed: ${result.errorMessage ?: "Unknown error"}"
                 )
@@ -467,7 +521,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             )
             com.example.document.pdf.PdfEngine().generatePdf(wordModel, pdfFile, TemplateProfile.defaultProfile())
             deliveryManager.openFile(pdfFile, DeliveryManager.MIME_PDF)
-            _snackBarMessage.value = "Exported PDF generated & opened."
+            _snackBarMessage.value = "PDF Export ready & opened."
         }
     }
 
@@ -476,7 +530,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             val updated = doc.copy(title = newTitle)
             database.documentDao().updateDocument(updated)
-            _snackBarMessage.value = "Renamed to $newTitle"
+            _snackBarMessage.value = context.getString(R.string.msg_document_renamed, newTitle)
         }
     }
 
@@ -484,7 +538,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             File(doc.filePath).delete()
             database.documentDao().deleteDocument(doc)
-            _snackBarMessage.value = "Document deleted."
+            _snackBarMessage.value = context.getString(R.string.msg_document_deleted)
         }
     }
 
@@ -492,25 +546,27 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             try {
                 val extension = getMimeExtension(uri)
-                val tempFile = File(context.cacheDir, "imported_${System.currentTimeMillis()}.$extension")
+                val templateDir = File(context.filesDir, "templates").apply { mkdirs() }
+                val persistentTemplateFile = File(templateDir, "template_${UUID.randomUUID()}.$extension")
+
                 context.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(tempFile).use { output ->
+                    FileOutputStream(persistentTemplateFile).use { output ->
                         input.copyTo(output)
                     }
                 }
-                val profile = templateAnalysisEngine.analyzeFile(tempFile, userDefinedName)
+                val profile = templateAnalysisEngine.analyzeFile(persistentTemplateFile, userDefinedName)
                 val templateEntity = TemplateEntity(
                     id = profile.templateId,
                     name = profile.name,
                     fileType = profile.originalFileType,
-                    originalFilePath = tempFile.absolutePath,
-                    fileSize = tempFile.length(),
+                    originalFilePath = persistentTemplateFile.absolutePath,
+                    fileSize = persistentTemplateFile.length(),
                     profileJson = profile.toJson(),
                     compatibilityStatus = "Compatible",
                     thumbnailColorHex = profile.primaryColorHex
                 )
                 database.templateDao().insertTemplate(templateEntity)
-                _snackBarMessage.value = "Template '${profile.name}' analyzed and saved!"
+                _snackBarMessage.value = context.getString(R.string.msg_template_imported, profile.name)
             } catch (e: Exception) {
                 _snackBarMessage.value = "Template import failed: ${e.message}"
             }
@@ -523,7 +579,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 File(template.originalFilePath).delete()
             }
             database.templateDao().deleteTemplate(template)
-            _snackBarMessage.value = "Template deleted."
+            _snackBarMessage.value = context.getString(R.string.msg_template_deleted)
         }
     }
 
@@ -536,7 +592,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 else -> template.copy(isDefaultWord = true)
             }
             database.templateDao().updateTemplate(updated)
-            _snackBarMessage.value = "${template.name} set as default ${template.fileType} template."
+            _snackBarMessage.value = context.getString(R.string.msg_template_set_default, template.name, template.fileType)
         }
     }
 
@@ -572,13 +628,13 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             database.providerDao().clearDefault()
             database.providerDao().setAsDefault(provider.id)
             preferences.setDefaultProvider(provider.name)
-            _snackBarMessage.value = "${provider.name} set as Central AI Orchestrator."
+            _snackBarMessage.value = context.getString(R.string.msg_provider_set_default, provider.name)
         }
     }
 
     fun testProviderConnection(provider: ProviderEntity) {
         viewModelScope.launch {
-            _snackBarMessage.value = "Testing connection to ${provider.name}..."
+            _snackBarMessage.value = context.getString(R.string.msg_testing_connection, provider.name)
             val tester = AiConnectionTester()
             val result = tester.testConnection(provider)
             val updated = provider.copy(status = result.message)
@@ -600,21 +656,20 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 status = "Ready"
             )
             database.providerDao().insertProvider(newProvider)
-            _snackBarMessage.value = "Provider $name added."
+            _snackBarMessage.value = context.getString(R.string.msg_provider_added, name)
         }
     }
 
     fun updateProvider(provider: ProviderEntity) {
         viewModelScope.launch {
             database.providerDao().updateProvider(provider)
-            _snackBarMessage.value = "Provider updated."
         }
     }
 
     fun deleteProvider(provider: ProviderEntity) {
         viewModelScope.launch {
             database.providerDao().deleteProvider(provider)
-            _snackBarMessage.value = "Provider deleted."
+            _snackBarMessage.value = context.getString(R.string.msg_provider_deleted)
         }
     }
 
@@ -628,6 +683,262 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     fun setAppTheme(theme: String) {
         viewModelScope.launch {
             preferences.setAppTheme(theme)
+        }
+    }
+
+    // Document Scanning & OCR Workflows
+    fun processScannedPages(uris: List<Uri>, useAi: Boolean = true) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            _isScanning.value = true
+            _scanProgress.value = context.getString(R.string.recognizing_text)
+            try {
+                val pages = ocrEngine.processPages(
+                    pageUris = uris,
+                    useAiEnhancement = useAi,
+                    defaultProviderName = defaultProvider.value
+                ) { pageIndex, total, msg ->
+                    _scanProgress.value = msg
+                }
+
+                if (pages.isEmpty()) {
+                    _snackBarMessage.value = context.getString(R.string.scan_empty_error)
+                    _isScanning.value = false
+                    return@launch
+                }
+
+                val autoTitle = pages.firstOrNull()?.recognizedTitle?.takeIf { it.isNotBlank() && !it.startsWith("Page") && !it.startsWith("Scanned") }
+                    ?: ("Document_" + java.text.SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(java.util.Date()))
+
+                _scannedReviewState.value = ScannedDocumentReviewState(
+                    documentTitle = autoTitle,
+                    pages = pages,
+                    activePageIndex = 0,
+                    selectedTemplateId = null,
+                    isAiEnhanced = useAi
+                )
+            } catch (e: Exception) {
+                _snackBarMessage.value = "OCR processing failed: ${e.message}"
+            } finally {
+                _isScanning.value = false
+                _scanProgress.value = null
+            }
+        }
+    }
+
+    fun updateScannedPageText(pageIndex: Int, updatedText: String) {
+        val current = _scannedReviewState.value ?: return
+        val currentPages = current.pages.toMutableList()
+        if (pageIndex in currentPages.indices) {
+            val oldPage = currentPages[pageIndex]
+            val updatedPage = ScannedDocumentStructureReconstructor.reconstructPage(
+                pageIndex = pageIndex,
+                imageUriString = oldPage.imageUriString,
+                rawText = updatedText,
+                lines = emptyList()
+            )
+            currentPages[pageIndex] = updatedPage
+            _scannedReviewState.value = current.copy(pages = currentPages)
+        }
+    }
+
+    fun updateScannedDocumentTitle(newTitle: String) {
+        val current = _scannedReviewState.value ?: return
+        _scannedReviewState.value = current.copy(documentTitle = newTitle)
+    }
+
+    fun setActiveScanPageIndex(index: Int) {
+        val current = _scannedReviewState.value ?: return
+        if (index in current.pages.indices) {
+            _scannedReviewState.value = current.copy(activePageIndex = index)
+        }
+    }
+
+    fun removeScannedPage(pageIndex: Int) {
+        val current = _scannedReviewState.value ?: return
+        if (current.pages.size <= 1) {
+            _snackBarMessage.value = context.getString(R.string.scan_empty_error)
+            return
+        }
+        val currentPages = current.pages.toMutableList()
+        if (pageIndex in currentPages.indices) {
+            currentPages.removeAt(pageIndex)
+            val nextIndex = (pageIndex - 1).coerceAtLeast(0)
+            _scannedReviewState.value = current.copy(pages = currentPages, activePageIndex = nextIndex)
+        }
+    }
+
+    fun setSelectedScanTemplate(templateId: String?) {
+        val current = _scannedReviewState.value ?: return
+        _scannedReviewState.value = current.copy(selectedTemplateId = templateId)
+    }
+
+    fun dismissScanReview() {
+        _scannedReviewState.value = null
+    }
+
+    fun generateDocxFromScannedDocument() {
+        val reviewState = _scannedReviewState.value ?: return
+        val sessionId = _currentSessionId.value
+
+        viewModelScope.launch {
+            _isGenerating.value = true
+            _scanProgress.value = context.getString(R.string.generate_word_doc)
+            try {
+                // Determine template profile
+                val templateProfile = if (reviewState.selectedTemplateId != null && reviewState.selectedTemplateId != "default") {
+                    val entity = database.templateDao().getTemplateById(reviewState.selectedTemplateId)
+                    if (entity != null) TemplateProfile.fromJson(entity.profileJson) else TemplateProfile.defaultProfile()
+                } else {
+                    TemplateProfile.defaultProfile()
+                }
+
+                val templateFile = if (reviewState.selectedTemplateId != null && reviewState.selectedTemplateId != "default") {
+                    val entity = database.templateDao().getTemplateById(reviewState.selectedTemplateId)
+                    entity?.originalFilePath?.let { File(it) }?.takeIf { it.exists() }
+                } else null
+
+                // Convert review state to WordDocumentModel
+                val wordModel = ScannedDocumentStructureReconstructor.buildWordDocumentModel(
+                    title = reviewState.documentTitle,
+                    pages = reviewState.pages
+                )
+
+                // Save Word Document
+                val documentsDir = File(context.filesDir, "generated_docs").apply { mkdirs() }
+                val docId = UUID.randomUUID().toString()
+                val safeTitle = reviewState.documentTitle.replace("[^a-zA-Z0-9_\\-\\u0600-\\u06FF]".toRegex(), "_").take(48)
+                val docxFile = File(documentsDir, "$safeTitle.docx")
+
+                val docxEngine = DocxEngine()
+                docxEngine.generateDocx(wordModel, docxFile, templateProfile, templateFile)
+
+                if (!docxFile.exists() || docxFile.length() == 0L) {
+                    throw IllegalStateException("Generated DOCX file is missing or empty.")
+                }
+
+                val allText = reviewState.pages.joinToString("\n\n") { it.rawText }
+                val wordCount = allText.split("\\s+".toRegex()).filter { it.isNotBlank() }.size
+
+                // Insert into Room DocumentDao
+                val docEntity = DocumentEntity(
+                    id = docId,
+                    title = docxFile.name,
+                    fileType = "DOCX",
+                    filePath = docxFile.absolutePath,
+                    fileSize = docxFile.length(),
+                    wordCount = wordCount,
+                    pageOrSlideCount = reviewState.pages.size,
+                    templateId = templateProfile.templateId,
+                    templateName = templateProfile.name,
+                    providerUsed = defaultProvider.value,
+                    summary = "Scanned Document (${reviewState.pages.size} pages) • ${docxFile.length() / 1024} KB",
+                    textContent = allText,
+                    isOrchestratorVerified = true
+                )
+                database.documentDao().insertDocument(docEntity)
+
+                // Deliver real file + clipboard
+                deliveryManager.deliverBoth(
+                    file = docxFile,
+                    textContent = allText,
+                    mimeType = DeliveryManager.MIME_DOCX,
+                    title = docEntity.title,
+                    openImmediately = false
+                )
+
+                // Add messages to active chat conversation
+                val scanActionLabel = context.getString(R.string.chat_scan_document)
+                val userMsg = ChatMessageEntity(
+                    id = UUID.randomUUID().toString(),
+                    sessionId = sessionId,
+                    isUser = true,
+                    content = "$scanActionLabel (${reviewState.pages.size} pages)"
+                )
+                database.chatDao().insertMessage(userMsg)
+
+                val isArabic = reviewState.pages.any { it.isArabicDetected }
+                val assistantReply = if (isArabic) {
+                    "تم مسح ومعالجة المستند ضوئياً بنجاح وتوليد ملف Word (DOCX) أصلي قابل للتحرير بالكامل: **${docxFile.name}** (${reviewState.pages.size} صفحات). تم نسخ المحتوى النصي إلى الحافظة وحفظ الملف في مكتبتك."
+                } else {
+                    "I've scanned and transformed your document into a genuine, fully editable Word document: **${docxFile.name}** (${reviewState.pages.size} pages). The text has been copied to your clipboard and the DOCX is saved in your Library."
+                }
+
+                val assistantMsg = ChatMessageEntity(
+                    id = UUID.randomUUID().toString(),
+                    sessionId = sessionId,
+                    isUser = false,
+                    content = assistantReply,
+                    attachedDocId = docEntity.id,
+                    attachedDocTitle = docEntity.title,
+                    attachedDocType = "DOCX",
+                    orchestratorNote = "Scanned Document • ${reviewState.pages.size} Pages"
+                )
+                database.chatDao().insertMessage(assistantMsg)
+                database.conversationDao().updateLastMessage(sessionId, assistantReply.take(60))
+
+                _snackBarMessage.value = context.getString(R.string.msg_generated_copied)
+                _scannedReviewState.value = null
+            } catch (e: Exception) {
+                _snackBarMessage.value = "Failed to generate Word document: ${e.message}"
+            } finally {
+                _isGenerating.value = false
+                _scanProgress.value = null
+            }
+        }
+    }
+
+    fun executeFollowUpAiAction(actionType: String, docId: String) {
+        val sessionId = _currentSessionId.value
+        viewModelScope.launch {
+            _isGenerating.value = true
+            try {
+                val doc = database.documentDao().getDocumentById(docId)
+                if (doc == null) {
+                    _snackBarMessage.value = "Document not found"
+                    _isGenerating.value = false
+                    return@launch
+                }
+
+                val userActionPrompt = when (actionType.uppercase()) {
+                    "SPELLING" -> context.getString(R.string.scan_ai_spelling)
+                    "FORMAT" -> context.getString(R.string.scan_ai_format)
+                    "TRANSLATE" -> context.getString(R.string.scan_ai_translate)
+                    "SUMMARIZE" -> context.getString(R.string.scan_ai_summarize)
+                    else -> actionType
+                }
+
+                val userMsg = ChatMessageEntity(
+                    id = UUID.randomUUID().toString(),
+                    sessionId = sessionId,
+                    isUser = true,
+                    content = "$userActionPrompt: ${doc.title}"
+                )
+                database.chatDao().insertMessage(userMsg)
+
+                val result = orchestrator.performFollowUpAiAction(
+                    actionType = actionType,
+                    documentText = doc.textContent,
+                    providerName = defaultProvider.value
+                )
+
+                val assistantMsg = ChatMessageEntity(
+                    id = UUID.randomUUID().toString(),
+                    sessionId = sessionId,
+                    isUser = false,
+                    content = result,
+                    attachedDocId = doc.id,
+                    attachedDocTitle = doc.title,
+                    attachedDocType = doc.fileType,
+                    orchestratorNote = "AI Refinement: $userActionPrompt"
+                )
+                database.chatDao().insertMessage(assistantMsg)
+                database.conversationDao().updateLastMessage(sessionId, result.take(60))
+            } catch (e: Exception) {
+                _snackBarMessage.value = "AI action failed: ${e.message}"
+            } finally {
+                _isGenerating.value = false
+            }
         }
     }
 

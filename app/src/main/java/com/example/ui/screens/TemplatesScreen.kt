@@ -110,7 +110,7 @@ fun TemplatesScreen(
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        placeholder = { Text("Search templates…") },
+                        placeholder = { Text(stringResource(R.string.template_search_hint)) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -134,9 +134,9 @@ fun TemplatesScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         // Large prominent Upload Template Button matching mockup
-        PaddingValues(horizontal = 16.dp).let {
-            Button(
-                onClick = {
+        Button(
+            onClick = {
+                try {
                     filePickerLauncher.launch(
                         arrayOf(
                             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -145,29 +145,30 @@ fun TemplatesScreen(
                             "*/*"
                         )
                     )
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .height(52.dp)
-                    .testTag("upload_template_button"),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
-            ) {
-                Icon(
-                    imageVector = Icons.Default.CloudUpload,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.templates_upload),
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp
-                )
-            }
+                } catch (ignored: Exception) {
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .height(52.dp)
+                .testTag("upload_template_button"),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary
+            )
+        ) {
+            Icon(
+                imageVector = Icons.Default.CloudUpload,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = stringResource(R.string.templates_upload),
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.sp
+            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -271,18 +272,18 @@ fun TemplatesScreen(
                 showUploadDialog = false
                 pendingUploadUri = null
             },
-            title = { Text("Name Your Template") },
+            title = { Text(stringResource(R.string.template_name_dialog_title)) },
             text = {
                 Column {
                     Text(
-                        text = "Specify a title for this template so SmartBubble can extract fonts, margins, colors, and layout structures.",
+                        text = stringResource(R.string.template_name_dialog_desc),
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     OutlinedTextField(
                         value = templateNameInput,
                         onValueChange = { templateNameInput = it },
-                        label = { Text("Template Name") },
+                        label = { Text(stringResource(R.string.template_name_hint)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -300,7 +301,7 @@ fun TemplatesScreen(
                         pendingUploadUri = null
                     }
                 ) {
-                    Text("Analyze & Import")
+                    Text(stringResource(R.string.template_analyze_button))
                 }
             },
             dismissButton = {
@@ -310,7 +311,7 @@ fun TemplatesScreen(
                         pendingUploadUri = null
                     }
                 ) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.action_cancel))
                 }
             }
         )
@@ -405,7 +406,7 @@ fun TemplateItemCard(
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                text = "Default",
+                                text = stringResource(R.string.template_default_badge),
                                 color = MaterialTheme.colorScheme.primary,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
@@ -435,7 +436,7 @@ fun TemplateItemCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.MoreVert,
-                        contentDescription = "Options",
+                        contentDescription = stringResource(R.string.library_more_options),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -445,7 +446,7 @@ fun TemplateItemCard(
                     onDismissRequest = { menuExpanded = false }
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Use in Chat") },
+                        text = { Text(stringResource(R.string.template_use_in_chat)) },
                         leadingIcon = { Icon(Icons.Default.Chat, contentDescription = null) },
                         onClick = {
                             menuExpanded = false

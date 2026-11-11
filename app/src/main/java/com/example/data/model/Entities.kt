@@ -67,3 +67,12 @@ data class ChatMessageEntity(
     val attachedDocType: String? = null,
     val orchestratorNote: String? = null
 )
+
+@Entity(tableName = "conversations")
+data class ConversationEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val lastMessagePreview: String = "",
+    val updatedAt: Long = System.currentTimeMillis(),
+    val createdAt: Long = System.currentTimeMillis()
+)

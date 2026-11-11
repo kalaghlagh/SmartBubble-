@@ -2,6 +2,7 @@ package com.example.data.db
 
 import androidx.room.*
 import com.example.data.model.ChatMessageEntity
+import com.example.data.model.ConversationEntity
 import com.example.data.model.DocumentEntity
 import com.example.data.model.ProviderEntity
 import com.example.data.model.TemplateEntity
@@ -107,4 +108,31 @@ interface ChatDao {
 
     @Query("DELETE FROM chat_messages WHERE sessionId = :sessionId")
     suspend fun clearSession(sessionId: String)
+
+    @Query("DELETE FROM chat_messages WHERE sessionId = :sessionId")
+    suspend fun deleteMessagesBySessionId(sessionId: String)
+}
+
+@Dao
+interface ConversationDao {
+    @Query("SELECT * FROM conversations ORDER BY updatedAt DESC")
+    fun getAllConversations(): Flow<List<ConversationEntity>>
+
+    @Query("SELECT * FROM conversations WHERE id = :id")
+    suspend fun getConversationById(id: String): ConversationEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertConversation(conversation: ConversationEntity)
+
+    @Update
+    suspend fun updateConversation(conversation: ConversationEntity)
+
+    @Query("UPDATE conversations SET title = :title, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateTitle(id: String, title: String, updatedAt: Long = System.currentTimeMillis())
+
+    @Query("UPDATE conversations SET lastMessagePreview = :preview, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateLastMessage(id: String, preview: String, updatedAt: Long = System.currentTimeMillis())
+
+    @Query("DELETE FROM conversations WHERE id = :id")
+    suspend fun deleteConversationById(id: String)
 }

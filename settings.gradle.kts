@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Smart Bubble"
+rootProject.name = "SmartBubble"
 
 include(":app")

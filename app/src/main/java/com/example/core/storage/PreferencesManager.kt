@@ -40,6 +40,7 @@ class PreferencesManager(private val context: Context) {
         val KEY_ENC_OPENROUTER = stringPreferencesKey("enc_key_openrouter")
         val KEY_CUSTOM_ENDPOINT = stringPreferencesKey("custom_endpoint_url")
         val KEY_ENC_CUSTOM = stringPreferencesKey("enc_key_custom")
+        val KEY_ACTIVE_CONVERSATION_ID = stringPreferencesKey("active_conversation_id")
     }
 
     val defaultProvider: Flow<String> = context.dataStore.data.map { prefs ->
@@ -84,6 +85,14 @@ class PreferencesManager(private val context: Context) {
 
     val notebookLmEmail: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[KEY_NOTEBOOKLM_EMAIL] ?: "alexander.w@enterprise.com"
+    }
+
+    val activeConversationId: Flow<String?> = context.dataStore.data.map { prefs ->
+        prefs[KEY_ACTIVE_CONVERSATION_ID]
+    }
+
+    suspend fun setActiveConversationId(id: String) {
+        context.dataStore.edit { it[KEY_ACTIVE_CONVERSATION_ID] = id }
     }
 
     suspend fun setDefaultProvider(provider: String) {

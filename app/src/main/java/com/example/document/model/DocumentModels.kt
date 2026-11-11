@@ -14,12 +14,38 @@ data class WordDocumentModel(
 data class WordSection(
     val heading: String,
     val paragraphs: List<String> = emptyList(),
-    val bulletPoints: List<String> = emptyList()
+    val bulletPoints: List<String> = emptyList(),
+    val isPageBreakBefore: Boolean = false,
+    val isRtl: Boolean? = null,
+    val table: WordTable? = null
 )
 
 data class WordTable(
     val headers: List<String>,
     val rows: List<List<String>>
+)
+
+data class ScannedPageData(
+    val pageIndex: Int,
+    val imageUriString: String,
+    val recognizedTitle: String = "",
+    val heading: String = "",
+    val rawText: String = "",
+    val paragraphs: List<String> = emptyList(),
+    val bulletPoints: List<String> = emptyList(),
+    val table: WordTable? = null,
+    val isArabicDetected: Boolean = false,
+    val confidenceScore: Float = 0.95f
+)
+
+data class ScannedDocumentReviewState(
+    val documentTitle: String = "Scanned_Document",
+    val pages: List<ScannedPageData> = emptyList(),
+    val activePageIndex: Int = 0,
+    val selectedTemplateId: String? = null, // null = original reconstructed, "default" = default, or specific template id
+    val isAiEnhanced: Boolean = true,
+    val isProcessing: Boolean = false,
+    val processingMessage: String = ""
 )
 
 data class PresentationModel(

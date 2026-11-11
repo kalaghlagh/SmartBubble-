@@ -36,6 +36,32 @@ class MainActivity : ComponentActivity() {
             val snackBarMessage by viewModel.snackBarMessage.collectAsState()
             val snackbarHostState = remember { SnackbarHostState() }
 
+            val activity = this@MainActivity
+            val localizedContext = remember(appLanguage, activity) {
+                val locale = when (appLanguage) {
+                    "ar" -> java.util.Locale("ar")
+                    "fr" -> java.util.Locale("fr")
+                    else -> java.util.Locale("en")
+                }
+                java.util.Locale.setDefault(locale)
+                val config = android.content.res.Configuration(activity.resources.configuration)
+                config.setLocale(locale)
+                config.setLayoutDirection(locale)
+                @Suppress("DEPRECATION")
+                activity.resources.updateConfiguration(config, activity.resources.displayMetrics)
+                val baseConfigContext = activity.createConfigurationContext(config)
+
+                object : android.content.ContextWrapper(activity), androidx.activity.result.ActivityResultRegistryOwner {
+                    override fun getResources(): android.content.res.Resources = baseConfigContext.resources
+                    override fun getAssets(): android.content.res.AssetManager = baseConfigContext.assets
+                    override val activityResultRegistry: androidx.activity.result.ActivityResultRegistry
+                        get() = activity.activityResultRegistry
+                }
+            }
+            val localizedConfiguration = remember(appLanguage, localizedContext) {
+                localizedContext.resources.configuration
+            }
+
             val isDark = when (appTheme) {
                 "light" -> false
                 "dark" -> true
@@ -49,7 +75,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+            CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalContext provides localizedContext,
+                androidx.compose.ui.platform.LocalConfiguration provides localizedConfiguration,
+                LocalLayoutDirection provides layoutDirection,
+                androidx.activity.compose.LocalActivityResultRegistryOwner provides this@MainActivity
+            ) {
                 SmartBubbleTheme(darkTheme = isDark) {
                     Scaffold(
                         modifier = Modifier.fillMaxSize(),

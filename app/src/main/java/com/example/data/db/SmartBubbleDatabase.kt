@@ -5,6 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.example.data.model.ChatMessageEntity
+import com.example.data.model.ConversationEntity
 import com.example.data.model.DocumentEntity
 import com.example.data.model.ProviderEntity
 import com.example.data.model.TemplateEntity
@@ -14,9 +15,10 @@ import com.example.data.model.TemplateEntity
         DocumentEntity::class,
         TemplateEntity::class,
         ProviderEntity::class,
-        ChatMessageEntity::class
+        ChatMessageEntity::class,
+        ConversationEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class SmartBubbleDatabase : RoomDatabase() {
@@ -24,6 +26,7 @@ abstract class SmartBubbleDatabase : RoomDatabase() {
     abstract fun templateDao(): TemplateDao
     abstract fun providerDao(): ProviderDao
     abstract fun chatDao(): ChatDao
+    abstract fun conversationDao(): ConversationDao
 
     companion object {
         @Volatile

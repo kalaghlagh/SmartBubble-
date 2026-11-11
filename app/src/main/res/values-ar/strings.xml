@@ -7,7 +7,17 @@
     <string name="nav_library">المكتبة</string>
     <string name="nav_settings">الإعدادات</string>
 
-    <!-- Chat Screen -->
+    <!-- Chat Screen & Drawer Menu -->
+    <string name="chat_menu">القائمة</string>
+    <string name="new_conversation">محادثة جديدة</string>
+    <string name="conversations_title">المحادثات السابقة</string>
+    <string name="no_conversations">لا توجد محادثات بعد</string>
+    <string name="conversation_rename">إعادة التسمية</string>
+    <string name="conversation_delete">حذف</string>
+    <string name="conversation_rename_title">إعادة تسمية المحادثة</string>
+    <string name="conversation_delete_title">حذف المحادثة</string>
+    <string name="conversation_delete_confirm">هل أنت متأكد من حذف هذه المحادثة وجميع رسائلها؟</string>
+    <string name="conversation_title_hint">عنوان المحادثة</string>
     <string name="chat_placeholder">اكتب رسالتك هنا…</string>
     <string name="chat_new_session">محادثة جديدة</string>
     <string name="chat_select_template">تطبيق قالب</string>
@@ -20,6 +30,13 @@
     <string name="chat_export_pdf">تصدير PDF</string>
     <string name="chat_listening">جاري الاستماع…</string>
     <string name="chat_voice_hint">الوضع الصوتي نشط. تحدث الآن.</string>
+    <string name="chat_send">إرسال</string>
+    <string name="chat_mic">صوت</string>
+    <string name="chat_attach_template">إرفاق قالب</string>
+    <string name="chat_remove_template">إزالة القالب</string>
+    <string name="chat_compiling_doc">SmartBubble يقوم بإنشاء المستند…</string>
+    <string name="chat_template_badge">القالب: %1$s (%2$s)</string>
+    <string name="chat_copied_toast">تم النسخ إلى الحافظة</string>
 
     <!-- Templates Screen -->
     <string name="templates_title">قوالبي</string>
@@ -34,6 +51,13 @@
     <string name="template_delete">حذف القالب</string>
     <string name="template_empty_title">لا توجد قوالب مرفوعة</string>
     <string name="template_empty_desc">ارفع ملفاتك المرجعية بصيغة DOCX أو PPTX أو XLSX لتطبيق هويتك وخطوطك على المستندات المولدة.</string>
+    <string name="template_name_dialog_title">تسمية القالب</string>
+    <string name="template_name_dialog_desc">حدد اسماً لهذا القالب ليتمكن SmartBubble من حفظ خطوطه وهوامشه وتنسيقاته.</string>
+    <string name="template_name_hint">اسم القالب</string>
+    <string name="template_analyze_button">تحليل واستيراد</string>
+    <string name="template_use_in_chat">استخدام في المحادثة</string>
+    <string name="template_default_badge">افتراضي</string>
+    <string name="template_search_hint">البحث في القوالب…</string>
 
     <!-- Library Screen -->
     <string name="library_title">المكتبة</string>
@@ -47,6 +71,8 @@
     <string name="file_delete">حذف</string>
     <string name="file_open">فتح الملف</string>
     <string name="file_share">مشاركة الملف</string>
+    <string name="library_file_name">اسم الملف</string>
+    <string name="library_more_options">خيارات إضافية</string>
 
     <!-- Settings Screen -->
     <string name="settings_title">الإعدادات</string>
@@ -63,7 +89,80 @@
     <string name="theme_light">فاتح</string>
     <string name="theme_dark">داكن</string>
     <string name="theme_system">النظام</string>
-
     <string name="security_notice_title">تنبيه حماية بيانات الاعتماد على الجهاز</string>
     <string name="security_notice_desc">يتم تشفير المفاتيح باستخدام Android Keystore محلياً على جهازك. بالنسبة لبيئات العمل المؤسسية، يُنصح بربط وسيط خادم محمي.</string>
+    <string name="provider_add_dialog_title">إضافة مزود ذكاء اصطناعي</string>
+    <string name="provider_name_label">اسم المزود (مثال: OpenAI للعمل)</string>
+    <string name="provider_url_label">الرابط الأساسي / نقطة النهاية</string>
+    <string name="provider_model_label">اسم النموذج (مثال: GPT-4o, Claude 3.5)</string>
+    <string name="provider_key_label">مفتاح API</string>
+    <string name="provider_connected_status">متصل (%1$d مللي ثانية)</string>
+    <string name="provider_ready_status">جاهز</string>
+    <string name="about_app_desc">SmartBubble هو مساعد مكتبي ذكي لإنشاء محتوى ومستندات DOCX و PPTX و XLSX و PDF احترافية ومطابقة لقوالبك الشخصية.</string>
+
+    <!-- Common Actions -->
+    <string name="action_cancel">إلغاء</string>
+    <string name="action_save">حفظ</string>
+    <string name="action_close">إغلاق</string>
+    <string name="action_ok">حسناً</string>
+    <string name="action_add">إضافة</string>
+    <string name="action_clear">مسح</string>
+    <string name="action_back">رجوع</string>
+
+    <!-- Notifications & Messages -->
+    <string name="msg_generated_copied">تم إنشاء المستند ونسخ النص إلى الحافظة!</string>
+    <string name="msg_template_selected">تم اختيار القالب: %1$s</string>
+    <string name="msg_template_imported">تم تحليل القالب \'%1$s\' وحفظه بنجاح!</string>
+    <string name="msg_template_deleted">تم حذف القالب.</string>
+    <string name="msg_template_set_default">تم تعيين %1$s كقالب %2$s الافتراضي.</string>
+    <string name="msg_document_deleted">تم حذف المستند.</string>
+    <string name="msg_document_renamed">تم تغيير الاسم إلى %1$s</string>
+    <string name="msg_testing_connection">جاري اختبار الاتصال بـ %1$s...</string>
+    <string name="msg_provider_set_default">تم تعيين %1$s كمنسق رئيسي للذكاء الاصطناعي.</string>
+    <string name="msg_provider_added">تمت إضافة المزود %1$s.</string>
+    <string name="msg_provider_deleted">تم حذف المزود.</string>
+    <string name="msg_conversation_deleted">تم حذف المحادثة.</string>
+    <string name="msg_conversation_renamed">تمت إعادة تسمية المحادثة.</string>
+    <string name="template_fidelity_used">تم الإنشاء باستخدام القالب: %1$s</string>
+    <string name="template_fidelity_default">تنسيق مكتبي قياسي</string>
+
+    <!-- Document Scanning & OCR -->
+    <string name="chat_attach_file">إرفاق ملف</string>
+    <string name="chat_select_image">اختيار صورة</string>
+    <string name="chat_scan_document">تصوير مستند</string>
+    <string name="chat_attachment_title">خيارات الإرفاق</string>
+    <string name="scanning_title">جارٍ المسح</string>
+    <string name="recognizing_text">جارٍ التعرف على النص…</string>
+    <string name="review_extracted_text">مراجعة النص المستخرج</string>
+    <string name="generate_word_doc">إنشاء مستند Word</string>
+    <string name="scan_retake">إعادة التصوير</string>
+    <string name="scan_add_page">إضافة صفحة</string>
+    <string name="scan_remove_page">حذف الصفحة</string>
+    <string name="scan_continue">متابعة</string>
+    <string name="scan_save_document">حفظ المستند</string>
+    <string name="scan_original_page">الصفحة الأصلية</string>
+    <string name="scan_extracted_content">المحتوى المستخرج</string>
+    <string name="scan_page_indicator">الصفحة %1$d من %2$d</string>
+    <string name="scan_doc_title_label">عنوان المستند</string>
+    <string name="scan_template_option">تطبيق التنسيق</string>
+    <string name="scan_template_original">التنسيق المستخرج الأصلي</string>
+    <string name="scan_template_default">النمط الافتراضي لـ SmartBubble</string>
+    <string name="scan_template_custom">القالب: %1$s</string>
+    <string name="scan_warning_low_confidence">تم اكتشاف دقة منخفضة أو نص فارغ في هذه الصفحة. يمكنك تعديل النص قبل الإنشاء.</string>
+    <string name="scan_pages_badge">تم مسح %1$d صفحات</string>
+    <string name="scan_ai_spelling">تصحيح الأخطاء الإملائية</string>
+    <string name="scan_ai_format">تحسين التنسيق</string>
+    <string name="scan_ai_translate">ترجمة المستند</string>
+    <string name="scan_ai_summarize">تلخيص المستند</string>
+    <string name="scan_service_unavailable">خدمة المسح غير متوفرة حالياً. يمكنك اختيار صور المستند من المعرض.</string>
+    <string name="scan_empty_error">لم يتم التعرف على أي نص في الصفحات الممسوحة. يُرجى إعادة التصوير أو كتابة النص يدوياً.</string>
+    <string name="scan_consent_title">تحليل النص والبنية بالذكاء الاصطناعي</string>
+    <string name="scan_consent_desc">هل ترغب في إرسال الصفحة الممسوحة إلى المنسق الرئيسي (%1$s) للتعرف الفائق على اللغة العربية والجداول وإعادة بناء التنسيق؟</string>
+    <string name="scan_consent_agree">تحسين بواسطة الذكاء الاصطناعي</string>
+    <string name="scan_consent_local_only">المعالجة المحلية فقط</string>
+    <string name="scan_ai_enhancement">تحليل ذكي متعدد اللغات</string>
+    <string name="scan_on_device_ocr">تعرف محلي على الجهاز</string>
+    <string name="scan_table_detected">تم اكتشاف جدول (%1$d صفوف)</string>
+    <string name="scan_table_headers">عناوين الأعمدة (مفصولة بفاصلة)</string>
+    <string name="scan_table_rows">الصفوف (صف لكل سطر، مفصولة بفاصلة)</string>
 </resources>
