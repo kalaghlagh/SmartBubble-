@@ -19,7 +19,9 @@ import com.example.data.model.TemplateEntity
         ConversationEntity::class
     ],
     version = 3,
-    exportSchema = false
+    // Schema JSON is exported to app/schemas (see `ksp { room.schemaLocation }` in
+    // app/build.gradle.kts) and must be committed so future migrations can be verified.
+    exportSchema = true
 )
 abstract class SmartBubbleDatabase : RoomDatabase() {
     abstract fun documentDao(): DocumentDao
@@ -29,19 +31,30 @@ abstract class SmartBubbleDatabase : RoomDatabase() {
     abstract fun conversationDao(): ConversationDao
 
     companion object {
+        const val DATABASE_NAME = "smart_bubble_db"
+
         @Volatile
         private var INSTANCE: SmartBubbleDatabase? = null
 
         fun getDatabase(context: Context): SmartBubbleDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    SmartBubbleDatabase::class.java,
-                    "smart_bubble_db"
-                ).fallbackToDestructiveMigration(true).build()
-                INSTANCE = instance
-                instance
+                INSTANCE ?: build(context, DATABASE_NAME).also { INSTANCE = it }
             }
+        }
+
+        /**
+         * Builds the database with the production configuration.
+         *
+         * There is deliberately NO destructive-migration fallback: user templates, documents,
+         * providers and conversations must never be wiped. Every schema change needs an explicit
+         * migration in [SmartBubbleMigrations]; a missing one fails loudly instead of deleting data.
+         */
+        fun build(context: Context, name: String = DATABASE_NAME): SmartBubbleDatabase {
+            return Room.databaseBuilder(
+                context.applicationContext,
+                SmartBubbleDatabase::class.java,
+                name
+            ).addMigrations(*SmartBubbleMigrations.ALL).build()
         }
     }
 }
