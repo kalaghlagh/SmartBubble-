@@ -167,4 +167,27 @@
     <string name="scan_table_detected">تم اكتشاف جدول (%1$d صفوف)</string>
     <string name="scan_table_headers">عناوين الأعمدة (مفصولة بفاصلة)</string>
     <string name="scan_table_rows">الصفوف (صف لكل سطر، مفصولة بفاصلة)</string>
+
+    <!-- Template Preview & Duplicate -->
+    <string name="template_preview_title">معاينة القالب</string>
+    <string name="template_duplicate">تكرار</string>
+    <string name="template_duplicate_dialog_title">تكرار القالب</string>
+    <string name="template_duplicate_dialog_desc">إنشاء نسخة مستقلة تماماً من هذا القالب مع الحفاظ على كامل تنسيقه وبنيته.</string>
+    <string name="template_duplicate_name_label">اسم القالب المكرر</string>
+    <string name="template_duplicate_name_format">%1$s (نسخة)</string>
+    <string name="template_duplicate_button">تكرار الآن</string>
+    <string name="msg_template_duplicated">تم تكرار القالب بنجاح: %1$s</string>
+    <string name="template_info_original_file">الملف الأصلي: %1$s</string>
+    <string name="template_preview_loading">جاري تحميل معاينة القالب…</string>
+    <string name="template_preview_error">تعذر عرض المعاينة الكاملة لملف القالب</string>
+    <string name="template_preview_use_template">استخدام في المحادثة</string>
+    <string name="template_preview_slide_counter">شريحة %1$d من %2$d</string>
+    <string name="template_preview_prev_slide">السابقة</string>
+    <string name="template_preview_next_slide">التالية</string>
+    <string name="template_preview_sheet_tab">ورقة عمل</string>
+    <string name="template_preview_empty_sheet">ورقة عمل فارغة</string>
+    <string name="template_preview_margins">الهوامش: %1$s</string>
+    <string name="template_preview_header">رأس الصفحة</string>
+    <string name="template_preview_footer">تذييل الصفحة</string>
+    <string name="template_preview_structure_only">معاينة البنية (من مواصفات القالب)</string>
 </resources>

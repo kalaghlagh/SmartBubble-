@@ -167,4 +167,27 @@
     <string name="scan_table_detected">Table Detected (%1$d rows)</string>
     <string name="scan_table_headers">Headers (comma-separated)</string>
     <string name="scan_table_rows">Rows (one per line, comma-separated)</string>
+
+    <!-- Template Preview & Duplicate -->
+    <string name="template_preview_title">Template Preview</string>
+    <string name="template_duplicate">Duplicate</string>
+    <string name="template_duplicate_dialog_title">Duplicate Template</string>
+    <string name="template_duplicate_dialog_desc">Create an independent copy of this template with its formatting and structure.</string>
+    <string name="template_duplicate_name_label">Template Name</string>
+    <string name="template_duplicate_name_format">%1$s (Copy)</string>
+    <string name="template_duplicate_button">Duplicate</string>
+    <string name="msg_template_duplicated">Template duplicated: %1$s</string>
+    <string name="template_info_original_file">Source: %1$s</string>
+    <string name="template_preview_loading">Loading template preview…</string>
+    <string name="template_preview_error">Unable to render full template preview</string>
+    <string name="template_preview_use_template">Use in Chat</string>
+    <string name="template_preview_slide_counter">Slide %1$d of %2$d</string>
+    <string name="template_preview_prev_slide">Previous</string>
+    <string name="template_preview_next_slide">Next</string>
+    <string name="template_preview_sheet_tab">Sheet</string>
+    <string name="template_preview_empty_sheet">Empty worksheet</string>
+    <string name="template_preview_margins">Margins: %1$s</string>
+    <string name="template_preview_header">Header</string>
+    <string name="template_preview_footer">Footer</string>
+    <string name="template_preview_structure_only">Structure preview (from template profile)</string>
 </resources>

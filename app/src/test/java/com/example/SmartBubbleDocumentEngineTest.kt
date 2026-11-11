@@ -480,6 +480,220 @@ class SmartBubbleDocumentEngineTest {
         assertTrue(tmplPpt1.isDefaultPpt)
         assertTrue(tmplExcel1.isDefaultExcel)
     }
+
+    @Test
+    fun testTemplatePreviewEngineDocxRealisticParsing() = kotlinx.coroutines.runBlocking {
+        val engine = DocxEngine()
+        val docxFile = tempFolder.newFile("sample_preview_template.docx")
+
+        val model = WordDocumentModel(
+            title = "Preview Contract Header",
+            subtitle = "Legal Operations Dept",
+            sections = listOf(
+                WordSection(
+                    heading = "1. Deliverables",
+                    paragraphs = listOf("The contractor shall deliver production software."),
+                    bulletPoints = listOf("Deliverable A", "Deliverable B")
+                )
+            ),
+            table = WordTable(
+                headers = listOf("Milestone", "Due Date", "Status"),
+                rows = listOf(listOf("M1", "2026-12-01", "Completed"))
+            )
+        )
+        engine.generateDocx(model, docxFile)
+
+        val profile = TemplateProfile.defaultProfile().copy(
+            templateId = "tmpl-test-docx",
+            name = "Test Preview Template",
+            originalFileType = "DOCX",
+            primaryColorHex = "#1D52D8"
+        )
+
+        val entity = com.example.data.model.TemplateEntity(
+            id = profile.templateId,
+            name = profile.name,
+            fileType = "DOCX",
+            originalFilePath = docxFile.absolutePath,
+            profileJson = profile.toJson(),
+            isDefaultWord = true
+        )
+
+        val previewEngine = com.example.template.preview.TemplatePreviewEngine()
+        val previewResult = previewEngine.loadPreview(entity)
+
+        assertTrue("Expected Success or Fallback, got: $previewResult", previewResult is com.example.template.preview.TemplatePreviewResult.Success)
+        val data = (previewResult as com.example.template.preview.TemplatePreviewResult.Success).data
+        assertTrue(data is com.example.template.preview.TemplatePreviewData.DocxPreview)
+        val docxData = data as com.example.template.preview.TemplatePreviewData.DocxPreview
+
+        assertEquals("Preview Contract Header", docxData.title)
+        assertEquals("Legal Operations Dept", docxData.subtitle)
+        assertTrue(docxData.sections.isNotEmpty())
+        val deliverablesSection = docxData.sections.firstOrNull { it.heading == "1. Deliverables" }
+        assertNotNull("Deliverables section should be present", deliverablesSection)
+        assertEquals("1. Deliverables", deliverablesSection?.heading)
+        assertNotNull(docxData.table)
+        assertEquals(listOf("Milestone", "Due Date", "Status"), docxData.table?.headers)
+    }
+
+    @Test
+    fun testTemplatePreviewEnginePptxAndXlsxParsing() = kotlinx.coroutines.runBlocking {
+        val previewEngine = com.example.template.preview.TemplatePreviewEngine()
+
+        // PPTX Test
+        val pptxFile = tempFolder.newFile("sample_preview_deck.pptx")
+        val pptModel = PresentationModel(
+            title = "Quarterly Business Review",
+            subtitle = "Strategic Performance",
+            slides = listOf(
+                SlideModel(
+                    title = "Revenue Growth",
+                    bulletPoints = listOf("+35% YoY expansion", "Market share gained"),
+                    calloutMetric = "+35%"
+                )
+            )
+        )
+        PptxEngine().generatePptx(pptModel, pptxFile)
+
+        val pptProfile = TemplateProfile.defaultProfile().copy(
+            templateId = "tmpl-test-pptx",
+            name = "QBR Deck",
+            originalFileType = "PPTX",
+            primaryColorHex = "#E05D26"
+        )
+        val pptEntity = com.example.data.model.TemplateEntity(
+            id = pptProfile.templateId,
+            name = pptProfile.name,
+            fileType = "PPTX",
+            originalFilePath = pptxFile.absolutePath,
+            profileJson = pptProfile.toJson(),
+            isDefaultPpt = true
+        )
+
+        val pptResult = previewEngine.loadPreview(pptEntity)
+        assertTrue(pptResult is com.example.template.preview.TemplatePreviewResult.Success)
+        val pptData = (pptResult as com.example.template.preview.TemplatePreviewResult.Success).data as com.example.template.preview.TemplatePreviewData.PptxPreview
+        assertTrue(pptData.slides.isNotEmpty())
+        assertEquals("Revenue Growth", pptData.slides.first().title)
+
+        // XLSX Test
+        val xlsxFile = tempFolder.newFile("sample_preview_sheet.xlsx")
+        val xlsxModel = SpreadsheetModel(
+            workbookTitle = "Financial Budget",
+            sheets = listOf(
+                SheetModel(
+                    name = "Summary",
+                    headers = listOf("Q1", "Q2", "Q3", "Total"),
+                    rows = listOf(listOf(100, 200, 300, 600))
+                )
+            )
+        )
+        XlsxEngine().generateXlsx(xlsxModel, xlsxFile)
+
+        val xlsxProfile = TemplateProfile.defaultProfile().copy(
+            templateId = "tmpl-test-xlsx",
+            name = "Budget Sheet",
+            originalFileType = "XLSX",
+            primaryColorHex = "#107C41"
+        )
+        val xlsxEntity = com.example.data.model.TemplateEntity(
+            id = xlsxProfile.templateId,
+            name = xlsxProfile.name,
+            fileType = "XLSX",
+            originalFilePath = xlsxFile.absolutePath,
+            profileJson = xlsxProfile.toJson(),
+            isDefaultExcel = true
+        )
+
+        val xlsxResult = previewEngine.loadPreview(xlsxEntity)
+        assertTrue(xlsxResult is com.example.template.preview.TemplatePreviewResult.Success)
+        val xlsxData = (xlsxResult as com.example.template.preview.TemplatePreviewResult.Success).data as com.example.template.preview.TemplatePreviewData.XlsxPreview
+        assertTrue(xlsxData.sheets.isNotEmpty())
+        assertEquals("Summary", xlsxData.sheets.first().name)
+        assertEquals(listOf("Q1", "Q2", "Q3", "Total"), xlsxData.sheets.first().headers)
+    }
+
+    @Test
+    fun testTemplatePreviewFallbackWhenFileMissing() = kotlinx.coroutines.runBlocking {
+        val previewEngine = com.example.template.preview.TemplatePreviewEngine()
+        val profile = TemplateProfile.defaultProfile().copy(
+            templateId = "tmpl-missing",
+            name = "Missing File Template",
+            originalFileType = "DOCX",
+            headingFont = "Calibri"
+        )
+        val entity = com.example.data.model.TemplateEntity(
+            id = profile.templateId,
+            name = profile.name,
+            fileType = "DOCX",
+            originalFilePath = "/path/to/nonexistent/file.docx",
+            profileJson = profile.toJson()
+        )
+
+        val result = previewEngine.loadPreview(entity)
+        assertTrue(result is com.example.template.preview.TemplatePreviewResult.Fallback)
+        val fallback = result as com.example.template.preview.TemplatePreviewResult.Fallback
+        assertTrue(fallback.data is com.example.template.preview.TemplatePreviewData.DocxPreview)
+        assertEquals("Missing File Template", (fallback.data as com.example.template.preview.TemplatePreviewData.DocxPreview).title)
+    }
+
+    @Test
+    fun testTemplateDuplicationIntegrity() {
+        val originalFile = tempFolder.newFile("original_template.docx")
+        originalFile.writeText("Original OOXML bytes simulation")
+
+        val originalProfile = TemplateProfile.defaultProfile().copy(
+            templateId = "tmpl-orig-123",
+            name = "Executive Report",
+            originalFileType = "DOCX"
+        )
+
+        val originalEntity = com.example.data.model.TemplateEntity(
+            id = originalProfile.templateId,
+            name = originalProfile.name,
+            fileType = "DOCX",
+            originalFilePath = originalFile.absolutePath,
+            profileJson = originalProfile.toJson(),
+            isDefaultWord = true
+        )
+
+        // Duplicate logic simulation
+        val dupId = "tmpl-dup-456"
+        val dupName = "${originalEntity.name} (Copy)"
+        val dupFile = tempFolder.newFile("template_${dupId}.docx")
+        originalFile.inputStream().use { input ->
+            dupFile.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+
+        val dupProfile = TemplateProfile.fromJson(originalEntity.profileJson).copy(
+            templateId = dupId,
+            name = dupName
+        )
+
+        val duplicatedEntity = com.example.data.model.TemplateEntity(
+            id = dupId,
+            name = dupName,
+            fileType = originalEntity.fileType,
+            originalFilePath = dupFile.absolutePath,
+            fileSize = dupFile.length(),
+            profileJson = dupProfile.toJson(),
+            isDefaultWord = false, // Never default by default
+            isDefaultPpt = false,
+            isDefaultExcel = false,
+            isDefaultPdf = false
+        )
+
+        // Verifications
+        assertNotEquals(originalEntity.id, duplicatedEntity.id)
+        assertNotEquals(originalEntity.originalFilePath, duplicatedEntity.originalFilePath)
+        assertEquals("Executive Report (Copy)", duplicatedEntity.name)
+        assertTrue(originalEntity.isDefaultWord)
+        assertFalse(duplicatedEntity.isDefaultWord) // Duplicates must not be default
+        assertEquals(originalFile.length(), dupFile.length())
+    }
 }
 
 

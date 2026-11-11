@@ -21,11 +21,14 @@ import com.example.data.model.ProviderEntity
 import com.example.data.model.TemplateEntity
 import com.example.template.analysis.TemplateAnalysisEngine
 import com.example.template.domain.TemplateProfile
+import com.example.template.preview.TemplatePreviewEngine
+import com.example.template.preview.TemplatePreviewResult
 import com.example.ocr.DocumentOcrEngine
 import com.example.ocr.ScannedDocumentStructureReconstructor
 import com.example.document.model.ScannedPageData
 import com.example.document.model.ScannedDocumentReviewState
 import com.example.document.docx.DocxEngine
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -49,7 +52,18 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     val deliveryManager = DeliveryManager(context)
     val orchestrator = CentralAiOrchestrator(context, database, deliveryManager)
     val templateAnalysisEngine = TemplateAnalysisEngine()
+    val templatePreviewEngine = TemplatePreviewEngine()
     val ocrEngine = DocumentOcrEngine(context, orchestrator)
+
+    // Template Preview State
+    private val _selectedPreviewTemplate = MutableStateFlow<TemplateEntity?>(null)
+    val selectedPreviewTemplate: StateFlow<TemplateEntity?> = _selectedPreviewTemplate.asStateFlow()
+
+    private val _previewResult = MutableStateFlow<TemplatePreviewResult?>(null)
+    val previewResult: StateFlow<TemplatePreviewResult?> = _previewResult.asStateFlow()
+
+    private val _isPreviewLoading = MutableStateFlow(false)
+    val isPreviewLoading: StateFlow<Boolean> = _isPreviewLoading.asStateFlow()
 
     // Document Scanning & OCR Review State
     private val _scannedReviewState = MutableStateFlow<ScannedDocumentReviewState?>(null)
@@ -631,6 +645,98 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 _snackBarMessage.value = context.getString(R.string.msg_template_removed_default, template.name)
             } finally {
                 isUpdatingDefault.set(false)
+            }
+        }
+    }
+
+    // Template Preview Actions
+    fun openTemplatePreview(template: TemplateEntity) {
+        _selectedPreviewTemplate.value = template
+        _isPreviewLoading.value = true
+        _previewResult.value = null
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = templatePreviewEngine.loadPreview(template)
+            _previewResult.value = result
+            _isPreviewLoading.value = false
+        }
+    }
+
+    fun closeTemplatePreview() {
+        _selectedPreviewTemplate.value = null
+        _previewResult.value = null
+        _isPreviewLoading.value = false
+    }
+
+    // Duplicate Template Action
+    fun duplicateTemplate(template: TemplateEntity, customName: String? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val newId = "tmpl-dup-" + UUID.randomUUID().toString().take(8)
+                val resolvedName = if (!customName.isNullOrBlank()) {
+                    customName.trim()
+                } else {
+                    context.getString(R.string.template_duplicate_name_format, template.name)
+                }
+
+                val templateDir = File(context.filesDir, "templates").apply { mkdirs() }
+                val ext = when (template.fileType.uppercase()) {
+                    "DOCX" -> "docx"
+                    "PPTX" -> "pptx"
+                    "XLSX" -> "xlsx"
+                    else -> "docx"
+                }
+                val newFile = File(templateDir, "template_${newId}.$ext")
+
+                // Copy original file bytes to ensure complete independence
+                val origFile = File(template.originalFilePath)
+                if (origFile.exists()) {
+                    origFile.inputStream().use { input ->
+                        FileOutputStream(newFile).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                } else {
+                    newFile.writeBytes(ByteArray(0))
+                }
+
+                // Update profile json if valid
+                val newProfileJson = try {
+                    if (template.profileJson.isNotBlank()) {
+                        val profile = TemplateProfile.fromJson(template.profileJson)
+                        profile.copy(templateId = newId, name = resolvedName).toJson()
+                    } else {
+                        TemplateProfile.defaultProfile().copy(
+                            templateId = newId,
+                            name = resolvedName,
+                            originalFileType = template.fileType
+                        ).toJson()
+                    }
+                } catch (e: Exception) {
+                    template.profileJson
+                }
+
+                val duplicatedEntity = TemplateEntity(
+                    id = newId,
+                    name = resolvedName,
+                    fileType = template.fileType,
+                    originalFilePath = newFile.absolutePath,
+                    fileSize = if (newFile.exists()) newFile.length() else template.fileSize,
+                    profileJson = newProfileJson,
+                    isDefaultWord = false,
+                    isDefaultPpt = false,
+                    isDefaultExcel = false,
+                    isDefaultPdf = false,
+                    compatibilityStatus = template.compatibilityStatus,
+                    thumbnailColorHex = template.thumbnailColorHex,
+                    createdAt = System.currentTimeMillis(),
+                    lastModified = System.currentTimeMillis(),
+                    version = 1
+                )
+
+                database.templateDao().insertTemplate(duplicatedEntity)
+                _snackBarMessage.value = context.getString(R.string.msg_template_duplicated, resolvedName)
+            } catch (e: Exception) {
+                _snackBarMessage.value = "Failed to duplicate template: ${e.message}"
             }
         }
     }

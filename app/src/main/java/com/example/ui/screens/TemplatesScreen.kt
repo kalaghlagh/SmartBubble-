@@ -12,13 +12,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -28,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.model.TemplateEntity
 import com.example.ui.SmartBubbleViewModel
+import com.example.ui.components.TemplatePreviewDialog
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -37,10 +41,20 @@ fun TemplatesScreen(
     viewModel: SmartBubbleViewModel,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val templates by viewModel.allTemplates.collectAsState()
     var selectedFilter by remember { mutableStateOf("All") }
     var searchQuery by remember { mutableStateOf("") }
     var showSearchBar by remember { mutableStateOf(false) }
+
+    // Template preview state from ViewModel
+    val selectedPreviewTemplate by viewModel.selectedPreviewTemplate.collectAsState()
+    val previewResult by viewModel.previewResult.collectAsState()
+    val isPreviewLoading by viewModel.isPreviewLoading.collectAsState()
+
+    // Duplicate dialog state
+    var templateToDuplicate by remember { mutableStateOf<TemplateEntity?>(null) }
+    var duplicateNameInput by remember { mutableStateOf("") }
 
     // Upload dialog state
     var pendingUploadUri by remember { mutableStateOf<Uri?>(null) }
@@ -253,6 +267,11 @@ fun TemplatesScreen(
                 items(filteredTemplates, key = { it.id }) { template ->
                     TemplateItemCard(
                         template = template,
+                        onPreview = { viewModel.openTemplatePreview(template) },
+                        onDuplicate = {
+                            templateToDuplicate = template
+                            duplicateNameInput = context.getString(R.string.template_duplicate_name_format, template.name)
+                        },
                         onSetDefault = { viewModel.setDefaultTemplate(template) },
                         onRemoveDefault = { viewModel.removeDefaultTemplate(template) },
                         onDelete = { viewModel.deleteTemplate(template) },
@@ -264,6 +283,79 @@ fun TemplatesScreen(
                 }
             }
         }
+    }
+
+    // Duplicate Template naming dialog
+    if (templateToDuplicate != null) {
+        val targetTemplate = templateToDuplicate!!
+        AlertDialog(
+            onDismissRequest = { templateToDuplicate = null },
+            title = { Text(stringResource(R.string.template_duplicate_dialog_title)) },
+            text = {
+                Column {
+                    Text(
+                        text = stringResource(R.string.template_duplicate_dialog_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = duplicateNameInput,
+                        onValueChange = { duplicateNameInput = it },
+                        label = { Text(stringResource(R.string.template_duplicate_name_label)) },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("duplicate_template_name_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val name = duplicateNameInput.trim().ifBlank {
+                            context.getString(R.string.template_duplicate_name_format, targetTemplate.name)
+                        }
+                        viewModel.duplicateTemplate(targetTemplate, name)
+                        templateToDuplicate = null
+                    },
+                    modifier = Modifier.testTag("confirm_duplicate_template_btn")
+                ) {
+                    Text(stringResource(R.string.template_duplicate_button))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { templateToDuplicate = null }
+                ) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
+
+    // Template Preview Dialog
+    if (selectedPreviewTemplate != null) {
+        val tmpl = selectedPreviewTemplate!!
+        TemplatePreviewDialog(
+            template = tmpl,
+            previewResult = previewResult,
+            isLoading = isPreviewLoading,
+            onClose = { viewModel.closeTemplatePreview() },
+            onUseTemplate = {
+                viewModel.selectTemplateForChat(tmpl)
+                viewModel.setNavTab(com.example.ui.AppNavTab.CHAT)
+                viewModel.closeTemplatePreview()
+            },
+            onDuplicate = {
+                templateToDuplicate = tmpl
+                duplicateNameInput = context.getString(R.string.template_duplicate_name_format, tmpl.name)
+            },
+            onToggleDefault = {
+                val isDef = tmpl.isDefaultWord || tmpl.isDefaultPpt || tmpl.isDefaultExcel
+                if (isDef) viewModel.removeDefaultTemplate(tmpl) else viewModel.setDefaultTemplate(tmpl)
+            }
+        )
     }
 
     // Upload naming dialog
@@ -322,6 +414,8 @@ fun TemplatesScreen(
 @Composable
 fun TemplateItemCard(
     template: TemplateEntity,
+    onPreview: () -> Unit,
+    onDuplicate: () -> Unit,
     onSetDefault: () -> Unit,
     onRemoveDefault: () -> Unit,
     onDelete: () -> Unit,
@@ -366,7 +460,7 @@ fun TemplateItemCard(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onSelectForChat)
+            .clickable(onClick = onPreview)
             .testTag("template_card_${template.id}"),
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -471,12 +565,32 @@ fun TemplateItemCard(
                     onDismissRequest = { menuExpanded = false }
                 ) {
                     DropdownMenuItem(
+                        text = { Text(stringResource(R.string.template_preview_title)) },
+                        leadingIcon = { Icon(Icons.Outlined.Visibility, contentDescription = null) },
+                        onClick = {
+                            menuExpanded = false
+                            onPreview()
+                        },
+                        modifier = Modifier.testTag("menu_preview_${template.id}")
+                    )
+
+                    DropdownMenuItem(
                         text = { Text(stringResource(R.string.template_use_in_chat)) },
                         leadingIcon = { Icon(Icons.Default.Chat, contentDescription = null) },
                         onClick = {
                             menuExpanded = false
                             onSelectForChat()
                         }
+                    )
+
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.template_duplicate)) },
+                        leadingIcon = { Icon(Icons.Outlined.ContentCopy, contentDescription = null) },
+                        onClick = {
+                            menuExpanded = false
+                            onDuplicate()
+                        },
+                        modifier = Modifier.testTag("menu_duplicate_${template.id}")
                     )
 
                     if (!isDefault) {
