@@ -98,6 +98,34 @@ class DocumentFileNamesTest {
     }
 
     @Test
+    fun pdfExportFileNameIsSafeForTitlesWithSlashesAndUnicode() {
+        val id = "3f2a9c1e-77aa-4b1d-9e2f-0123456789ab"
+        assertEquals("Q1_Q2_Budget_3f2a9c1e.pdf", DocumentFileNames.pdfExportFileName("Q1/Q2 Budget.docx", id))
+        assertEquals("تقرير_2024_2025_3f2a9c1e.pdf", DocumentFileNames.pdfExportFileName("تقرير 2024/2025.DOCX", id))
+        assertEquals("Document_3f2a9c1e.pdf", DocumentFileNames.pdfExportFileName("///", id))
+        assertEquals("Report.v2_3f2a9c1e.pdf", DocumentFileNames.pdfExportFileName("Report.v2.pptx", id))
+        // The export can be created inside the export directory without throwing.
+        val dir = tmp.newFolder("pdf_exports")
+        val f = File(dir, DocumentFileNames.pdfExportFileName("a/b\\c:d*e?.xlsx", id))
+        assertTrue(f.createNewFile())
+        assertEquals(dir.canonicalPath, f.parentFile!!.canonicalPath)
+    }
+
+    @Test
+    fun pdfExportNamesDifferPerDocumentEvenWithSameTitle() {
+        assertFalse(
+            DocumentFileNames.pdfExportFileName("Same.docx", "aaaaaaaa-1") ==
+                DocumentFileNames.pdfExportFileName("Same.docx", "bbbbbbbb-2")
+        )
+    }
+
+    @Test
+    fun stripDocumentExtensionOnlyRemovesKnownExtensions() {
+        assertEquals("Report.v2", DocumentFileNames.stripDocumentExtension("Report.v2.docx"))
+        assertEquals("v1.2 notes", DocumentFileNames.stripDocumentExtension("v1.2 notes"))
+    }
+
+    @Test
     fun createsMissingDirectory() {
         val dir = File(tmp.root, "nested/new/dir")
         val f = DocumentFileNames.createUniqueFile(dir, "x", "pdf")

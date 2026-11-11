@@ -72,6 +72,21 @@ object DocumentFileNames {
         throw IOException("Could not allocate a unique file name in ${directory.absolutePath}")
     }
 
+    private val OFFICE_EXTENSION = Regex("""\.(docx|pptx|xlsx|pdf)$""", RegexOption.IGNORE_CASE)
+
+    /** "Report.v2.docx" -> "Report.v2"; titles without a known document extension are kept. */
+    fun stripDocumentExtension(title: String): String = title.trim().replace(OFFICE_EXTENSION, "")
+
+    /**
+     * Stable, filesystem-safe name for a document's PDF export. It is derived from the document
+     * id, so re-exporting replaces only that document's own export and never another file.
+     */
+    fun pdfExportFileName(title: String, documentId: String): String {
+        val base = sanitizeBaseName(stripDocumentExtension(title))
+        val idPart = sanitizeBaseName(documentId, fallback = "doc").take(8)
+        return "${base}_$idPart.pdf"
+    }
+
     /** Truncates to at most [maxBytes] UTF-8 bytes without splitting a code point. */
     internal fun truncateUtf8(value: String, maxBytes: Int): String {
         var bytes = 0

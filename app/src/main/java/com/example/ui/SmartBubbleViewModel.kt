@@ -322,49 +322,88 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    private fun mimeTypeFor(doc: DocumentEntity): String = when (doc.fileType) {
+        "DOCX" -> DeliveryManager.MIME_DOCX
+        "PPTX" -> DeliveryManager.MIME_PPTX
+        "XLSX" -> DeliveryManager.MIME_XLSX
+        else -> DeliveryManager.MIME_PDF
+    }
+
     fun openDocument(doc: DocumentEntity) {
         val file = File(doc.filePath)
-        val mime = when (doc.fileType) {
-            "DOCX" -> DeliveryManager.MIME_DOCX
-            "PPTX" -> DeliveryManager.MIME_PPTX
-            "XLSX" -> DeliveryManager.MIME_XLSX
-            else -> DeliveryManager.MIME_PDF
+        if (!file.isFile) {
+            _snackBarMessage.value = context.getString(R.string.msg_file_not_found)
+            return
         }
-        deliveryManager.openFile(file, mime)
+        deliveryManager.openFile(file, mimeTypeFor(doc))
     }
 
     fun shareDocument(doc: DocumentEntity) {
         val file = File(doc.filePath)
-        val mime = when (doc.fileType) {
-            "DOCX" -> DeliveryManager.MIME_DOCX
-            "PPTX" -> DeliveryManager.MIME_PPTX
-            "XLSX" -> DeliveryManager.MIME_XLSX
-            else -> DeliveryManager.MIME_PDF
+        if (!file.isFile) {
+            _snackBarMessage.value = context.getString(R.string.msg_file_not_found)
+            return
         }
-        deliveryManager.shareFile(file, mime, doc.title)
+        deliveryManager.shareFile(file, mimeTypeFor(doc), doc.title)
     }
 
     fun exportDocumentAsPdf(doc: DocumentEntity) {
+        if (doc.fileType == "PDF") {
+            openDocument(doc)
+            return
+        }
         viewModelScope.launch {
-            if (doc.fileType == "PDF") {
-                openDocument(doc)
-                return@launch
-            }
-            val pdfDir = File(context.filesDir, "generated_docs").apply { mkdirs() }
-            val pdfFile = File(pdfDir, "${doc.title.substringBeforeLast('.')}_Export.pdf")
-            val wordModel = com.example.document.model.WordDocumentModel(
-                title = doc.title.substringBeforeLast('.'),
-                subtitle = "Exported from SmartBubble Library",
-                sections = listOf(
-                    com.example.document.model.WordSection(
-                        heading = "Document Content",
-                        paragraphs = listOf(doc.textContent)
+            try {
+                val pdfFile = withContext(Dispatchers.IO) {
+                    val title = DocumentFileNames.stripDocumentExtension(doc.title)
+                        .ifBlank { DocumentFileNames.displayTitle(doc.title) }
+                    // Keep paragraph breaks so long content is laid out (and paginated) per paragraph.
+                    val paragraphs = doc.textContent
+                        .split(Regex("""\n\s*\n"""))
+                        .map { it.trim('\n', '\r') }
+                        .filter { it.isNotBlank() }
+                        .ifEmpty { listOf(doc.textContent) }
+                    val wordModel = com.example.document.model.WordDocumentModel(
+                        title = title,
+                        subtitle = "Exported from SmartBubble Library",
+                        sections = listOf(
+                            com.example.document.model.WordSection(
+                                heading = "Document Content",
+                                paragraphs = paragraphs
+                            )
+                        )
                     )
+                    // The export file name is sanitized separately from the visible title (which
+                    // may contain "/" or other characters invalid on the filesystem).
+                    val exportDir = File(context.cacheDir, "pdf_exports").apply { mkdirs() }
+                    val target = File(exportDir, DocumentFileNames.pdfExportFileName(doc.title, doc.id))
+                    val partial = File(exportDir, target.name + ".part")
+                    try {
+                        com.example.document.pdf.PdfEngine()
+                            .generatePdf(wordModel, partial, TemplateProfile.defaultProfile())
+                        if (!partial.isFile || partial.length() == 0L) {
+                            throw IllegalStateException("Generated PDF is empty.")
+                        }
+                        if (target.exists()) target.delete()
+                        if (!partial.renameTo(target)) {
+                            partial.copyTo(target, overwrite = true)
+                        }
+                    } finally {
+                        if (partial.exists()) partial.delete()
+                    }
+                    target
+                }
+                deliveryManager.openFile(pdfFile, DeliveryManager.MIME_PDF)
+                _snackBarMessage.value = "PDF Export ready & opened."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "exportDocumentAsPdf failed", e)
+                _snackBarMessage.value = context.getString(
+                    R.string.msg_pdf_export_failed,
+                    e.message ?: e.javaClass.simpleName
                 )
-            )
-            com.example.document.pdf.PdfEngine().generatePdf(wordModel, pdfFile, TemplateProfile.defaultProfile())
-            deliveryManager.openFile(pdfFile, DeliveryManager.MIME_PDF)
-            _snackBarMessage.value = "PDF Export ready & opened."
+            }
         }
     }
 
