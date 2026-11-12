@@ -44,7 +44,7 @@ class SlashCommandUiTest {
         assertEquals(listOf("pdf"), selected.map { it.name })
         // Layout follows RTL: the command token starts on the right half of the row.
         val row = compose.onNodeWithTag("slash_command_pptx").fetchSemanticsNode().boundsInRoot
-        val token = compose.onNodeWithText("/pptx").fetchSemanticsNode().boundsInRoot
+        val token = compose.onNodeWithText("/pptx", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertTrue("token not on the right in RTL: $token in $row", token.left > row.center.x)
     }
 
@@ -55,7 +55,7 @@ class SlashCommandUiTest {
             SlashCommandSuggestions(commands = SlashCommands.suggestions("/d"), highlightedIndex = 0, onSelect = {})
         }
         val row = compose.onNodeWithTag("slash_command_docx").fetchSemanticsNode().boundsInRoot
-        val token = compose.onNodeWithText("/docx").fetchSemanticsNode().boundsInRoot
+        val token = compose.onNodeWithText("/docx", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertTrue(token.right < row.center.x)
     }
 
