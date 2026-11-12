@@ -51,6 +51,24 @@ The app has four sections: **Chat**, **My Templates**, **Library** and **Setting
 - Progress and streamed text are shown only in the conversation the request belongs to; the
   answer is always saved to that conversation, even if you switch to another one meanwhile.
 
+### Built-in commands (Chat)
+
+Type `/` in the message box to see the commands; keep typing to filter, tap one (or use the
+arrow keys and Tab/Enter on a hardware keyboard) to insert it, then add your instructions and
+send. Choosing a command never sends anything by itself. Command names and descriptions are
+English in every app language.
+
+| Command | What it does |
+|---|---|
+| `/docx`, `/pptx`, `/xlsx`, `/pdf` | Creates that file from the text after the command (same document engines and templates as a normal request). |
+| `/summarize`, `/translate`, `/correct`, `/rewrite`, `/analyze` | Processes the text after the command; with no text, the most recent document in the conversation. |
+| `/clear` | Opens "Clear Conversations?": *Clear Current Chat* empties the open conversation; *Delete All Conversations* (asks a second time) deletes every conversation and message. |
+
+All AI commands go through the default provider and the central orchestrator, with streaming,
+the stop button and progress like any other request. If a command needs content that is missing,
+the app asks for it and keeps your text. `/clear` never deletes Library documents, templates,
+providers or API keys.
+
 ### Voice conversation
 
 - Tap the microphone to start: the app listens, sends what you said to the default provider,

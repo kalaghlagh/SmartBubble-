@@ -5,7 +5,7 @@ import com.example.ai.providers.AiRole
 
 /** Content operations the orchestrator performs on supplied text. */
 enum class ContentOperation {
-    GENERATE, REWRITE, SUMMARIZE, TRANSLATE, CORRECT, IMPROVE_FORMAT, EXPAND, SHORTEN, ANSWER_QUESTION;
+    GENERATE, REWRITE, SUMMARIZE, TRANSLATE, CORRECT, IMPROVE_FORMAT, EXPAND, SHORTEN, ANSWER_QUESTION, ANALYZE;
 
     companion object {
         /** Maps the chat follow-up action keys used by the UI. */
@@ -19,6 +19,7 @@ enum class ContentOperation {
             "SHORTEN" -> SHORTEN
             "GENERATE" -> GENERATE
             "ANSWER", "ANSWER_QUESTION", "QUESTION" -> ANSWER_QUESTION
+            "ANALYZE" -> ANALYZE
             else -> null
         }
     }
@@ -140,6 +141,7 @@ ${templateDescription?.let { "- The document will be rendered with the user's te
             ContentOperation.EXPAND -> "Expand the supplied content with relevant detail, keeping its language, tone and structure."
             ContentOperation.SHORTEN -> "Shorten the supplied content while keeping the key information, its language and structure."
             ContentOperation.ANSWER_QUESTION -> "Answer the user's question using only the supplied content. If the content does not contain the answer, say so."
+            ContentOperation.ANALYZE -> "Analyze the supplied content: its purpose, main points, structure, notable facts or figures, and any problems, gaps or inconsistencies. Base the analysis only on the content and answer in the language of the user's instructions, or of the content if there are none."
         }
         return """
 You are SmartBubble's writing assistant. $task

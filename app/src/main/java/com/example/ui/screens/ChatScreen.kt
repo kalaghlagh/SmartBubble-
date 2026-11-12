@@ -45,6 +45,18 @@ import androidx.compose.ui.window.Dialog
 import com.example.ocr.DocumentScannerHelper
 import com.example.ui.components.OcrReviewDialog
 import com.example.ui.components.SmartBubbleLogo
+import com.example.ui.components.SlashCommandSuggestions
+import com.example.ui.components.ClearConversationsDialog
+import com.example.ui.commands.SendResult
+import com.example.ui.commands.SlashCommand
+import com.example.ui.commands.SlashCommands
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import com.example.R
 import com.example.ai.orchestrator.AiProgressStage
 import com.example.core.voice.VoiceState
@@ -84,7 +96,10 @@ fun ChatScreen(
     val selectedTemplate by viewModel.selectedTemplateForChat.collectAsState()
     val defaultProvider by viewModel.defaultProvider.collectAsState()
 
-    var inputMessage by remember { mutableStateOf("") }
+    // TextFieldValue keeps the cursor at the end after a slash command is inserted.
+    var inputField by remember { mutableStateOf(TextFieldValue("")) }
+    val inputMessage = inputField.text
+    val clearDialogVisible by viewModel.clearDialogVisible.collectAsState()
     var showTemplatePicker by remember { mutableStateOf(false) }
     var showAttachmentMenu by remember { mutableStateOf(false) }
 
@@ -193,7 +208,7 @@ fun ChatScreen(
                     Button(
                         onClick = {
                             viewModel.startNewConversation()
-                            inputMessage = ""
+                            inputField = TextFieldValue("")
                             coroutineScope.launch { drawerState.close() }
                         },
                         modifier = Modifier
@@ -450,6 +465,21 @@ fun ChatScreen(
                 )
             }
 
+            // Built-in command suggestions while the composer holds "/..." (nothing is sent on selection).
+            val suggestions = remember(inputMessage) { SlashCommands.suggestions(inputMessage) }
+            var highlightedSuggestion by remember(suggestions) { mutableIntStateOf(0) }
+            val insertCommand: (SlashCommand) -> Unit = { command ->
+                val text = SlashCommands.insert(command)
+                inputField = TextFieldValue(text, selection = TextRange(text.length))
+            }
+            if (suggestions.isNotEmpty()) {
+                SlashCommandSuggestions(
+                    commands = suggestions,
+                    highlightedIndex = highlightedSuggestion,
+                    onSelect = insertCommand
+                )
+            }
+
             // Bottom Input Dock
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -476,8 +506,8 @@ fun ChatScreen(
 
                     // Text Field
                     TextField(
-                        value = inputMessage,
-                        onValueChange = { inputMessage = it },
+                        value = inputField,
+                        onValueChange = { inputField = it },
                         placeholder = {
                             Text(
                                 text = stringResource(R.string.chat_placeholder),
@@ -488,6 +518,25 @@ fun ChatScreen(
                         modifier = Modifier
                             .weight(1f)
                             .padding(horizontal = 4.dp)
+                            // Hardware keyboard: arrows move in the command list, Tab/Enter insert.
+                            .onPreviewKeyEvent { event ->
+                                if (suggestions.isEmpty() || event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                when (event.key) {
+                                    Key.DirectionDown -> {
+                                        highlightedSuggestion = (highlightedSuggestion + 1) % suggestions.size
+                                        true
+                                    }
+                                    Key.DirectionUp -> {
+                                        highlightedSuggestion = (highlightedSuggestion - 1 + suggestions.size) % suggestions.size
+                                        true
+                                    }
+                                    Key.Tab, Key.Enter, Key.NumPadEnter -> {
+                                        insertCommand(suggestions[highlightedSuggestion.coerceIn(0, suggestions.lastIndex)])
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            }
                             .testTag("chat_input_field"),
                         shape = RoundedCornerShape(24.dp),
                         colors = TextFieldDefaults.colors(
@@ -523,9 +572,12 @@ fun ChatScreen(
                         // Send Button
                         IconButton(
                             onClick = {
-                                val prompt = inputMessage.trim()
-                                inputMessage = ""
-                                viewModel.executePrompt(prompt)
+                                // Commands are routed by the ViewModel; the text is kept when a
+                                // command still needs content or another request is running.
+                                when (viewModel.sendMessage(inputMessage)) {
+                                    SendResult.SENT, SendResult.CLEAR_DIALOG -> inputField = TextFieldValue("")
+                                    SendResult.NEEDS_INPUT, SendResult.BUSY -> Unit
+                                }
                             },
                             modifier = Modifier
                                 .size(46.dp)
@@ -906,6 +958,14 @@ fun ChatScreen(
     }
 
     // Delete Conversation Confirmation Dialog
+    if (clearDialogVisible) {
+        ClearConversationsDialog(
+            onClearCurrent = { viewModel.clearCurrentConversation() },
+            onDeleteAll = { viewModel.deleteAllConversations() },
+            onDismiss = { viewModel.dismissClearDialog() }
+        )
+    }
+
     conversationToDelete?.let { conv ->
         AlertDialog(
             onDismissRequest = { conversationToDelete = null },

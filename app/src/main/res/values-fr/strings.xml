@@ -323,4 +323,19 @@
     <string name="cap_context">Contexte %1$s</string>
     <string name="model_capabilities_label">Selon le fournisseur : %1$s</string>
     <string name="model_no_json_note">Ce modèle ne prend pas en charge le mode JSON : les documents sont demandés par instructions uniquement.</string>
+
+    <!-- Slash commands and /clear -->
+    <string name="command_needs_document_brief">Ajoutez après %1$s ce que le document doit contenir.</string>
+    <string name="command_needs_content">Ajoutez après %1$s le texte à traiter, ou créez ou numérisez d’abord un document dans cette conversation.</string>
+    <string name="commands_suggestions_desc">Suggestions de commandes</string>
+    <string name="clear_title">Effacer les conversations ?</string>
+    <string name="clear_message">Choisissez ce qu’il faut supprimer. Les documents de la Bibliothèque, les modèles et les réglages des fournisseurs IA ne sont pas concernés.</string>
+    <string name="clear_current">Effacer la discussion actuelle</string>
+    <string name="clear_all">Supprimer toutes les conversations</string>
+    <string name="clear_all_confirm_title">Supprimer toutes les conversations ?</string>
+    <string name="clear_all_confirm_message">Toutes les conversations et leurs messages seront définitivement supprimés de cet appareil. Cette action est irréversible. Les documents de la Bibliothèque, les modèles et les réglages des fournisseurs IA sont conservés.</string>
+    <string name="clear_all_confirm_button">Tout supprimer</string>
+    <string name="clear_current_done">Discussion actuelle effacée.</string>
+    <string name="clear_all_done">Toutes les conversations ont été supprimées.</string>
+    <string name="clear_failed">Suppression impossible. Rien n’a été modifié.</string>
 </resources>
