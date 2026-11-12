@@ -246,7 +246,7 @@ class DocxEngine {
         val bulletStyle = style("ListBullet", "ListParagraph")
         val sb = StringBuilder()
         if (includeTitle) {
-            sb.append(para(model.title, titleStyle, bold = titleStyle == null))
+            if (model.title.isNotBlank()) sb.append(para(model.title, titleStyle, bold = titleStyle == null))
             if (model.subtitle.isNotBlank()) sb.append(para(model.subtitle, subtitleStyle))
             if (model.date.isNotBlank()) sb.append(para(model.date, null))
         }
@@ -312,15 +312,20 @@ class DocxEngine {
 </w:p>""")
         }
 
-        // Title
-        sb.append("""
+        // Title (a document without a title starts directly with its content)
+        if (model.title.isNotBlank()) {
+            val isTitleRtl = containsArabic(model.title)
+            val bidiTag = if (isTitleRtl) "<w:bidi/><w:jc w:val=\"right\"/>" else ""
+            val rtlRun = if (isTitleRtl) "<w:rtl/>" else ""
+            sb.append("""
 <w:p>
-    <w:pPr><w:pStyle w:val="Heading1"/><w:spacing w:before="240" w:after="100"/></w:pPr>
+    <w:pPr><w:pStyle w:val="Heading1"/><w:spacing w:before="240" w:after="100"/>$bidiTag</w:pPr>
     <w:r>
-        <w:rPr><w:b/><w:sz w:val="44"/><w:color w:val="$primaryHex"/></w:rPr>
+        <w:rPr><w:b/><w:sz w:val="44"/><w:color w:val="$primaryHex"/>$rtlRun</w:rPr>
         <w:t>${escapeXml(model.title)}</w:t>
     </w:r>
 </w:p>""")
+        }
 
         if (model.subtitle.isNotBlank()) {
             sb.append("""

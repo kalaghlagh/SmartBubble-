@@ -69,6 +69,60 @@ the stop button and progress like any other request. If a command needs content 
 the app asks for it and keeps your text. `/clear` never deletes Library documents, templates,
 providers or API keys.
 
+### Offline Formatting Agent (Chat)
+
+Organizes long pasted text into a document **on the device**. Phase 1 uses local, deterministic
+rules only: no AI model is loaded or downloaded, no internet connection, AI provider or API key is
+needed, and nothing is sent anywhere.
+
+**When it appears.** When you paste at least 500 characters into the Chat message box at once, a
+small card appears above the box: *Organize this content?* with **Format Offline** and
+**Dismiss**. The app only compares the message box text before and after each edit; it never
+reads the clipboard. Typing, voice input and short messages never show it, the same pasted text
+is suggested only once, and nothing is analyzed until you tap Format Offline. Dismiss (or sending
+the message) leaves your text exactly as it is.
+
+**What it does.** Format Offline analyzes the pasted text and opens a preview:
+
+- **Detected structure:** headings (Markdown `#`, underlined titles, numbered sections such as
+  `2.1 Scope`, ALL CAPS lines, short `Title:` lines, short standalone Title Case or Arabic lines),
+  numbered and bulleted lists (`-`, `*`, `•`, `1.`, `1)`, `(a)`, `١-`, indented continuation
+  lines), and tables (Markdown pipe tables, tab-separated rows, or three or more rows aligned in
+  columns). Paragraph breaks are kept; lines wrapped in the middle of a sentence are joined.
+  Headings guessed by the rules are highlighted in the preview with their confidence.
+- **Document type:** report, letter, proposal, meeting notes, structured data or general
+  document, guessed from English, French and Arabic keywords and the layout. This is pattern
+  matching, not AI understanding; when unsure it says "General document". It does not change
+  the content.
+- **Your words are kept.** The agent organizes and formats; it never summarizes, translates,
+  corrects, reorders or adds content. Only whitespace and structure markers (bullet characters,
+  `#`, table pipes) are changed. Every result is checked word by word against your text
+  (numbers and dates included); if the structure cannot be verified, your original paragraphs are
+  kept instead.
+
+**Formats.** Word (default for prose) and PDF are always available. Excel is offered only when a
+table was detected (each table becomes a sheet, values are kept exactly as written; other text
+goes to a "Text" sheet). PowerPoint is created only when you choose it (each heading starts a
+slide). One file is created per confirmation.
+
+**Templates** come from My Templates: the template attached to the chat (or picked in the
+preview) first, otherwise your default template for that format, otherwise a built-in clean
+formatting that adds no header or footer text. A template of the wrong type is never used
+silently: the preview says why it was not applied. The template file is only read, never
+changed. Limits are reported instead of hidden: PDF uses the template's colors and margins only;
+a missing template file means only its saved colors and fonts apply; a template whose layout the
+engine cannot use is reported after generation.
+
+**Confirm and save.** *Apply Formatting* creates the file with the existing document engines
+(nothing is in the Library yet). *Save to Library* stores it in the Library and adds a note to the
+conversation; *Cancel* at any step stops the work and deletes the unsaved file. Offline documents
+are kept out of the context sent to your AI provider unless you run an AI action on them.
+
+**Current limitations.** All section headings use one heading style (levels are shown in the
+preview but not reproduced in the file); numbered list items keep their own numbers as text;
+nested lists are flattened; PowerPoint slides with long paragraphs may need resizing; the PDF
+footer is the app's standard footer; texts over 200,000 characters are not formatted offline.
+
 ### Voice conversation
 
 - Tap the microphone to start: the app listens, sends what you said to the default provider,
@@ -143,7 +197,8 @@ Android 7.x. The in-app logo (`smart_bubble_logo`) uses the same artwork.
 - **What leaves the device:** only requests to the AI provider you configured – your messages,
   recent conversation context, the text of AI-generated documents in that conversation, and
   text you explicitly send with an AI action. Scanned page images never leave the device, and
-  the text of scanned documents is sent only when you choose an AI action on it.
+  the text of scanned documents is sent only when you choose an AI action on it. The Offline
+  Formatting Agent sends nothing: it runs entirely on the device.
 - All network traffic uses HTTPS. There are no analytics or advertising SDKs.
 - Generated text is also copied to the clipboard after a document is created.
 - Speech recognition and text-to-speech are performed by the device's own services under their

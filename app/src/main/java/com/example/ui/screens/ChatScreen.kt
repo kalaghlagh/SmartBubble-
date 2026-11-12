@@ -47,6 +47,9 @@ import com.example.ui.components.OcrReviewDialog
 import com.example.ui.components.SmartBubbleLogo
 import com.example.ui.components.SlashCommandSuggestions
 import com.example.ui.components.ClearConversationsDialog
+import com.example.ui.components.OfflineFormattingDialog
+import com.example.ui.components.OfflineFormattingSuggestion
+import com.example.offline.document.OfflinePhase
 import com.example.ui.commands.SendResult
 import com.example.ui.commands.SlashCommand
 import com.example.ui.commands.SlashCommands
@@ -100,6 +103,7 @@ fun ChatScreen(
     var inputField by remember { mutableStateOf(TextFieldValue("")) }
     val inputMessage = inputField.text
     val clearDialogVisible by viewModel.clearDialogVisible.collectAsState()
+    val offlineState by viewModel.offlineFormatting.state.collectAsState()
     var showTemplatePicker by remember { mutableStateOf(false) }
     var showAttachmentMenu by remember { mutableStateOf(false) }
 
@@ -480,6 +484,16 @@ fun ChatScreen(
                 )
             }
 
+            // Offline Formatting Agent: suggestion after a long paste (nothing runs until tapped).
+            if (offlineState.suggestion != null || offlineState.phase == OfflinePhase.ANALYZING) {
+                OfflineFormattingSuggestion(
+                    analyzing = offlineState.phase == OfflinePhase.ANALYZING,
+                    onFormat = { viewModel.offlineFormatting.formatOffline(selectedTemplate?.id) },
+                    onDismiss = { viewModel.offlineFormatting.dismissSuggestion() },
+                    onCancel = { viewModel.offlineFormatting.cancel() }
+                )
+            }
+
             // Bottom Input Dock
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -507,7 +521,16 @@ fun ChatScreen(
                     // Text Field
                     TextField(
                         value = inputField,
-                        onValueChange = { inputField = it },
+                        onValueChange = { newValue ->
+                            // Long pastes offer offline formatting (only the composer text is read,
+                            // never the clipboard). Voice input is not interrupted.
+                            viewModel.offlineFormatting.onComposerTextChanged(
+                                before = inputField.text,
+                                after = newValue.text,
+                                inputEnabled = !voiceActive
+                            )
+                            inputField = newValue
+                        },
                         placeholder = {
                             Text(
                                 text = stringResource(R.string.chat_placeholder),
@@ -954,6 +977,18 @@ fun ChatScreen(
                     Text(stringResource(R.string.action_cancel))
                 }
             }
+        )
+    }
+
+    // Offline formatting preview, confirmation and Save to Library
+    if (offlineState.dialogVisible) {
+        OfflineFormattingDialog(
+            state = offlineState,
+            onSelectFormat = { viewModel.offlineFormatting.selectFormat(it) },
+            onSelectTemplate = { viewModel.offlineFormatting.selectTemplate(it) },
+            onApply = { viewModel.offlineFormatting.applyFormatting() },
+            onSave = { viewModel.offlineFormatting.saveToLibrary() },
+            onCancel = { viewModel.offlineFormatting.cancel() }
         )
     }
 

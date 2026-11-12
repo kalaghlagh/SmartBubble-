@@ -7,6 +7,7 @@ import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
 import com.example.document.model.WordDocumentModel
+import com.example.document.model.WordTable
 import com.example.template.domain.TemplateProfile
 import java.io.File
 import java.io.FileOutputStream
@@ -148,27 +149,96 @@ class PdfEngine {
             canvas.drawRect(margin, y, pageWidth - margin, y + 4f, barPaint)
             y += 24f
 
-            // Draw Title
-            drawLayout(buildLayout(model.title, titlePaint, contentWidth.toInt()), margin)
-            y += 12f
+            // Draw Title (skipped when the document has no title)
+            if (model.title.isNotBlank()) {
+                drawLayout(buildLayout(model.title, titlePaint, contentWidth.toInt()), margin)
+                y += 12f
+            }
 
             // Draw Subtitle / Org
-            val subText = if (model.subtitle.isNotBlank()) "${model.subtitle} • ${model.organization}" else model.organization
-            drawLayout(buildLayout(subText, subtitlePaint, contentWidth.toInt()), margin)
-            y += 20f
+            val subText = if (model.subtitle.isNotBlank()) {
+                listOf(model.subtitle, model.organization).filter { it.isNotBlank() }.joinToString(" • ")
+            } else model.organization
+            if (subText.isNotBlank()) {
+                drawLayout(buildLayout(subText, subtitlePaint, contentWidth.toInt()), margin)
+                y += 20f
+            }
 
             // Draw dividing rule
             canvas.drawLine(margin, y, pageWidth - margin, y, linePaint)
             y += 18f
+
+            val headerTextPaint = TextPaint().apply {
+                color = Color.WHITE
+                textSize = 10f
+                isFakeBoldText = true
+                isAntiAlias = true
+            }
+
+            /**
+             * Draws [table] with wrapped cell text (each row is as tall as its tallest cell), so
+             * long values and Arabic text stay inside their column. Rows continue on new pages,
+             * repeating the header.
+             */
+            fun drawTable(table: WordTable) {
+                if (table.headers.isEmpty()) return
+                if (y > pageHeight - 160f) startNewPage()
+                val colCount = table.headers.size
+                val colWidth = contentWidth / colCount
+                val cellPad = 6f
+                val cellTextWidth = (colWidth - cellPad * 2).toInt().coerceAtLeast(1)
+                fun layouts(cells: List<String>, paint: TextPaint) =
+                    (0 until colCount).map { i -> buildLayout(cells.getOrElse(i) { "" }, paint, cellTextWidth) }
+                fun heightOf(cells: List<StaticLayout>) = maxOf(22f, cells.maxOf { it.height.toFloat() } + 10f)
+                fun drawCells(cells: List<StaticLayout>) {
+                    cells.forEachIndexed { i, layout ->
+                        canvas.save()
+                        canvas.translate(margin + i * colWidth + cellPad, y + 5f)
+                        layout.draw(canvas)
+                        canvas.restore()
+                    }
+                }
+
+                val header = layouts(table.headers, headerTextPaint)
+                val headerHeight = heightOf(header)
+                fun drawHeaderRow() {
+                    canvas.drawRect(margin, y, margin + contentWidth, y + headerHeight, tableHeaderPaint)
+                    drawCells(header)
+                    y += headerHeight
+                }
+
+                drawHeaderRow()
+
+                // Data Rows: continue on new pages (repeating the header) instead of overflowing.
+                var rowIndex = 0
+                for (row in table.rows) {
+                    val cells = layouts(row, bodyPaint)
+                    val rowHeight = heightOf(cells)
+                    if (y + rowHeight > contentBottom) {
+                        startNewPage()
+                        drawHeaderRow()
+                    }
+                    if (rowIndex % 2 == 1) {
+                        canvas.drawRect(margin, y, margin + contentWidth, y + rowHeight, tableRowAltPaint)
+                    }
+                    drawCells(cells)
+                    canvas.drawLine(margin, y + rowHeight, margin + contentWidth, y + rowHeight, linePaint)
+                    y += rowHeight
+                    rowIndex++
+                }
+                y += 18f
+            }
 
             // Draw Sections
             for (section in model.sections) {
                 // Keep a heading from being stranded at the very bottom of a page
                 if (y > pageHeight - 120f) startNewPage()
 
-                // Section Heading
-                drawLayout(buildLayout(section.heading, headingPaint, contentWidth.toInt()), margin)
-                y += 8f
+                // Section Heading (untitled sections continue the text without one)
+                if (section.heading.isNotBlank()) {
+                    drawLayout(buildLayout(section.heading, headingPaint, contentWidth.toInt()), margin)
+                    y += 8f
+                }
 
                 // Paragraphs
                 for (p in section.paragraphs) {
@@ -181,52 +251,14 @@ class PdfEngine {
                     drawLayout(buildLayout("•  $b", bodyPaint, contentWidth.toInt() - 16), margin + 12f)
                     y += 6f
                 }
+
+                // Section table
+                section.table?.let { drawTable(it) }
                 y += 12f
             }
 
             // Draw Table if present
-            if (model.table != null && model.table.headers.isNotEmpty()) {
-                if (y > pageHeight - 160f) startNewPage()
-
-                val colCount = model.table.headers.size
-                val colWidth = contentWidth / colCount
-                val rowHeight = 22f
-                val headerTextPaint = TextPaint().apply {
-                    color = Color.WHITE
-                    textSize = 10f
-                    isFakeBoldText = true
-                    isAntiAlias = true
-                }
-
-                fun drawHeaderRow() {
-                    canvas.drawRect(margin, y, margin + contentWidth, y + rowHeight, tableHeaderPaint)
-                    for (i in model.table.headers.indices) {
-                        canvas.drawText(model.table.headers[i], margin + (i * colWidth) + 6f, y + 15f, headerTextPaint)
-                    }
-                    y += rowHeight
-                }
-
-                drawHeaderRow()
-
-                // Data Rows: continue on new pages (repeating the header) instead of overflowing.
-                var rowIndex = 0
-                for (row in model.table.rows) {
-                    if (y + rowHeight > contentBottom) {
-                        startNewPage()
-                        drawHeaderRow()
-                    }
-                    if (rowIndex % 2 == 1) {
-                        canvas.drawRect(margin, y, margin + contentWidth, y + rowHeight, tableRowAltPaint)
-                    }
-                    for (i in 0 until minOf(row.size, colCount)) {
-                        canvas.drawText(row[i], margin + (i * colWidth) + 6f, y + 15f, bodyPaint)
-                    }
-                    canvas.drawLine(margin, y + rowHeight, margin + contentWidth, y + rowHeight, linePaint)
-                    y += rowHeight
-                    rowIndex++
-                }
-                y += 18f
-            }
+            model.table?.let { drawTable(it) }
 
             // Draw Footer on last page
             drawFooter(canvas, margin, pageWidth, pageHeight, currentPageNum)
