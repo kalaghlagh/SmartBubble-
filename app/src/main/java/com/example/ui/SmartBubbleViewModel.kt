@@ -10,6 +10,7 @@ import com.example.R
 import com.example.ai.orchestrator.CentralAiOrchestrator
 import com.example.ai.orchestrator.ContentOperation
 import com.example.ai.orchestrator.ContextMessage
+import com.example.ai.orchestrator.ConversationContext
 import com.example.ai.orchestrator.DocumentFormat
 import com.example.ai.providers.AiErrorKind
 import com.example.ai.providers.AiException
@@ -34,10 +35,14 @@ import com.example.data.model.DocumentEntity
 import com.example.data.model.ProviderEntity
 import com.example.data.model.TemplateEntity
 import com.example.template.analysis.TemplateAnalysisEngine
+import com.example.template.analysis.TemplateFileInspector
 import com.example.template.domain.TemplateProfile
 import com.example.template.preview.TemplatePreviewEngine
 import com.example.template.preview.TemplatePreviewResult
 import com.example.ocr.DocumentOcrEngine
+import com.example.ocr.OcrLanguage
+import com.example.ocr.OcrUnavailableException
+import com.example.ocr.PageImageLoader
 import com.example.ocr.ScannedDocumentStructureReconstructor
 import com.example.document.model.ScannedPageData
 import com.example.document.model.ScannedDocumentReviewState
@@ -46,6 +51,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -64,8 +70,14 @@ enum class AppNavTab {
 
 class SmartBubbleViewModel(application: Application) : AndroidViewModel(application) {
 
+    /** A template import problem with a localized explanation for the user. */
+    private class TemplateImportException(val messageRes: Int) : Exception()
+
     private companion object {
         const val TAG = "SmartBubbleViewModel"
+
+        /** DocumentEntity.providerUsed value of documents created by on-device OCR. */
+        const val LOCAL_OCR_SOURCE = "OCR"
     }
 
     private val context = application.applicationContext
@@ -78,7 +90,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     val orchestrator = CentralAiOrchestrator(context, database, deliveryManager, providerManager)
     val templateAnalysisEngine = TemplateAnalysisEngine()
     val templatePreviewEngine = TemplatePreviewEngine()
-    val ocrEngine = DocumentOcrEngine(context, orchestrator)
+    private val ocrEngine = DocumentOcrEngine(context)
     private val sampleDataSeeder = SampleDataSeeder(
         filesDir = context.filesDir,
         database = database,
@@ -224,7 +236,10 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             try {
                 // One-time sample seeding + consistency maintenance, off the main thread.
-                withContext(Dispatchers.IO) { sampleDataSeeder.runStartupTasks() }
+                withContext(Dispatchers.IO) {
+                    sampleDataSeeder.runStartupTasks()
+                    PageImageLoader.purgeStaleScans(context)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -425,13 +440,17 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
      * once (on its most recent mention) so the user can ask about generated/scanned documents.
      */
     private suspend fun buildContextHistory(sessionId: String): List<ContextMessage> {
-        val messages = database.chatDao().getMessagesForSessionOnce(sessionId)
+        // Only the most recent messages can fit in the context; don't load the whole history.
+        val messages = database.chatDao().getRecentMessagesForSession(sessionId, ConversationContext.MAX_MESSAGES)
         val seenDocs = mutableSetOf<String>()
         val out = ArrayList<ContextMessage>(messages.size)
         for (m in messages.asReversed()) {
             val docId = m.attachedDocId
             val docText = if (docId != null && seenDocs.add(docId)) {
-                database.documentDao().getDocumentById(docId)?.textContent
+                // Scanned documents stay on the device: their text is only sent to the provider
+                // when the user explicitly runs an AI action on them.
+                database.documentDao().getDocumentById(docId)
+                    ?.takeIf { it.providerUsed != LOCAL_OCR_SOURCE }?.textContent
             } else null
             out += ContextMessage(m.isUser, m.content, docText, m.attachedDocTitle)
         }
@@ -551,6 +570,10 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     if (doc.filePath.isNotBlank() && dao.countDocumentsWithPath(doc.filePath) == 0) {
                         File(doc.filePath).delete()
                     }
+                    // Remove this document's cached PDF export too.
+                    val exportSuffix = "_" + DocumentFileNames.pdfExportFileName("", doc.id).substringAfterLast('_')
+                    File(context.cacheDir, "pdf_exports").listFiles()
+                        ?.filter { it.name.endsWith(exportSuffix) }?.forEach { it.delete() }
                 }
                 _snackBarMessage.value = str(R.string.msg_document_deleted)
             } catch (e: CancellationException) {
@@ -568,19 +591,39 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             try {
                 // Copying and analysing the file is blocking I/O: keep it off the main thread.
                 val (file, profile) = withContext(Dispatchers.IO) {
-                    val extension = getMimeExtension(uri)
                     val templateDir = File(context.filesDir, "templates").apply { mkdirs() }
-                    val target = File(templateDir, "template_${UUID.randomUUID()}.$extension")
-                    persistentTemplateFile = target
+                    val staging = File(templateDir, "import_${UUID.randomUUID()}.tmp")
+                    persistentTemplateFile = staging
 
                     val input = context.contentResolver.openInputStream(uri)
-                        ?: throw java.io.IOException("The selected file could not be opened.")
+                        ?: throw TemplateImportException(R.string.template_import_unreadable)
+                    // Bounded copy: stop as soon as the size limit is exceeded.
                     input.use { stream ->
-                        FileOutputStream(target).use { output -> stream.copyTo(output) }
+                        FileOutputStream(staging).use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            var total = 0L
+                            while (true) {
+                                val read = stream.read(buffer)
+                                if (read < 0) break
+                                total += read
+                                if (total > TemplateFileInspector.MAX_FILE_BYTES) {
+                                    throw TemplateImportException(R.string.template_import_too_large)
+                                }
+                                output.write(buffer, 0, read)
+                            }
+                        }
                     }
-                    if (target.length() == 0L) {
-                        throw java.io.IOException("The selected file is empty.")
+                    // The type comes from the file content, not from its name or MIME type.
+                    val type = when (val result = TemplateFileInspector.inspect(staging)) {
+                        is TemplateFileInspector.Result.Valid -> result.type
+                        TemplateFileInspector.Result.TooLarge ->
+                            throw TemplateImportException(R.string.template_import_too_large)
+                        TemplateFileInspector.Result.NotOfficeDocument ->
+                            throw TemplateImportException(R.string.template_import_unsupported)
                     }
+                    val target = File(templateDir, "template_${UUID.randomUUID()}.${type.extension}")
+                    if (!staging.renameTo(target)) throw java.io.IOException("Could not store the template file.")
+                    persistentTemplateFile = target
                     target to templateAnalysisEngine.analyzeFile(target, userDefinedName)
                 }
                 val templateEntity = TemplateEntity(
@@ -599,6 +642,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             } catch (e: CancellationException) {
                 if (!saved) withContext(NonCancellable + Dispatchers.IO) { persistentTemplateFile?.delete() }
                 throw e
+            } catch (e: TemplateImportException) {
+                if (!saved) withContext(Dispatchers.IO) { persistentTemplateFile?.delete() }
+                _snackBarMessage.value = str(e.messageRes)
             } catch (e: Exception) {
                 Log.e(TAG, "importTemplateFromUri failed", e)
                 // Do not leave an orphaned partial copy behind.
@@ -781,13 +827,24 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    private fun getMimeExtension(uri: Uri): String {
-        val type = context.contentResolver.getType(uri) ?: ""
-        return when {
-            type.contains("word") -> "docx"
-            type.contains("presentation") -> "pptx"
-            type.contains("sheet") -> "xlsx"
-            else -> "docx"
+    /**
+     * Saves the generation settings of a template (stored in its profile; the original template
+     * file is never changed).
+     */
+    fun updateTemplateOptions(template: TemplateEntity, useTemplateLayout: Boolean, keepTemplateContent: Boolean) {
+        launchSafely("updateTemplateOptions") {
+            val dao = database.templateDao()
+            val current = dao.getTemplateById(template.id) ?: return@launchSafely
+            val profile = TemplateProfile.fromJson(current.profileJson).copy(
+                useTemplateLayout = useTemplateLayout,
+                keepTemplateContent = useTemplateLayout && keepTemplateContent
+            )
+            dao.updateProfileJson(template.id, profile.toJson())
+            // Keep the template attached to the chat in sync with the saved settings.
+            if (_selectedTemplateForChat.value?.id == template.id) {
+                _selectedTemplateForChat.value = dao.getTemplateById(template.id)
+            }
+            _snackBarMessage.value = str(R.string.msg_template_options_saved)
         }
     }
 
@@ -952,51 +1009,150 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     // Document Scanning & OCR Workflows
-    fun processScannedPages(uris: List<Uri>, useAi: Boolean = true) {
-        if (uris.isEmpty()) return
-        viewModelScope.launch {
+
+    /** Language used to read scanned pages ("auto", "ar", "en", "fr"). */
+    val ocrLanguage: StateFlow<String> =
+        preferences.ocrLanguage.stateIn(viewModelScope, SharingStarted.Eagerly, OcrLanguage.AUTO.code)
+
+    private var scanJob: Job? = null
+
+    /**
+     * Recognizes the scanned / picked page images ON THE DEVICE (Tesseract). Nothing is sent to
+     * any AI provider. When a review is already open, the new pages are appended to it.
+     */
+    fun processScannedPages(uris: List<Uri>) {
+        if (uris.isEmpty() || _isScanning.value) return
+        val existing = _scannedReviewState.value
+        scanJob = viewModelScope.launch {
             _isScanning.value = true
             _scanProgress.value = str(R.string.recognizing_text)
             try {
-                var aiFailure: Exception? = null
-                val pages = ocrEngine.processPages(
+                val result = ocrEngine.processPages(
                     pageUris = uris,
-                    useAiEnhancement = useAi,
-                    onProgress = { pageIndex, total, msg ->
-                        _scanProgress.value = if (msg.isEmpty()) {
-                            str(R.string.scan_progress_ai, pageIndex, total)
-                        } else {
-                            str(R.string.scan_progress_page, pageIndex, total)
-                        }
-                    },
-                    onAiEnhancementFailed = { e -> if (aiFailure == null) aiFailure = e }
+                    language = OcrLanguage.fromCode(ocrLanguage.value),
+                    appLanguage = appLanguage.value,
+                    firstPageIndex = existing?.pages?.size ?: 0,
+                    onProgress = { page, total -> _scanProgress.value = str(R.string.scan_progress_page, page, total) }
                 )
-                aiFailure?.let { e ->
-                    val reason = if (e is AiException) aiErrorReason(e) else (e.message ?: e.javaClass.simpleName)
-                    _snackBarMessage.value = str(R.string.scan_ai_enhancement_failed, reason)
+                val current = _scannedReviewState.value
+                if (current != null) {
+                    // "Add page": keep the reviewed pages (and the user's corrections).
+                    _scannedReviewState.value = current.copy(
+                        pages = current.pages + result.pages,
+                        activePageIndex = current.pages.size
+                    )
+                } else {
+                    val autoTitle = result.pages.firstOrNull()?.recognizedTitle
+                        ?.takeIf { it.isNotBlank() && !it.startsWith("Page ") }
+                        ?: ("Document_" + java.text.SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(java.util.Date()))
+                    _scannedReviewState.value = ScannedDocumentReviewState(
+                        documentTitle = autoTitle,
+                        pages = result.pages,
+                        activePageIndex = 0,
+                        selectedTemplateId = null,
+                        isAiEnhanced = false
+                    )
                 }
-
-                if (pages.isEmpty()) {
-                    _snackBarMessage.value = str(R.string.scan_empty_error)
-                    _isScanning.value = false
-                    return@launch
-                }
-
-                val autoTitle = pages.firstOrNull()?.recognizedTitle?.takeIf { it.isNotBlank() && !it.startsWith("Page") && !it.startsWith("Scanned") }
-                    ?: ("Document_" + java.text.SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(java.util.Date()))
-
-                _scannedReviewState.value = ScannedDocumentReviewState(
-                    documentTitle = autoTitle,
-                    pages = pages,
-                    activePageIndex = 0,
-                    selectedTemplateId = null,
-                    isAiEnhanced = useAi && aiFailure == null
-                )
+                reportScanOutcome(result.pages, result.failedPages)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: OcrUnavailableException) {
+                Log.e(TAG, "OCR unavailable", e)
+                _snackBarMessage.value = str(R.string.scan_ocr_unavailable)
             } catch (e: Exception) {
-                _snackBarMessage.value = "OCR processing failed: ${e.message}"
+                reportError("processScannedPages", e)
             } finally {
                 _isScanning.value = false
                 _scanProgress.value = null
+            }
+        }
+    }
+
+    private fun reportScanOutcome(pages: List<ScannedPageData>, failedPages: Int) {
+        val empty = pages.count { it.rawText.isBlank() }
+        _snackBarMessage.value = when {
+            pages.isNotEmpty() && empty == pages.size -> str(R.string.scan_empty_error)
+            failedPages > 0 -> str(R.string.scan_pages_failed, failedPages)
+            empty > 0 -> str(R.string.scan_pages_empty, empty)
+            else -> return
+        }
+    }
+
+    /**
+     * Changes the OCR language and reads every page again with it. Text corrections made so far
+     * are replaced by the new recognition result.
+     */
+    fun changeOcrLanguage(code: String) {
+        val current = _scannedReviewState.value
+        if (_isScanning.value || code == ocrLanguage.value) return
+        scanJob = viewModelScope.launch {
+            preferences.setOcrLanguage(code)
+            if (current == null || current.pages.isEmpty()) return@launch
+            _isScanning.value = true
+            try {
+                val result = ocrEngine.processPages(
+                    pageUris = current.pages.map { Uri.parse(it.imageUriString) },
+                    language = OcrLanguage.fromCode(code),
+                    appLanguage = appLanguage.value,
+                    onProgress = { page, total -> _scanProgress.value = str(R.string.scan_progress_page, page, total) }
+                )
+                _scannedReviewState.value?.let { state ->
+                    _scannedReviewState.value = state.copy(pages = result.pages, isAiEnhanced = false)
+                }
+                reportScanOutcome(result.pages, result.failedPages)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: OcrUnavailableException) {
+                Log.e(TAG, "OCR unavailable", e)
+                _snackBarMessage.value = str(R.string.scan_ocr_unavailable)
+            } catch (e: Exception) {
+                reportError("changeOcrLanguage", e)
+            } finally {
+                _isScanning.value = false
+                _scanProgress.value = null
+            }
+        }
+    }
+
+    /**
+     * Optional AI clean-up of the recognized TEXT (never the images) by the default provider.
+     * Only called after the user confirmed the consent dialog on the review screen.
+     */
+    fun enhanceScannedTextWithAi() {
+        val state = _scannedReviewState.value ?: return
+        if (_isScanning.value || !aiRequestInFlight.compareAndSet(false, true)) return
+        scanJob = viewModelScope.launch {
+            _isScanning.value = true
+            try {
+                val pages = state.pages.toMutableList()
+                for ((index, page) in state.pages.withIndex()) {
+                    if (page.rawText.isBlank()) continue
+                    _scanProgress.value = str(R.string.scan_progress_ai, index + 1, state.pages.size)
+                    val improved = orchestrator.enhanceScannedPageText(page.rawText)
+                    pages[index] = ScannedDocumentStructureReconstructor.reconstructPage(
+                        pageIndex = index,
+                        imageUriString = page.imageUriString,
+                        rawText = improved,
+                        confidence = page.confidenceScore
+                    )
+                }
+                // Apply only if the user is still reviewing the same scan.
+                _scannedReviewState.value?.let { current ->
+                    if (current.pages.size == pages.size) {
+                        _scannedReviewState.value = current.copy(pages = pages, isAiEnhanced = true)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AiException) {
+                // The locally recognized text is kept unchanged.
+                _snackBarMessage.value = str(R.string.scan_ai_enhancement_failed, aiErrorReason(e))
+            } catch (e: Exception) {
+                reportError("enhanceScannedTextWithAi", e)
+            } finally {
+                _isScanning.value = false
+                _scanProgress.value = null
+                aiRequestInFlight.set(false)
             }
         }
     }
@@ -1009,8 +1165,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             val updatedPage = ScannedDocumentStructureReconstructor.reconstructPage(
                 pageIndex = pageIndex,
                 imageUriString = oldPage.imageUriString,
-                rawText = updatedText,
-                lines = emptyList()
+                rawText = updatedText
             )
             currentPages[pageIndex] = updatedPage
             _scannedReviewState.value = current.copy(pages = currentPages)
@@ -1037,7 +1192,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
         val currentPages = current.pages.toMutableList()
         if (pageIndex in currentPages.indices) {
-            currentPages.removeAt(pageIndex)
+            deleteTemporaryScanImages(listOf(currentPages.removeAt(pageIndex)))
             val nextIndex = (pageIndex - 1).coerceAtLeast(0)
             _scannedReviewState.value = current.copy(pages = currentPages, activePageIndex = nextIndex)
         }
@@ -1049,12 +1204,28 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun dismissScanReview() {
+        scanJob?.cancel()
+        val pages = _scannedReviewState.value?.pages.orEmpty()
         _scannedReviewState.value = null
+        deleteTemporaryScanImages(pages)
+    }
+
+    /** Scanner images are temporary: remove them once the review is finished or discarded. */
+    private fun deleteTemporaryScanImages(pages: List<ScannedPageData>) {
+        if (pages.isEmpty()) return
+        val uris = pages.map { it.imageUriString }
+        viewModelScope.launch(Dispatchers.IO) { PageImageLoader.deleteTemporaryScans(context, uris) }
     }
 
     fun generateDocxFromScannedDocument() {
         val reviewState = _scannedReviewState.value ?: return
         val sessionId = _currentSessionId.value
+        if (_isGenerating.value || _isScanning.value) return
+        if (reviewState.pages.all { it.rawText.isBlank() }) {
+            // Never produce an empty document and call it a scan result.
+            _snackBarMessage.value = str(R.string.scan_empty_error)
+            return
+        }
 
         viewModelScope.launch {
             _isGenerating.value = true
@@ -1109,7 +1280,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     pageOrSlideCount = reviewState.pages.size,
                     templateId = templateProfile.templateId,
                     templateName = templateProfile.name,
-                    providerUsed = "OCR",
+                    providerUsed = LOCAL_OCR_SOURCE,
                     summary = "Scanned Document (${reviewState.pages.size} pages) • ${docxFile.length() / 1024} KB",
                     textContent = allText,
                     isOrchestratorVerified = true
@@ -1158,6 +1329,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
                 _snackBarMessage.value = str(R.string.msg_generated_copied)
                 _scannedReviewState.value = null
+                deleteTemporaryScanImages(reviewState.pages)
             } catch (e: CancellationException) {
                 if (!documentSaved) withContext(NonCancellable + Dispatchers.IO) { createdFile?.delete() }
                 throw e

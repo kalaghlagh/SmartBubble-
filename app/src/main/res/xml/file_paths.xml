@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Only the folders whose files the app opens or shares are exposed through the FileProvider.
+     Templates, the database, preferences and credentials are never shareable. -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <files-path name="internal_files" path="." />
-    <external-files-path name="external_files" path="." />
-    <cache-path name="internal_cache" path="." />
+    <files-path name="documents" path="generated_docs/" />
+    <cache-path name="pdf_exports" path="pdf_exports/" />
 </paths>

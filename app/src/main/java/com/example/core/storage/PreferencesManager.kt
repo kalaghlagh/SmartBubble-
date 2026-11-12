@@ -23,6 +23,7 @@ class PreferencesManager(private val context: Context) {
         val KEY_PUSH_TO_TALK = booleanPreferencesKey("push_to_talk_enabled")
         val KEY_WAKE_WORD = booleanPreferencesKey("wake_word_enabled")
         val KEY_VOICE_LANG = stringPreferencesKey("voice_language")
+        val KEY_OCR_LANG = stringPreferencesKey("ocr_language") // "auto", "ar", "en", "fr"
         val KEY_VOICE_SPEED = floatPreferencesKey("voice_speed")
         val KEY_DEFAULT_WORD_TEMPLATE = stringPreferencesKey("default_word_template_id")
         val KEY_DEFAULT_PPT_TEMPLATE = stringPreferencesKey("default_ppt_template_id")
@@ -86,6 +87,15 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun setVoiceLanguage(language: String) {
         context.dataStore.edit { it[KEY_VOICE_LANG] = language }
+    }
+
+    /** Language used to read scanned pages: "auto", "ar", "en" or "fr". */
+    val ocrLanguage: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_OCR_LANG] ?: "auto"
+    }
+
+    suspend fun setOcrLanguage(language: String) {
+        context.dataStore.edit { it[KEY_OCR_LANG] = language }
     }
 
     val activeConversationId: Flow<String?> = context.dataStore.data.map { prefs ->

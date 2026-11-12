@@ -5,14 +5,92 @@ import com.example.document.model.WordDocumentModel
 import com.example.document.model.WordSection
 import com.example.document.model.WordTable
 
+/** One recognized text line with its position on the page image. */
 data class OcrLineInfo(
     val text: String,
     val top: Int = 0,
     val left: Int = 0,
     val width: Int = 0,
     val height: Int = 0,
-    val isRtl: Boolean = false
+    val isRtl: Boolean = false,
+    /** The OCR engine marked this line as the first line of a paragraph or block. */
+    val startsParagraph: Boolean = false
 )
+
+/**
+ * Turns recognized lines into editable text with the conventions the review screen uses:
+ * one line of text = one paragraph, a blank line between blocks, table rows as "a | b | c".
+ * Pure Kotlin (unit-testable).
+ */
+object OcrTextAssembler {
+
+    private val COLUMN_GAP = Regex("""\s{3,}|\t+""")
+    private val BULLET = Regex("""^([•●▪◦*·\-–]|\d{1,3}[.)]|[\u0660-\u0669]{1,3}[.)\-])\s+.*""")
+
+    private fun cells(line: String): List<String> = line.trim().split(COLUMN_GAP).filter { it.isNotBlank() }
+
+    fun assemble(lines: List<OcrLineInfo>): String {
+        val texts = lines.map { it.text.trimEnd() }
+        val out = StringBuilder()
+        var paragraph = StringBuilder()
+
+        fun flush() {
+            if (paragraph.isNotBlank()) out.append(paragraph.toString().trim()).append("\n\n")
+            paragraph = StringBuilder()
+        }
+
+        var i = 0
+        while (i < lines.size) {
+            val text = texts[i].trim()
+            if (text.isEmpty()) { i++; continue }
+
+            // A table needs at least two consecutive lines that both split into columns.
+            val columns = cells(texts[i]).size
+            if (columns >= 2 && i + 1 < lines.size && cells(texts[i + 1]).size == columns) {
+                flush()
+                val first = i
+                while (i < lines.size) {
+                    val count = cells(texts[i]).size
+                    // Rows may miss a cell; a new paragraph with a different shape ends the table.
+                    val sameTable = count >= 2 && kotlin.math.abs(count - columns) <= 1 &&
+                        (i == first || count == columns || !lines[i].startsParagraph)
+                    if (!sameTable) break
+                    out.append(cells(texts[i]).joinToString(" | ")).append('\n')
+                    i++
+                }
+                out.append('\n')
+                continue
+            }
+
+            val single = text.replace(Regex("""\s{2,}"""), " ")
+            if (BULLET.matches(single)) {
+                flush()
+                out.append(single).append('\n')
+                // Keep following list items together; a blank line is added when the list ends.
+                val next = texts.getOrNull(i + 1)?.trim().orEmpty()
+                if (!BULLET.matches(next)) out.append('\n')
+                i++
+                continue
+            }
+
+            if (lines[i].startsParagraph) flush()
+            if (paragraph.isEmpty()) {
+                paragraph.append(single)
+            } else if (paragraph.endsWith("-") && paragraph.length >= 2 &&
+                paragraph[paragraph.length - 2].isLetter() && single.first().isLowerCase()
+            ) {
+                // Word hyphenated across lines.
+                paragraph.setLength(paragraph.length - 1)
+                paragraph.append(single)
+            } else {
+                paragraph.append(' ').append(single)
+            }
+            i++
+        }
+        flush()
+        return out.toString().trim()
+    }
+}
 
 object ScannedDocumentStructureReconstructor {
 
@@ -20,104 +98,116 @@ object ScannedDocumentStructureReconstructor {
         return text.any { it in '\u0600'..'\u06FF' }
     }
 
+    private val BULLET = Regex("""^([•●▪◦*·\-–]|\d{1,3}[.)]|[\u0660-\u0669أ-ي]{1,3}[.)\-])\s+(.*)""")
+
+    private fun isHeading(line: String): Boolean {
+        if (line.startsWith("#")) return true
+        if (line.length !in 3..60) return false
+        if (line.endsWith(":") || line.endsWith("：")) return true
+        val letters = line.filter { it.isLetter() }
+        // ALL-CAPS Latin line (Arabic has no case, so it never matches this rule).
+        return letters.length >= 3 && letters.all { it.isUpperCase() }
+    }
+
     /**
-     * Parses raw extracted OCR text and lines into structured document elements:
-     * title, headings, paragraphs, bullet points, numbered lists, and tables.
+     * Parses page text into structured elements in reading order. Conventions (also what the
+     * user edits on the review screen): one line = one paragraph; lines starting with a bullet
+     * or number = list items; lines containing " | " or tabs = table rows; a short line ending
+     * with ":" (or in capitals, or starting with #) = heading.
+     *
+     * @param confidence OCR engine confidence 0..1; null when the text was typed/edited by the user
      */
     fun reconstructPage(
         pageIndex: Int,
         imageUriString: String,
         rawText: String,
-        lines: List<OcrLineInfo> = emptyList()
+        lines: List<OcrLineInfo> = emptyList(),
+        confidence: Float? = null
     ): ScannedPageData {
         val cleanRawText = rawText.trim()
-        val isArabic = isArabicText(cleanRawText)
-
         if (cleanRawText.isBlank()) {
             return ScannedPageData(
                 pageIndex = pageIndex,
                 imageUriString = imageUriString,
                 recognizedTitle = "Page ${pageIndex + 1}",
-                heading = "",
                 rawText = "",
-                paragraphs = emptyList(),
-                bulletPoints = emptyList(),
-                table = null,
                 isArabicDetected = false,
                 confidenceScore = 0.0f
             )
         }
 
-        val textLines = if (lines.isNotEmpty()) lines.map { it.text.trim() } else cleanRawText.lines().map { it.trim() }
-        val filteredLines = textLines.filter { it.isNotBlank() }
+        val textLines = cleanRawText.lines().map { it.trim() }.filter { it.isNotBlank() }
 
         var detectedTitle = ""
-        var currentHeading = ""
-        val paragraphs = mutableListOf<String>()
-        val bulletPoints = mutableListOf<String>()
-        val tableLines = mutableListOf<String>()
+        val sections = mutableListOf<WordSection>()
+        var heading = ""
+        var paragraphs = mutableListOf<String>()
+        var bullets = mutableListOf<String>()
+        var tableLines = mutableListOf<String>()
 
-        var isCollectingTable = false
-
-        for ((idx, line) in filteredLines.withIndex()) {
-            // Check for title candidate on the very first few lines
-            if (idx == 0 && (line.length < 90 || line.startsWith("#"))) {
-                detectedTitle = line.removePrefix("#").trim()
-                continue
+        fun closeSection() {
+            val table = if (tableLines.size >= 2) parseTableFromLines(tableLines) else null
+            // A lone "table" line is ordinary text.
+            if (table == null) paragraphs.addAll(tableLines)
+            if (heading.isNotBlank() || paragraphs.isNotEmpty() || bullets.isNotEmpty() || table != null) {
+                sections += WordSection(
+                    heading = heading,
+                    paragraphs = paragraphs,
+                    bulletPoints = bullets,
+                    isPageBreakBefore = false,
+                    isRtl = null, // direction is decided per paragraph by the document engine
+                    table = table
+                )
             }
-
-            // Check if line is part of a table (contains '|' or tab or multiple comma-aligned entries)
-            val isTableLine = line.contains("|") || line.contains("\t") ||
-                    (line.count { it == ',' } >= 2 && !line.endsWith("."))
-
-            if (isTableLine) {
-                isCollectingTable = true
-                tableLines.add(line)
-                continue
-            } else if (isCollectingTable) {
-                // Table ended
-                isCollectingTable = false
-            }
-
-            // Check for Headings
-            if (line.startsWith("##") || (line.length < 60 && (line.endsWith(":") || (line.all { it.isUpperCase() || it.isWhitespace() || it.isDigit() } && line.length > 3)))) {
-                if (currentHeading.isBlank()) {
-                    currentHeading = line.removePrefix("##").trim()
-                } else {
-                    paragraphs.add(line)
-                }
-                continue
-            }
-
-            // Check for Bullet points or numbered lists
-            val isBullet = line.startsWith("•") || line.startsWith("-") || line.startsWith("*") ||
-                    line.matches("^[0-9]+[\\.\\)]\\s+.*".toRegex()) ||
-                    line.matches("^[أ-ي0-9]+[\\-\\)]\\s+.*".toRegex())
-
-            if (isBullet) {
-                val cleanBullet = line.replace("^[•\\-\\*0-9أ-ي]+[\\.\\)\\-]\\s*".toRegex(), "").trim()
-                bulletPoints.add(cleanBullet.ifBlank { line })
-            } else {
-                paragraphs.add(line)
-            }
+            heading = ""
+            paragraphs = mutableListOf()
+            bullets = mutableListOf()
+            tableLines = mutableListOf()
         }
 
-        // Reconstruct Table if detected
-        val detectedTable = if (tableLines.size >= 2) {
-            parseTableFromLines(tableLines)
-        } else null
+        for ((idx, line) in textLines.withIndex()) {
+            // The first short line of the first page is the document title.
+            if (pageIndex == 0 && idx == 0 && line.length < 90 && !line.contains("|")) {
+                detectedTitle = line.trimStart('#').trim()
+                continue
+            }
+            val isTableLine = line.contains("|") || line.contains("\t")
+            val bullet = BULLET.matchEntire(line)
+            when {
+                isTableLine -> tableLines.add(line)
+                else -> {
+                    // A document engine section renders paragraphs, then list items, then the
+                    // table. Start a new section whenever that order would change the text order.
+                    if (tableLines.isNotEmpty()) closeSection()
+                    when {
+                        bullet != null -> bullets.add(bullet.groupValues[2].trim().ifBlank { line })
+                        isHeading(line) -> {
+                            closeSection()
+                            heading = line.trimStart('#').trim()
+                        }
+                        else -> {
+                            if (bullets.isNotEmpty()) closeSection()
+                            paragraphs.add(line)
+                        }
+                    }
+                }
+            }
+        }
+        closeSection()
 
+        val hasContent = sections.isNotEmpty() || detectedTitle.isNotBlank()
         return ScannedPageData(
             pageIndex = pageIndex,
             imageUriString = imageUriString,
             recognizedTitle = detectedTitle.ifBlank { "Page ${pageIndex + 1}" },
-            heading = currentHeading,
+            heading = sections.firstOrNull { it.heading.isNotBlank() }?.heading.orEmpty(),
             rawText = cleanRawText,
-            paragraphs = paragraphs,
-            bulletPoints = bulletPoints,
-            table = detectedTable,
-            isArabicDetected = isArabic,
-            confidenceScore = if (paragraphs.isNotEmpty() || detectedTable != null) 0.95f else 0.40f
+            paragraphs = sections.flatMap { it.paragraphs },
+            bulletPoints = sections.flatMap { it.bulletPoints },
+            table = sections.firstNotNullOfOrNull { it.table },
+            isArabicDetected = isArabicText(cleanRawText),
+            confidenceScore = confidence ?: if (hasContent) 1.0f else 0.0f,
+            sections = sections
         )
     }
 
@@ -127,7 +217,6 @@ object ScannedDocumentStructureReconstructor {
             val delimiter = when {
                 line.contains("|") -> "\\|".toRegex()
                 line.contains("\t") -> "\t".toRegex()
-                line.contains(",") -> ",".toRegex()
                 else -> "\\s{2,}".toRegex()
             }
             val cells = line.split(delimiter).map { it.trim() }.filter { it.isNotBlank() }
@@ -161,17 +250,22 @@ object ScannedDocumentStructureReconstructor {
         pages: List<ScannedPageData>
     ): WordDocumentModel {
         val allSections = mutableListOf<WordSection>()
-        var primaryTable: WordTable? = null
 
         for ((idx, page) in pages.withIndex()) {
             val isPageBreak = idx > 0
-            val sectionHeading = page.heading.ifBlank {
-                if (pages.size > 1) "Page ${idx + 1}" else ""
+            if (page.sections.isNotEmpty()) {
+                // Reading order preserved; each scanned page starts on a new page.
+                page.sections.forEachIndexed { i, section ->
+                    allSections.add(if (i == 0 && isPageBreak) section.copy(isPageBreakBefore = true) else section)
+                }
+                continue
             }
-
+            if (page.paragraphs.isEmpty() && page.bulletPoints.isEmpty() && page.table == null && page.heading.isBlank()) {
+                continue // empty page: nothing to add
+            }
             allSections.add(
                 WordSection(
-                    heading = sectionHeading,
+                    heading = page.heading,
                     paragraphs = page.paragraphs,
                     bulletPoints = page.bulletPoints,
                     isPageBreakBefore = isPageBreak,
@@ -179,17 +273,13 @@ object ScannedDocumentStructureReconstructor {
                     table = page.table
                 )
             )
-
-            if (primaryTable == null && page.table != null) {
-                primaryTable = page.table
-            }
         }
 
         return WordDocumentModel(
             title = title.ifBlank { "Scanned Document" },
-            subtitle = if (pages.size > 1) "${pages.size} Scanned Pages" else "",
-            organization = "SmartBubble Office",
-            date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date()),
+            subtitle = "",
+            organization = "",
+            date = "", // a scanned document keeps its own content; no generated date is added
             sections = allSections,
             table = null // tables are bound per section
         )

@@ -16,8 +16,13 @@ android {
     applicationId = "com.aistudio.smartbubble.prod"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    // Release builds can set these from CI (see .github/workflows/Release-apk.yml). Every
+    // upload to a store needs a higher versionCode than the previous one.
+    versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
+    versionName = System.getenv("VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.0"
+
+    // Native OCR libraries: ship the ABIs real devices and emulators use (32-bit x86 is omitted).
+    ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -88,11 +93,13 @@ googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.W
 // app/schemas and future migrations can be verified against it. Commit the generated JSON.
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
+// Removed because nothing in the app uses them (smaller APK, smaller attack surface): Firebase AI
+// and App Check (including the debug provider), Retrofit, the OkHttp logging interceptor and
+// ML Kit text recognition (replaced by on-device Tesseract, which also reads Arabic).
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
-  implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   // implementation(libs.androidx.camera.camera2)
@@ -114,8 +121,6 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
-  implementation(libs.converter.moshi)
-  implementation(libs.firebase.ai)
   // Uncomment to use Firestore:
   // implementation(libs.firebase.firestore)
 
@@ -125,17 +130,14 @@ dependencies {
   // implementation(libs.androidx.credentials)
   // implementation(libs.androidx.credentials.play.services)
   // implementation(libs.googleid)
-  implementation(libs.firebase.appcheck.recaptcha)
-  implementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
-  implementation(libs.retrofit)
   implementation(libs.play.services.mlkit.document.scanner)
-  implementation(libs.play.services.mlkit.text.recognition)
+  // On-device OCR (Arabic, English, French) - Tesseract 5 via Tesseract4Android, Apache 2.0.
+  implementation(libs.tesseract4android)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)

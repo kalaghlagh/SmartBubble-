@@ -37,7 +37,18 @@ data class TemplateProfile(
     val spreadsheetDefaultFont: String = "Calibri",
     val isAnalysisComplete: Boolean = true,
     val extractedPropertiesSummary: String = "Fonts, Margins, Colors, Table Styles",
-    val version: Int = 1
+    val version: Int = 1,
+    /**
+     * Generation setting: use the uploaded template FILE itself (its styles, headers/footers,
+     * masters, layouts, theme). When false only the colors/fonts extracted into this profile are
+     * applied to a newly built document.
+     */
+    val useTemplateLayout: Boolean = true,
+    /**
+     * Generation setting: keep the content that is already in the template (text, slides,
+     * sheets) and add the generated content after it. When false that content is replaced.
+     */
+    val keepTemplateContent: Boolean = false
 ) {
     fun toJson(): String {
         val map = linkedMapOf<String, String>()
@@ -71,6 +82,8 @@ data class TemplateProfile(
         map["isAnalysisComplete"] = isAnalysisComplete.toString()
         map["extractedPropertiesSummary"] = extractedPropertiesSummary
         map["version"] = version.toString()
+        map["useTemplateLayout"] = useTemplateLayout.toString()
+        map["keepTemplateContent"] = keepTemplateContent.toString()
 
         return map.entries.joinToString(prefix = "{", postfix = "}", separator = ",") { (k, v) ->
             "\"$k\":\"${v.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")}\""
@@ -118,7 +131,9 @@ data class TemplateProfile(
                     spreadsheetDefaultFont = map["spreadsheetDefaultFont"] ?: "Calibri",
                     isAnalysisComplete = map["isAnalysisComplete"]?.toBooleanStrictOrNull() ?: true,
                     extractedPropertiesSummary = map["extractedPropertiesSummary"] ?: "Corporate Identity Extracted",
-                    version = map["version"]?.toIntOrNull() ?: 1
+                    version = map["version"]?.toIntOrNull() ?: 1,
+                    useTemplateLayout = map["useTemplateLayout"]?.toBooleanStrictOrNull() ?: true,
+                    keepTemplateContent = map["keepTemplateContent"]?.toBooleanStrictOrNull() ?: false
                 )
             } catch (e: Exception) {
                 defaultProfile()

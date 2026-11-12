@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.model.TemplateEntity
+import com.example.template.domain.TemplateProfile
 import com.example.ui.SmartBubbleViewModel
 import com.example.ui.components.TemplatePreviewDialog
 import java.text.SimpleDateFormat
@@ -60,6 +62,8 @@ fun TemplatesScreen(
     var pendingUploadUri by remember { mutableStateOf<Uri?>(null) }
     var templateNameInput by remember { mutableStateOf("") }
     var showUploadDialog by remember { mutableStateOf(false) }
+
+    var templateForOptions by remember { mutableStateOf<TemplateEntity?>(null) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -275,6 +279,7 @@ fun TemplatesScreen(
                         onSetDefault = { viewModel.setDefaultTemplate(template) },
                         onRemoveDefault = { viewModel.removeDefaultTemplate(template) },
                         onDelete = { viewModel.deleteTemplate(template) },
+                        onOptions = { templateForOptions = template },
                         onSelectForChat = {
                             viewModel.selectTemplateForChat(template)
                             viewModel.setNavTab(com.example.ui.AppNavTab.CHAT)
@@ -283,6 +288,18 @@ fun TemplatesScreen(
                 }
             }
         }
+    }
+
+    // Template generation settings dialog
+    templateForOptions?.let { target ->
+        TemplateOptionsDialog(
+            template = target,
+            onDismiss = { templateForOptions = null },
+            onSave = { useLayout, keepContent ->
+                viewModel.updateTemplateOptions(target, useLayout, keepContent)
+                templateForOptions = null
+            }
+        )
     }
 
     // Duplicate Template naming dialog
@@ -416,6 +433,7 @@ fun TemplateItemCard(
     template: TemplateEntity,
     onPreview: () -> Unit,
     onDuplicate: () -> Unit,
+    onOptions: () -> Unit = {},
     onSetDefault: () -> Unit,
     onRemoveDefault: () -> Unit,
     onDelete: () -> Unit,
@@ -593,6 +611,16 @@ fun TemplateItemCard(
                         modifier = Modifier.testTag("menu_duplicate_${template.id}")
                     )
 
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.template_options_title)) },
+                        leadingIcon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
+                        onClick = {
+                            menuExpanded = false
+                            onOptions()
+                        },
+                        modifier = Modifier.testTag("menu_options_${template.id}")
+                    )
+
                     if (!isDefault) {
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.template_set_default)) },
@@ -629,4 +657,86 @@ fun TemplateItemCard(
             }
         }
     }
+}
+
+/**
+ * Generation settings of one template. Only options the document engines actually honor are
+ * offered, with wording specific to the template's file type.
+ */
+@Composable
+fun TemplateOptionsDialog(
+    template: TemplateEntity,
+    onDismiss: () -> Unit,
+    onSave: (useTemplateLayout: Boolean, keepTemplateContent: Boolean) -> Unit
+) {
+    val profile = remember(template.id, template.profileJson) { TemplateProfile.fromJson(template.profileJson) }
+    var useLayout by remember(template.id) { mutableStateOf(profile.useTemplateLayout) }
+    var keepContent by remember(template.id) { mutableStateOf(profile.keepTemplateContent) }
+
+    val (layoutDesc, keepDesc) = when (template.fileType.uppercase()) {
+        "PPTX" -> R.string.template_opt_layout_pptx to R.string.template_opt_keep_pptx
+        "XLSX" -> R.string.template_opt_layout_xlsx to R.string.template_opt_keep_xlsx
+        else -> R.string.template_opt_layout_docx to R.string.template_opt_keep_docx
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.template_options_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = template.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.template_opt_layout), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = stringResource(layoutDesc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Switch(
+                        checked = useLayout,
+                        onCheckedChange = { useLayout = it },
+                        modifier = Modifier.testTag("template_opt_layout_switch")
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.template_opt_keep), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = stringResource(keepDesc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Switch(
+                        checked = keepContent && useLayout,
+                        onCheckedChange = { keepContent = it },
+                        // Existing content can only be kept when the template file itself is used.
+                        enabled = useLayout,
+                        modifier = Modifier.testTag("template_opt_keep_switch")
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.template_opt_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(useLayout, keepContent && useLayout) }) {
+                Text(stringResource(R.string.action_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        }
+    )
 }

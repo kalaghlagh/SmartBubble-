@@ -19,3 +19,19 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# ---------------------------------------------------------------------------------------------
+# Release builds currently have minification OFF (isMinifyEnabled = false in build.gradle.kts).
+# The rules below are what R8 needs if it is turned on; enable it only after a release build
+# has been verified on a device.
+# ---------------------------------------------------------------------------------------------
+
+# Tesseract4Android: classes and members are called from native code (JNI).
+-keep class com.googlecode.tesseract.android.** { *; }
+-keep class com.googlecode.leptonica.android.** { *; }
+
+# Room entities / DAOs are referenced by generated code.
+-keep class com.example.data.model.** { *; }
+
+# Keep line numbers for readable crash stack traces.
+-keepattributes SourceFile,LineNumberTable

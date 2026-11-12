@@ -35,7 +35,13 @@ data class ScannedPageData(
     val bulletPoints: List<String> = emptyList(),
     val table: WordTable? = null,
     val isArabicDetected: Boolean = false,
-    val confidenceScore: Float = 0.95f
+    /** Recognition confidence 0..1 reported by the OCR engine (1.0 for text typed by the user). */
+    val confidenceScore: Float = 0.95f,
+    /**
+     * The page content in reading order (headings, paragraphs, lists, tables). When present it
+     * is used for document generation instead of the flattened fields above.
+     */
+    val sections: List<WordSection> = emptyList()
 )
 
 data class ScannedDocumentReviewState(
