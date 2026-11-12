@@ -43,7 +43,7 @@ class DocxEngine {
         }
 
         // 1. Use the uploaded template file when one is provided
-        if (originalTemplateFile != null && originalTemplateFile.exists() && originalTemplateFile.length() > 0) {
+        if (template.useTemplateLayout && originalTemplateFile != null && originalTemplateFile.exists() && originalTemplateFile.length() > 0) {
             val reason = try {
                 if (generateFromExistingTemplate(originalTemplateFile, model, outputFile, template)) {
                     return EngineResult(outputFile, templateApplied = true)
@@ -122,14 +122,17 @@ class DocxEngine {
             replaceTextPlaceholders(withBody, model)
         } else {
             val hasTextPlaceholders = listOf("{{TITLE}}", "[TITLE]", "{{DATE}}").any { documentXmlStr.contains(it) }
-            if (hasTextPlaceholders) {
+            if (hasTextPlaceholders || templateProfile.keepTemplateContent) {
                 // Keep the template body (with its filled-in placeholders) and append the content.
+                // Without a title placeholder the generated title is added with the content.
                 val filled = replaceTextPlaceholders(documentXmlStr, model)
                 val close = filled.lastIndexOf("</w:body>")
                 val inner = filled.substring(0, close)
                 val sect = inner.lastIndexOf("<w:sectPr")
                 val insertAt = if (sect >= 0 && inner.indexOf("</w:p>", sect) < 0) sect else close
-                filled.substring(0, insertAt) + buildTemplateStyledBody(model, styleIds, includeTitle = false) + filled.substring(insertAt)
+                filled.substring(0, insertAt) +
+                    buildTemplateStyledBody(model, styleIds, includeTitle = !hasTextPlaceholders) +
+                    filled.substring(insertAt)
             } else {
                 // Keep the template's root element (all namespace declarations) and section
                 // properties; replace only the body content with the generated content.

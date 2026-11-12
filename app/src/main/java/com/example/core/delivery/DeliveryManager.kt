@@ -44,7 +44,7 @@ class DeliveryManager(private val context: Context) {
                 file
             )
         } catch (e: Exception) {
-            Uri.fromFile(file)
+            null // never fall back to a file:// URI (it would expose a private path)
         }
 
         if (openImmediately) {

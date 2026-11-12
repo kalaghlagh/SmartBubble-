@@ -105,6 +105,9 @@ interface TemplateDao {
     @Query("UPDATE templates SET isDefaultExcel = :isDefault WHERE id = :id")
     suspend fun setDefaultExcelFlag(id: String, isDefault: Boolean)
 
+    @Query("UPDATE templates SET profileJson = :profileJson, lastModified = :lastModified WHERE id = :id")
+    suspend fun updateProfileJson(id: String, profileJson: String, lastModified: Long = System.currentTimeMillis())
+
     @Query("UPDATE templates SET fileSize = :fileSize WHERE id = :id")
     suspend fun updateFileSize(id: String, fileSize: Long)
 }
@@ -162,6 +165,10 @@ interface ChatDao {
     /** Conversation history used as AI context (oldest first). */
     @Query("SELECT * FROM chat_messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")
     suspend fun getMessagesForSessionOnce(sessionId: String): List<ChatMessageEntity>
+
+    /** The latest [limit] messages of a conversation, oldest first. */
+    @Query("SELECT * FROM (SELECT * FROM chat_messages WHERE sessionId = :sessionId ORDER BY timestamp DESC LIMIT :limit) ORDER BY timestamp ASC")
+    suspend fun getRecentMessagesForSession(sessionId: String, limit: Int): List<ChatMessageEntity>
 }
 
 @Dao

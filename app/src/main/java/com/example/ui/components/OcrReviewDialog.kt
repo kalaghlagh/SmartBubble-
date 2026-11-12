@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.horizontalScroll
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.model.TemplateEntity
@@ -45,7 +46,14 @@ fun OcrReviewDialog(
     onAddPage: () -> Unit,
     onSelectTemplate: (String?) -> Unit,
     onGenerateDocx: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** Current on-device OCR language: "auto", "ar", "en" or "fr". */
+    ocrLanguage: String = "auto",
+    onChangeOcrLanguage: (String) -> Unit = {},
+    /** Name of the default AI provider, or blank when none is configured. */
+    aiProviderName: String = "",
+    /** Called only after the user confirmed sending the recognized text to the AI provider. */
+    onEnhanceWithAi: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val pages = reviewState.pages
@@ -58,6 +66,26 @@ fun OcrReviewDialog(
     }
 
     var showTemplateMenu by remember { mutableStateOf(false) }
+    var showAiConsent by remember { mutableStateOf(false) }
+
+    if (showAiConsent) {
+        AlertDialog(
+            onDismissRequest = { showAiConsent = false },
+            title = { Text(stringResource(R.string.scan_consent_title)) },
+            text = { Text(stringResource(R.string.scan_consent_desc, aiProviderName)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showAiConsent = false
+                    onEnhanceWithAi()
+                }) { Text(stringResource(R.string.scan_consent_agree)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAiConsent = false }) {
+                    Text(stringResource(R.string.scan_consent_local_only))
+                }
+            }
+        )
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -190,6 +218,53 @@ fun OcrReviewDialog(
                         )
                     }
                 )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // On-device OCR language (changing it reads all pages again)
+                Text(
+                    text = stringResource(R.string.scan_ocr_language),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(
+                        "auto" to stringResource(R.string.scan_ocr_language_auto),
+                        "ar" to "العربية",
+                        "en" to "English",
+                        "fr" to "Français"
+                    ).forEach { (code, label) ->
+                        FilterChip(
+                            selected = ocrLanguage == code,
+                            onClick = { onChangeOcrLanguage(code) },
+                            label = { Text(label, fontSize = 12.sp) },
+                            modifier = Modifier.testTag("ocr_language_$code")
+                        )
+                    }
+                }
+                Text(
+                    text = stringResource(R.string.scan_ocr_on_device_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (aiProviderName.isNotBlank()) {
+                    TextButton(
+                        onClick = { showAiConsent = true },
+                        modifier = Modifier.testTag("ocr_ai_cleanup_button")
+                    ) {
+                        Text(
+                            stringResource(
+                                if (reviewState.isAiEnhanced) R.string.scan_ai_cleanup_done else R.string.scan_ai_cleanup
+                            )
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -458,7 +533,7 @@ fun OcrReviewDialog(
                         .heightIn(min = 220.dp)
                         .testTag("ocr_extracted_text_editor"),
                     shape = RoundedCornerShape(12.dp),
-                    placeholder = { Text("Enter or edit extracted text here…") }
+                    placeholder = { Text(stringResource(R.string.scan_text_placeholder)) }
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))

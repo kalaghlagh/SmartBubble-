@@ -40,9 +40,9 @@ class PptxEngine {
             outputFile.parentFile?.mkdirs()
         }
 
-        if (originalTemplateFile != null && originalTemplateFile.exists() && originalTemplateFile.length() > 0) {
+        if (template.useTemplateLayout && originalTemplateFile != null && originalTemplateFile.exists() && originalTemplateFile.length() > 0) {
             val reason = try {
-                if (generateFromExistingTemplate(originalTemplateFile, model, outputFile)) {
+                if (generateFromExistingTemplate(originalTemplateFile, model, outputFile, template.keepTemplateContent)) {
                     return EngineResult(outputFile, templateApplied = true)
                 }
                 "the template is not a PowerPoint (PPTX) presentation with slide layouts"
@@ -66,7 +66,12 @@ class PptxEngine {
     private data class LayoutInfo(val path: String, val type: String?, val placeholders: List<Placeholder>)
     private data class Placeholder(val type: String?, val idx: String?)
 
-    private fun generateFromExistingTemplate(templateFile: File, model: PresentationModel, outputFile: File): Boolean {
+    private fun generateFromExistingTemplate(
+        templateFile: File,
+        model: PresentationModel,
+        outputFile: File,
+        keepExistingSlides: Boolean
+    ): Boolean {
         val entries = readZip(templateFile)
         var presentationXml = entries["ppt/presentation.xml"]?.let { String(it, Charsets.UTF_8) } ?: return false
         var presentationRels = entries["ppt/_rels/presentation.xml.rels"]?.let { String(it, Charsets.UTF_8) } ?: return false
@@ -84,19 +89,33 @@ class PptxEngine {
             ?: layouts.firstOrNull { l -> l.placeholders.any { isBodyPlaceholder(it) } && l.placeholders.any { isTitlePlaceholder(it) } }
             ?: layouts.first()
 
-        // 1. Remove the template's own slides (and parts that only belong to them).
-        val removedPrefixes = listOf("ppt/slides/", "ppt/notesSlides/", "ppt/comments/")
-        entries.keys.filter { key -> removedPrefixes.any { key.startsWith(it) } }.forEach { entries.remove(it) }
-        contentTypes = contentTypes.replace(
-            Regex("""<Override[^>]*PartName="/ppt/(slides|notesSlides|comments)/[^"]*"[^>]*/>"""), ""
-        )
-        presentationRels = presentationRels.replace(
-            Regex("""<Relationship[^>]*Type="[^"]*/relationships/slide"[^>]*/>"""), ""
-        )
-        // Custom shows and slide sections reference the removed slides.
-        presentationXml = presentationXml
-            .replace(Regex("""<p:custShowLst>[\s\S]*?</p:custShowLst>"""), "")
-            .replace(Regex("""<p:ext uri="\{521415D9-36F7-43E2-AB2F-B90AF26B5E84\}">[\s\S]*?</p:ext>"""), "")
+        // 1. Unless the user chose to keep them, remove the template's own slides (and the parts
+        //    that only belong to them). New slides are numbered after any slides that stay.
+        var firstSlideNumber = 1
+        var nextSlideId = 256
+        if (keepExistingSlides) {
+            firstSlideNumber = 1 + (entries.keys.mapNotNull {
+                Regex("""ppt/slides/slide(\d+)\.xml""").matchEntire(it)?.groupValues?.get(1)?.toIntOrNull()
+            }.maxOrNull() ?: 0)
+            nextSlideId = 1 + maxOf(
+                255,
+                Regex("""<p:sldId\b[^>]*\bid="(\d+)"""").findAll(presentationXml)
+                    .mapNotNull { it.groupValues[1].toIntOrNull() }.maxOrNull() ?: 255
+            )
+        } else {
+            val removedPrefixes = listOf("ppt/slides/", "ppt/notesSlides/", "ppt/comments/")
+            entries.keys.filter { key -> removedPrefixes.any { key.startsWith(it) } }.forEach { entries.remove(it) }
+            contentTypes = contentTypes.replace(
+                Regex("""<Override[^>]*PartName="/ppt/(slides|notesSlides|comments)/[^"]*"[^>]*/>"""), ""
+            )
+            presentationRels = presentationRels.replace(
+                Regex("""<Relationship[^>]*Type="[^"]*/relationships/slide"[^>]*/>"""), ""
+            )
+            // Custom shows and slide sections reference the removed slides.
+            presentationXml = presentationXml
+                .replace(Regex("""<p:custShowLst>[\s\S]*?</p:custShowLst>"""), "")
+                .replace(Regex("""<p:ext uri="\{521415D9-36F7-43E2-AB2F-B90AF26B5E84\}">[\s\S]*?</p:ext>"""), "")
+        }
 
         // 2. Add the new slides.
         val usedIds = Regex("""Id="([^"]+)"""").findAll(presentationRels).map { it.groupValues[1] }.toSet()
@@ -108,7 +127,7 @@ class PptxEngine {
         val newRels = StringBuilder()
         val newOverrides = StringBuilder()
         slides.forEachIndexed { i, spec ->
-            val n = i + 1
+            val n = firstSlideNumber + i
             var relId = "rIdSb$n"
             var suffix = 0
             while (relId in usedIds) relId = "rIdSb${n}_${++suffix}"
@@ -120,13 +139,15 @@ class PptxEngine {
                     """<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/${layout.path.substringAfterLast('/')}"/>""" +
                     """</Relationships>"""
                 ).toByteArray(Charsets.UTF_8)
-            sldIds.append("""<p:sldId id="${255 + n}" r:id="$relId"/>""")
+            sldIds.append("""<p:sldId id="${nextSlideId + i}" r:id="$relId"/>""")
             newRels.append("""<Relationship Id="$relId" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide$n.xml"/>""")
             newOverrides.append("""<Override PartName="/ppt/slides/slide$n.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>""")
         }
 
         val sldIdLst = "<p:sldIdLst>$sldIds</p:sldIdLst>"
         presentationXml = when {
+            keepExistingSlides && presentationXml.contains("</p:sldIdLst>") ->
+                presentationXml.replace("</p:sldIdLst>", "$sldIds</p:sldIdLst>")
             Regex("""<p:sldIdLst\s*/>""").containsMatchIn(presentationXml) ->
                 presentationXml.replace(Regex("""<p:sldIdLst\s*/>"""), sldIdLst)
             presentationXml.contains("<p:sldIdLst>") ->

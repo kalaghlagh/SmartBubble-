@@ -83,6 +83,7 @@ fun ChatScreen(
     // Scanned document review & progress states
     val scannedReviewState by viewModel.scannedReviewState.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
+    val ocrLanguage by viewModel.ocrLanguage.collectAsState()
     val scanProgress by viewModel.scanProgress.collectAsState()
 
     // Conversation management dialog states
@@ -407,6 +408,7 @@ fun ChatScreen(
             }
 
             // Messages List
+            val docsById = remember(allDocs) { allDocs.associateBy { it.id } }
             LazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -417,9 +419,7 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 items(messages, key = { it.id }) { msg ->
-                    val attachedDoc = if (!msg.attachedDocId.isNullOrBlank()) {
-                        allDocs.firstOrNull { it.id == msg.attachedDocId }
-                    } else null
+                    val attachedDoc = msg.attachedDocId?.let { docsById[it] }
 
                     ChatBubbleItem(
                         message = msg,
@@ -717,7 +717,11 @@ fun ChatScreen(
             },
             onSelectTemplate = { viewModel.setSelectedScanTemplate(it) },
             onGenerateDocx = { viewModel.generateDocxFromScannedDocument() },
-            onDismiss = { viewModel.dismissScanReview() }
+            onDismiss = { viewModel.dismissScanReview() },
+            ocrLanguage = ocrLanguage,
+            onChangeOcrLanguage = { viewModel.changeOcrLanguage(it) },
+            aiProviderName = defaultProvider,
+            onEnhanceWithAi = { viewModel.enhanceScannedTextWithAi() }
         )
     }
 

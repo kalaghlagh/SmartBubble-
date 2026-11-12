@@ -2,104 +2,176 @@ package com.example.ocr
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
-import com.example.ai.orchestrator.CentralAiOrchestrator
+import android.util.Log
 import com.example.document.model.ScannedPageData
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.googlecode.tesseract.android.TessBaseAPI
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.io.InputStream
 
-class DocumentOcrEngine(
-    private val context: Context,
-    private val orchestrator: CentralAiOrchestrator? = null
-) {
-    private val latinRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+/** The OCR engine could not be started (models missing/corrupt or native library failure). */
+class OcrUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
+/** Result of recognizing a batch of pages. */
+data class OcrBatchResult(
+    val pages: List<ScannedPageData>,
+    /** Number of pages whose image could not be read or recognized (they are kept, empty). */
+    val failedPages: Int
+)
+
+/**
+ * On-device OCR for scanned pages using Tesseract (Tesseract4Android) with bundled Arabic,
+ * English and French models. Page images never leave the device: there is no network code
+ * here. Recognition is sequential and memory-bounded (one downsampled bitmap at a time).
+ */
+class DocumentOcrEngine(private val context: Context) {
+
+    /**
+     * Recognizes [pageUris] in order.
+     * @param firstPageIndex index of the first page within the whole document (used when pages
+     *   are added to an existing scan)
+     * @throws OcrUnavailableException when the engine cannot start; single unreadable pages do
+     *   not throw, they are returned empty and counted in [OcrBatchResult.failedPages]
+     */
     suspend fun processPages(
         pageUris: List<Uri>,
-        useAiEnhancement: Boolean = true,
-        onProgress: (pageIndex: Int, total: Int, message: String) -> Unit = { _, _, _ -> },
-        /** Called when AI clean-up of a page fails; the page then keeps its raw OCR text. */
-        onAiEnhancementFailed: (Exception) -> Unit = {}
-    ): List<ScannedPageData> = withContext(Dispatchers.IO) {
-        val results = mutableListOf<ScannedPageData>()
-
-        for ((index, uri) in pageUris.withIndex()) {
-            onProgress(index + 1, pageUris.size, "Processing page ${index + 1} of ${pageUris.size}...")
-
-            try {
-                val inputImage = InputImage.fromFilePath(context, uri)
-                val mlkitVisionText = latinRecognizer.process(inputImage).await()
-
-                val lineInfos = mutableListOf<OcrLineInfo>()
-                for (block in mlkitVisionText.textBlocks) {
-                    for (line in block.lines) {
-                        val rect = line.boundingBox
-                        val isRtl = ScannedDocumentStructureReconstructor.isArabicText(line.text)
-                        lineInfos.add(
-                            OcrLineInfo(
-                                text = line.text,
-                                top = rect?.top ?: 0,
-                                left = rect?.left ?: 0,
-                                width = rect?.width() ?: 0,
-                                height = rect?.height() ?: 0,
-                                isRtl = isRtl
-                            )
-                        )
-                    }
+        language: OcrLanguage,
+        appLanguage: String,
+        firstPageIndex: Int = 0,
+        onProgress: (page: Int, total: Int) -> Unit = { _, _ -> }
+    ): OcrBatchResult = withContext(Dispatchers.Default) {
+        engineMutex.withLock {
+            val dataPath = try {
+                withContext(Dispatchers.IO) {
+                    TessDataInstaller.ensureInstalled(context, language.models).absolutePath
                 }
-
-                var rawText = mlkitVisionText.text
-                val hasArabic = ScannedDocumentStructureReconstructor.isArabicText(rawText)
-
-                // If user selected AI enhancement or if Arabic is detected, use the Central AI Orchestrator
-                if (useAiEnhancement && orchestrator != null) {
-                    onProgress(index + 1, pageUris.size, "")
-                    try {
-                        val aiEnhanced = orchestrator.enhanceScannedPageText(rawText)
-                        if (aiEnhanced.isNotBlank()) {
-                            rawText = aiEnhanced
-                        }
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        // Keep the real OCR text (never a fabricated one) and report the failure.
-                        onAiEnhancementFailed(e)
-                    }
-                }
-
-                val structuredPage = ScannedDocumentStructureReconstructor.reconstructPage(
-                    pageIndex = index,
-                    imageUriString = uri.toString(),
-                    rawText = rawText,
-                    lines = lineInfos
-                )
-                results.add(structuredPage)
-
             } catch (e: Exception) {
-                // Fallback: If ML Kit fails or image cannot be read, provide an editable fallback page
-                results.add(
-                    ScannedPageData(
-                        pageIndex = index,
-                        imageUriString = uri.toString(),
-                        recognizedTitle = "Scanned Page ${index + 1}",
-                        heading = "",
-                        rawText = "",
-                        paragraphs = listOf("Please review and enter page text here."),
-                        bulletPoints = emptyList(),
-                        table = null,
-                        isArabicDetected = false,
-                        confidenceScore = 0.1f
+                throw OcrUnavailableException("OCR language data could not be installed", e)
+            }
+
+            val tess = try {
+                TessBaseAPI()
+            } catch (e: Throwable) {
+                throw OcrUnavailableException("OCR engine could not be loaded", e)
+            }
+            val lock = Any()
+            var recycled = false
+            // Cancelling the coroutine aborts a recognition that is in progress.
+            val cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+                if (cause is CancellationException) {
+                    synchronized(lock) {
+                        if (!recycled) try { tess.stop() } catch (e: Throwable) { /* already finished */ }
+                    }
+                }
+            }
+            try {
+                val started = try {
+                    tess.init(dataPath, language.tesseractLanguages(appLanguage), TessBaseAPI.OEM_LSTM_ONLY)
+                } catch (e: Throwable) {
+                    throw OcrUnavailableException("OCR engine could not be initialized", e)
+                }
+                if (!started) throw OcrUnavailableException("OCR engine could not be initialized")
+                tess.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO)
+                // Keep the gaps between columns so simple tables can be reconstructed.
+                tess.setVariable("preserve_interword_spaces", "1")
+
+                val pages = ArrayList<ScannedPageData>(pageUris.size)
+                var failed = 0
+                for ((offset, uri) in pageUris.withIndex()) {
+                    currentCoroutineContext().ensureActive()
+                    val pageIndex = firstPageIndex + offset
+                    onProgress(offset + 1, pageUris.size)
+                    val page = try {
+                        recognizePage(tess, uri, pageIndex)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: OutOfMemoryError) {
+                        Log.w(TAG, "Page ${pageIndex + 1}: not enough memory to recognize the image")
+                        null
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Page ${pageIndex + 1} could not be recognized: ${e.javaClass.simpleName}")
+                        null
+                    }
+                    currentCoroutineContext().ensureActive() // a stopped recognition is not a result
+                    if (page == null) failed++
+                    // An unreadable page is kept (empty) so the user can type its text.
+                    pages += page ?: ScannedDocumentStructureReconstructor.reconstructPage(
+                        pageIndex = pageIndex, imageUriString = uri.toString(), rawText = ""
                     )
-                )
+                }
+                OcrBatchResult(pages, failed)
+            } finally {
+                cancelHandle?.dispose()
+                synchronized(lock) {
+                    recycled = true
+                    try { tess.recycle() } catch (e: Throwable) { /* native instance already released */ }
+                }
             }
         }
+    }
 
-        results
+    private fun recognizePage(tess: TessBaseAPI, uri: Uri, pageIndex: Int): ScannedPageData {
+        val bitmap: Bitmap = PageImageLoader.load(context, uri)
+        try {
+            tess.setImage(bitmap)
+            // getHOCRText runs the recognition in the mode that stop() can interrupt (see the
+            // library documentation); getUTF8Text then returns the already computed result.
+            tess.getHOCRText(0)
+            val plainText = tess.getUTF8Text().orEmpty()
+            val confidence = (tess.meanConfidence() / 100f).coerceIn(0f, 1f)
+            val lines = readLines(tess)
+            val text = if (lines.isNotEmpty()) OcrTextAssembler.assemble(lines) else plainText.trim()
+            return ScannedDocumentStructureReconstructor.reconstructPage(
+                pageIndex = pageIndex,
+                imageUriString = uri.toString(),
+                rawText = text,
+                lines = lines,
+                confidence = if (text.isBlank()) 0f else confidence
+            )
+        } finally {
+            tess.clear()
+            bitmap.recycle()
+        }
+    }
+
+    /** Text lines in reading order with paragraph starts, from Tesseract's layout analysis. */
+    private fun readLines(tess: TessBaseAPI): List<OcrLineInfo> {
+        val iterator = tess.resultIterator ?: return emptyList()
+        val lines = ArrayList<OcrLineInfo>()
+        try {
+            val level = TessBaseAPI.PageIteratorLevel.RIL_TEXTLINE
+            iterator.begin()
+            do {
+                val text = iterator.getUTF8Text(level)?.trimEnd('\n', '\r') ?: continue
+                if (text.isBlank()) continue
+                val box = iterator.getBoundingRect(level)
+                lines += OcrLineInfo(
+                    text = text,
+                    top = box.top,
+                    left = box.left,
+                    width = box.width(),
+                    height = box.height(),
+                    isRtl = ScannedDocumentStructureReconstructor.isArabicText(text),
+                    startsParagraph = iterator.isAtBeginningOf(TessBaseAPI.PageIteratorLevel.RIL_PARA) ||
+                        iterator.isAtBeginningOf(TessBaseAPI.PageIteratorLevel.RIL_BLOCK)
+                )
+            } while (iterator.next(level))
+        } finally {
+            iterator.delete()
+        }
+        return lines
+    }
+
+    private companion object {
+        const val TAG = "DocumentOcrEngine"
+
+        /** One recognition at a time: Tesseract is memory-heavy and not thread-safe. */
+        val engineMutex = Mutex()
     }
 }

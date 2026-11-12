@@ -38,7 +38,7 @@ class XlsxEngine {
             outputFile.parentFile?.mkdirs()
         }
 
-        if (originalTemplateFile != null && originalTemplateFile.exists() && originalTemplateFile.length() > 0) {
+        if (template.useTemplateLayout && originalTemplateFile != null && originalTemplateFile.exists() && originalTemplateFile.length() > 0) {
             val reason = try {
                 if (generateFromExistingTemplate(originalTemplateFile, model, outputFile, template)) {
                     return EngineResult(outputFile, templateApplied = true)
@@ -100,42 +100,66 @@ class XlsxEngine {
         ) ?: return false
         entries[stylesPath] = mergedStyles.toByteArray(Charsets.UTF_8)
 
-        // Remove the template's sheets and the parts that only make sense with them.
-        val removedPrefixes = listOf(
-            "xl/worksheets/", "xl/chartsheets/", "xl/drawings/", "xl/charts/", "xl/tables/",
-            "xl/pivotTables/", "xl/pivotCache/", "xl/queryTables/", "xl/calcChain.xml"
-        )
-        entries.keys.filter { k -> removedPrefixes.any { k.startsWith(it) } }.forEach { entries.remove(it) }
-        contentTypes = contentTypes.replace(
-            Regex("""<Override[^>]*PartName="/xl/(worksheets|chartsheets|drawings|charts|tables|pivotTables|pivotCache|queryTables)/[^"]*"[^>]*/>"""), ""
-        ).replace(Regex("""<Override[^>]*PartName="/xl/calcChain\.xml"[^>]*/>"""), "")
-        workbookRels = workbookRels.replace(
-            Regex("""<Relationship[^>]*Type="[^"]*/relationships/(worksheet|chartsheet|calcChain|pivotCacheDefinition)"[^>]*/>"""), ""
-        )
-        workbook = workbook
-            .replace(Regex("""<definedNames>[\s\S]*?</definedNames>"""), "")
-            .replace(Regex("""<pivotCaches>[\s\S]*?</pivotCaches>"""), "")
-            .replace(Regex("""\b(activeTab|firstSheet)="\d+""""), "$1=\"0\"")
+        val keepExisting = template.keepTemplateContent
+        var firstSheetNumber = 1
+        var nextSheetId = 1
+        val takenNames = mutableSetOf<String>()
+        if (keepExisting) {
+            // Keep the template's sheets; new sheets get file numbers, ids and names after them.
+            firstSheetNumber = 1 + (entries.keys.mapNotNull {
+                Regex("""xl/worksheets/sheet(\d+)\.xml""").matchEntire(it)?.groupValues?.get(1)?.toIntOrNull()
+            }.maxOrNull() ?: 0)
+            nextSheetId = 1 + (Regex("""<sheet\b[^>]*\bsheetId="(\d+)"""").findAll(workbook)
+                .mapNotNull { it.groupValues[1].toIntOrNull() }.maxOrNull() ?: 0)
+            Regex("""<sheet\b[^>]*\bname="([^"]*)"""").findAll(workbook)
+                .forEach { takenNames += it.groupValues[1].lowercase() }
+        } else {
+            // Remove the template's sheets and the parts that only make sense with them.
+            val removedPrefixes = listOf(
+                "xl/worksheets/", "xl/chartsheets/", "xl/drawings/", "xl/charts/", "xl/tables/",
+                "xl/pivotTables/", "xl/pivotCache/", "xl/queryTables/", "xl/calcChain.xml"
+            )
+            entries.keys.filter { k -> removedPrefixes.any { k.startsWith(it) } }.forEach { entries.remove(it) }
+            contentTypes = contentTypes.replace(
+                Regex("""<Override[^>]*PartName="/xl/(worksheets|chartsheets|drawings|charts|tables|pivotTables|pivotCache|queryTables)/[^"]*"[^>]*/>"""), ""
+            ).replace(Regex("""<Override[^>]*PartName="/xl/calcChain\.xml"[^>]*/>"""), "")
+            workbookRels = workbookRels.replace(
+                Regex("""<Relationship[^>]*Type="[^"]*/relationships/(worksheet|chartsheet|calcChain|pivotCacheDefinition)"[^>]*/>"""), ""
+            )
+            workbook = workbook
+                .replace(Regex("""<definedNames>[\s\S]*?</definedNames>"""), "")
+                .replace(Regex("""<pivotCaches>[\s\S]*?</pivotCaches>"""), "")
+                .replace(Regex("""\b(activeTab|firstSheet)="\d+""""), "$1=\"0\"")
+        }
 
         val usedIds = Regex("""Id="([^"]+)"""").findAll(workbookRels).map { it.groupValues[1] }.toSet()
-        val sheetsXml = StringBuilder("<sheets>")
+        val newSheets = StringBuilder()
         val rels = StringBuilder()
         val overrides = StringBuilder()
         model.sheets.forEachIndexed { i, sheet ->
-            val n = i + 1
+            val n = firstSheetNumber + i
             var relId = "rIdSb$n"
             var k = 0
             while (relId in usedIds) relId = "rIdSb${n}_${++k}"
-            sheetsXml.append("<sheet name=\"${escapeXml(sheet.name)}\" sheetId=\"$n\" r:id=\"$relId\"/>")
+            // Sheet names must be unique within the workbook (max 31 characters).
+            var name = sheet.name
+            var suffix = 2
+            while (!takenNames.add(name.lowercase())) {
+                name = sheet.name.take(27) + " ($suffix)"
+                suffix++
+            }
+            newSheets.append("<sheet name=\"${escapeXml(name)}\" sheetId=\"${nextSheetId + i}\" r:id=\"$relId\"/>")
             rels.append("<Relationship Id=\"$relId\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet$n.xml\"/>")
             overrides.append("<Override PartName=\"/xl/worksheets/sheet$n.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>")
             entries["xl/worksheets/sheet$n.xml"] = buildSheetXml(sheet, cellStyles).toByteArray(Charsets.UTF_8)
         }
-        sheetsXml.append("</sheets>")
 
         workbook = when {
-            Regex("""<sheets\s*/>""").containsMatchIn(workbook) -> workbook.replace(Regex("""<sheets\s*/>"""), sheetsXml.toString())
-            workbook.contains("<sheets>") -> workbook.replace(Regex("""<sheets>[\s\S]*?</sheets>"""), sheetsXml.toString())
+            keepExisting && workbook.contains("</sheets>") -> workbook.replace("</sheets>", "$newSheets</sheets>")
+            Regex("""<sheets\s*/>""").containsMatchIn(workbook) ->
+                workbook.replace(Regex("""<sheets\s*/>""")) { "<sheets>$newSheets</sheets>" }
+            workbook.contains("<sheets>") ->
+                workbook.replace(Regex("""<sheets>[\s\S]*?</sheets>""")) { "<sheets>$newSheets</sheets>" }
             else -> return false
         }
         if (!workbook.contains("xmlns:r=")) {
