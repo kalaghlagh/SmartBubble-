@@ -11,10 +11,12 @@ name: Release APK
 # There is deliberately no push / pull-request trigger.
 #
 # Signing secrets (Settings > Secrets and variables > Actions > New repository secret):
-#   KEYSTORE_BASE64  the upload keystore, base64-encoded:  base64 -w0 my-upload-key.jks
-#                    The key alias inside it must be "upload" (fixed in app/build.gradle.kts).
+#   KEYSTORE_BASE64  the release keystore (.jks), base64-encoded:  base64 -w0 release.jks
 #   STORE_PASSWORD   password of the keystore
-#   KEY_PASSWORD     password of the "upload" key
+#   KEY_PASSWORD     password of the signing key
+# The signing key alias is "smartbubble": KEY_ALIAS below is the single place it is set for this
+# workflow. The keystore check and Gradle (app/build.gradle.kts) both read that one value, and
+# the built APK's certificate is compared with that key before anything is uploaded.
 # Never commit the keystore or the passwords. Without the secrets the release build is skipped
 # and reported as skipped; no unsigned or test-signed file is presented as a release.
 
@@ -39,6 +41,11 @@ on:
 
 permissions:
   contents: read
+
+env:
+  # Alias of the signing key inside the keystore (not a secret). Fixed here on purpose: no
+  # repository variable or default elsewhere can change which key is validated and used.
+  KEY_ALIAS: smartbubble
 
 concurrency:
   group: release-apk-${{ github.ref }}
@@ -115,13 +122,48 @@ jobs:
             echo "::notice::Signing secrets are not configured: the release APK/AAB build was skipped."
             exit 0
           fi
-          keystore="$RUNNER_TEMP/upload-key.jks"
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
-          if ! keytool -list -keystore "$keystore" -storepass "$STORE_PASSWORD" -alias upload > /dev/null 2>&1; then
-            rm -f "$keystore"
-            echo "::error::The keystore cannot be opened with STORE_PASSWORD, or it has no key with the alias 'upload'."
-            exit 1
+          keystore="$RUNNER_TEMP/release-key.jks"
+          probe="$RUNNER_TEMP/keystore-probe.p12"
+          log="$RUNNER_TEMP/keytool.log"
+          cleanup() { rm -f "$probe" "$log"; }
+          fail() { rm -f "$keystore"; cleanup; echo "::error::$1"; exit 1; }
+
+          # 1. Decode. Line breaks or spaces in the secret are tolerated.
+          if ! printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "$keystore" 2> /dev/null \
+              || [ ! -s "$keystore" ]; then
+            fail "KEYSTORE_BASE64 is not valid base64. Recreate the secret with: base64 -w0 <keystore file>"
           fi
+
+          # Passwords are passed to keytool through the environment (":env"), never on the
+          # command line, and keytool output is kept out of the log.
+
+          # 2. The keystore opens with STORE_PASSWORD.
+          if ! keytool -list -keystore "$keystore" -storepass:env STORE_PASSWORD > "$log" 2>&1; then
+            if grep -qi "password was incorrect" "$log"; then
+              fail "The keystore cannot be opened: the STORE_PASSWORD secret does not match this keystore. Correct the STORE_PASSWORD secret."
+            fi
+            fail "The decoded KEYSTORE_BASE64 is not a readable keystore (JKS or PKCS12). Re-encode the original keystore file."
+          fi
+
+          # 3. The alias exists and is a private key.
+          if ! keytool -list -keystore "$keystore" -storepass:env STORE_PASSWORD -alias "$KEY_ALIAS" > "$log" 2>&1; then
+            fail "The keystore has no entry with the alias '$KEY_ALIAS'. The keystore in KEYSTORE_BASE64 is not the expected release keystore."
+          fi
+          if ! grep -q "PrivateKeyEntry" "$log"; then
+            fail "The alias '$KEY_ALIAS' is not a private key entry, so it cannot sign the app."
+          fi
+
+          # 4. The private key can be read with KEY_PASSWORD (copied to a throwaway keystore
+          #    that is deleted immediately; the original keystore is not modified).
+          if ! keytool -importkeystore -noprompt \
+              -srckeystore "$keystore" -srcstorepass:env STORE_PASSWORD \
+              -srcalias "$KEY_ALIAS" -srckeypass:env KEY_PASSWORD \
+              -destkeystore "$probe" -deststoretype PKCS12 \
+              -deststorepass:env STORE_PASSWORD -destkeypass:env STORE_PASSWORD > "$log" 2>&1; then
+            fail "The private key '$KEY_ALIAS' cannot be accessed: the KEY_PASSWORD secret does not match this key. Correct the KEY_PASSWORD secret."
+          fi
+          cleanup
+          echo "Keystore verified: alias '$KEY_ALIAS' is present and its private key is accessible."
           echo "KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
           echo "configured=true" >> "$GITHUB_OUTPUT"
 
@@ -156,8 +198,18 @@ jobs:
           [ -s "$apk" ] || { echo "::error::Release APK not found at $apk"; exit 1; }
           [ -s "$aab" ] || { echo "::error::Release AAB not found at $aab"; exit 1; }
           apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
-          "$apksigner" verify --print-certs "$apk"
+          "$apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/apk-certs.txt"
           jarsigner -verify "$aab" > /dev/null
+          # The APK must be signed by the key that was validated above (alias $KEY_ALIAS).
+          # Certificate fingerprints are public values, not secrets.
+          expected="$(keytool -exportcert -keystore "$KEYSTORE_PATH" -storepass:env STORE_PASSWORD -alias "$KEY_ALIAS" | sha256sum | cut -d' ' -f1)"
+          actual="$(grep -m1 'certificate SHA-256 digest' "$RUNNER_TEMP/apk-certs.txt" | awk '{print $NF}')"
+          rm -f "$RUNNER_TEMP/apk-certs.txt"
+          if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+            echo "::error::The release APK is not signed with the '$KEY_ALIAS' key from the keystore."
+            exit 1
+          fi
+          echo "Release APK is signed with the '$KEY_ALIAS' key (certificate SHA-256 $actual)."
           out="$RUNNER_TEMP/release"
           mkdir -p "$out"
           cp "$apk" "$out/SmartBubble-$VERSION_NAME-$VERSION_CODE.apk"
@@ -175,4 +227,4 @@ jobs:
 
       - name: Remove keystore
         if: ${{ always() }}
-        run: rm -f "$RUNNER_TEMP/upload-key.jks"
+        run: rm -f "$RUNNER_TEMP/release-key.jks" "$RUNNER_TEMP/keystore-probe.p12" "$RUNNER_TEMP/keytool.log"

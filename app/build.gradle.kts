@@ -34,7 +34,10 @@ android {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
       storeFile = file(keystorePath)
       storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
+      // Alias of the signing key inside the release keystore. The project's keystore uses
+      // "smartbubble"; the workflow passes the same value in KEY_ALIAS, so the alias that is
+      // validated and the alias Gradle signs with are always the same.
+      keyAlias = System.getenv("KEY_ALIAS")?.takeIf { it.isNotBlank() } ?: "smartbubble"
       keyPassword = System.getenv("KEY_PASSWORD")
     }
     create("debugConfig") {
