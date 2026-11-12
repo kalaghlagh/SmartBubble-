@@ -1,2 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<color xmlns:android="http://schemas.android.com/apk/res/android">#10182B</color>
+<!-- Adaptive icon background: deep blue gradient with a soft light behind the bubble.
+     Generated from the SmartBubble icon design (one glass bubble, three round highlights). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M0,0 H108 V108 H0 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="108" android:endY="108">
+                    <item android:offset="0" android:color="#FF1238B8" />
+                    <item android:offset="0.55" android:color="#FF0A1F78" />
+                    <item android:offset="1" android:color="#FF050E3A" />
+                </gradient>
+            </aapt:attr>
+    </path>
+    <path
+        android:pathData="M0,0 H108 V108 H0 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="radial" android:centerX="54" android:centerY="52" android:gradientRadius="56">
+                    <item android:offset="0" android:color="#664F8BFF" />
+                    <item android:offset="0.6" android:color="#1A3B5BE0" />
+                    <item android:offset="1" android:color="#003B5BE0" />
+                </gradient>
+            </aapt:attr>
+    </path>
+</vector>

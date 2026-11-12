@@ -10,6 +10,17 @@ interface AiProviderClient {
     suspend fun complete(request: AiRequest): AiResponse
 
     /**
+     * Like [complete], but the provider streams its answer: [onText] receives each new piece of
+     * text as it arrives (on a background thread). The returned response holds the whole text.
+     * Cancelling the coroutine cancels the HTTP request and closes the stream.
+     *
+     * The default implementation does not stream: it delivers the complete answer once, when it
+     * has arrived.
+     */
+    suspend fun stream(request: AiRequest, onText: (String) -> Unit): AiResponse =
+        complete(request).also { onText(it.text) }
+
+    /**
      * Performs a lightweight authenticated request that also checks the configured model.
      * Returns the latency in milliseconds; throws [AiException] on failure.
      */

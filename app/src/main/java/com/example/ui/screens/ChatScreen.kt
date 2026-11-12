@@ -9,6 +9,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -43,7 +44,9 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.compose.ui.window.Dialog
 import com.example.ocr.DocumentScannerHelper
 import com.example.ui.components.OcrReviewDialog
+import com.example.ui.components.SmartBubbleLogo
 import com.example.R
+import com.example.ai.orchestrator.AiProgressStage
 import com.example.core.voice.VoiceState
 import com.example.data.model.ChatMessageEntity
 import com.example.data.model.ConversationEntity
@@ -67,6 +70,11 @@ fun ChatScreen(
     val conversations by viewModel.allConversations.collectAsState()
     val currentSessionId by viewModel.currentSessionId.collectAsState()
     val isGenerating by viewModel.isGenerating.collectAsState()
+    val aiProgress by viewModel.aiProgress.collectAsState()
+    val streamingReply by viewModel.streamingReply.collectAsState()
+    val generatingSessionId by viewModel.generatingSessionId.collectAsState()
+    // Progress of a running operation is shown only in the conversation it belongs to.
+    val generatingHere = isGenerating && generatingSessionId == currentSessionId
     val voiceState by viewModel.voiceState.collectAsState()
     val voicePhase by viewModel.voicePhase.collectAsState()
     val voiceActive by viewModel.voiceConversationActive.collectAsState()
@@ -127,9 +135,16 @@ fun ChatScreen(
         }
     }
 
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+    LaunchedEffect(messages.size, generatingHere) {
+        val last = messages.size - 1 + (if (generatingHere) 1 else 0)
+        if (last >= 0) listState.animateScrollToItem(last)
+    }
+    // Keep the streamed reply in view while it grows (only if the user is already at the bottom).
+    LaunchedEffect(streamingReply.length / 200) {
+        if (generatingHere && streamingReply.isNotEmpty()) {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
+            // Scrolling is clamped at the end of the list.
+            if (lastVisible >= messages.size - 1) listState.scrollBy(100_000f)
         }
     }
 
@@ -155,24 +170,7 @@ fun ChatScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        Brush.linearGradient(
-                                            listOf(Color(0xFFE94A59), Color(0xFF24D6E8), Color(0xFF8665F7))
-                                        )
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.BubbleChart,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
+                            SmartBubbleLogo(size = 34.dp)
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
                                 text = stringResource(R.string.app_name),
@@ -292,7 +290,10 @@ fun ChatScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         // 1. Hamburger Menu Button (at top-left)
                         IconButton(
                             onClick = { coroutineScope.launch { drawerState.open() } },
@@ -308,24 +309,7 @@ fun ChatScreen(
                         Spacer(modifier = Modifier.width(4.dp))
 
                         // SmartBubble colorful logo
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(Color(0xFFE94A59), Color(0xFF24D6E8), Color(0xFF8665F7))
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.BubbleChart,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
+                        SmartBubbleLogo(size = 34.dp)
 
                         Spacer(modifier = Modifier.width(10.dp))
 
@@ -340,7 +324,9 @@ fun ChatScreen(
                                 text = defaultProvider.ifBlank { stringResource(R.string.chat_no_default_provider) },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (defaultProvider.isBlank()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                                fontSize = 11.sp
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -376,7 +362,10 @@ fun ChatScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
                                 Icon(
                                     imageVector = Icons.Default.AttachFile,
                                     contentDescription = null,
@@ -388,7 +377,9 @@ fun ChatScreen(
                                     text = stringResource(R.string.chat_template_badge, tmpl.name, tmpl.fileType),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    fontWeight = FontWeight.Medium
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                             IconButton(
@@ -442,9 +433,9 @@ fun ChatScreen(
                     )
                 }
 
-                if (isGenerating) {
-                    item {
-                        GeneratingIndicatorBubble()
+                if (generatingHere) {
+                    item(key = "generating") {
+                        GeneratingIndicatorBubble(stage = aiProgress, partialReply = streamingReply)
                     }
                 }
             }
@@ -510,7 +501,25 @@ fun ChatScreen(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    if (inputMessage.isNotBlank()) {
+                    if (isGenerating) {
+                        // Stop Button: cancels the running AI operation (request, stream, document).
+                        val stopLabel = stringResource(R.string.chat_stop_generation)
+                        IconButton(
+                            onClick = { viewModel.cancelGeneration() },
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.error)
+                                .testTag("chat_stop_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Stop,
+                                contentDescription = stopLabel,
+                                tint = MaterialTheme.colorScheme.onError,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    } else if (inputMessage.isNotBlank()) {
                         // Send Button
                         IconButton(
                             onClick = {
@@ -518,8 +527,6 @@ fun ChatScreen(
                                 inputMessage = ""
                                 viewModel.executePrompt(prompt)
                             },
-                            // One request at a time; the text is kept until it can be sent.
-                            enabled = !isGenerating,
                             modifier = Modifier
                                 .size(46.dp)
                                 .clip(CircleShape)
@@ -539,8 +546,6 @@ fun ChatScreen(
                             onClick = {
                                 if (voiceActive) viewModel.stopVoiceConversation() else startVoice()
                             },
-                            // A typed request is still being answered: wait for it to finish.
-                            enabled = voiceActive || !isGenerating,
                             modifier = Modifier
                                 .size(46.dp)
                                 .clip(CircleShape)
@@ -1054,25 +1059,15 @@ fun ChatBubbleItem(
     ) {
         if (!isUser) {
             // Assistant Bot Avatar
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.SmartToy,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
+            SmartBubbleLogo(size = 34.dp)
             Spacer(modifier = Modifier.width(8.dp))
         }
 
         Column(
-            modifier = Modifier.widthIn(max = 300.dp),
+            // Shrinks on narrow screens instead of pushing past the edge.
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .widthIn(max = 300.dp),
             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
         ) {
             // Bubble Content
@@ -1432,15 +1427,15 @@ fun DocumentResultCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Action Buttons
-            Row(
+            // Action Buttons: content-sized; they wrap to a new line when a translation is long.
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 OutlinedButton(
                     onClick = onOpen,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Icon(imageVector = Icons.Default.Launch, contentDescription = null, modifier = Modifier.size(14.dp))
@@ -1450,8 +1445,7 @@ fun DocumentResultCard(
 
                 OutlinedButton(
                     onClick = onShare,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(14.dp))
@@ -1462,13 +1456,12 @@ fun DocumentResultCard(
                 if (doc.fileType != "PDF") {
                     FilledTonalButton(
                         onClick = onExportPdf,
-                        modifier = Modifier.weight(1.2f),
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Icon(imageVector = Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(text = stringResource(R.string.chat_export_pdf), fontSize = 11.sp, maxLines = 1)
+                        Text(text = stringResource(R.string.chat_export_pdf), fontSize = 12.sp)
                     }
                 }
             }
@@ -1480,7 +1473,7 @@ fun DocumentResultCard(
                 Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
-                    text = "AI Refinements",
+                    text = stringResource(R.string.chat_ai_refinements),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
@@ -1519,47 +1512,56 @@ fun DocumentResultCard(
     }
 }
 
+/**
+ * Shown while an operation runs in this conversation: the real stage reported by the
+ * orchestrator and, while a reply is being streamed, the text received so far.
+ */
 @Composable
-fun GeneratingIndicatorBubble() {
+fun GeneratingIndicatorBubble(stage: AiProgressStage?, partialReply: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.Top
     ) {
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.SmartToy,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp)
-            )
-        }
+        SmartBubbleLogo(size = 34.dp)
         Spacer(modifier = Modifier.width(8.dp))
 
         Surface(
             shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.weight(1f, fill = false)
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = stringResource(R.string.chat_compiling_doc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                if (partialReply.isNotEmpty()) {
+                    Text(
+                        text = partialReply,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = stringResource(progressStageText(stage)),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("chat_progress_stage")
+                    )
+                }
             }
         }
     }
+}
+
+/** Localized text for a real orchestrator stage (null = the operation has just been started). */
+fun progressStageText(stage: AiProgressStage?): Int = when (stage) {
+    null, AiProgressStage.CONNECTING -> R.string.progress_connecting
+    AiProgressStage.PROCESSING -> R.string.progress_processing
+    AiProgressStage.GENERATING -> R.string.progress_generating
+    AiProgressStage.VALIDATING -> R.string.progress_validating
+    AiProgressStage.CREATING_DOCUMENT -> R.string.progress_creating_document
 }
 
 private fun Context.findActivity(): Activity? {

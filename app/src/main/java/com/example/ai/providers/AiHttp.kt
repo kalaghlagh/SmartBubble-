@@ -20,8 +20,13 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/** Result of an HTTP exchange; the body is fully read. */
-data class HttpResult(val code: Int, val body: String, val retryAfterSeconds: Long?)
+/**
+ * Result of an HTTP exchange. For a plain exchange [body] is the full response body. For a
+ * streaming exchange that the server answered with Server-Sent Events, [streamed] is true, the
+ * events were already delivered to the caller and [body] is empty; an error response or a
+ * server that ignored the stream request is returned with its full body and [streamed] false.
+ */
+data class HttpResult(val code: Int, val body: String, val retryAfterSeconds: Long?, val streamed: Boolean = false)
 
 /**
  * Shared networking for all provider clients (the project's existing OkHttp stack; no logging
@@ -40,6 +45,15 @@ object AiHttp {
             .callTimeout(330, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
+    }
+
+    /**
+     * Same connection pool and dispatcher as [client] (newBuilder shares them), but a longer
+     * overall call limit: a streamed answer keeps arriving in pieces, and the read timeout still
+     * stops a stream that goes silent.
+     */
+    val streamingClient: OkHttpClient by lazy {
+        client.newBuilder().callTimeout(15, TimeUnit.MINUTES).build()
     }
 
     fun parseBaseUrl(raw: String): HttpUrl {
@@ -73,6 +87,67 @@ object AiHttp {
             attempt++
         }
     }
+
+    /**
+     * Executes a streaming [request]. Each Server-Sent Event's data is passed to [onEvent] (on an
+     * OkHttp thread, in order) as it arrives. Cancelling the coroutine cancels the HTTP call and
+     * closes the stream; no event is delivered after that. Same single retry as [execute] for
+     * 429 / transient 5xx answers (only possible before any event was delivered).
+     */
+    suspend fun executeStream(request: Request, secret: String?, onEvent: (String) -> Unit): HttpResult {
+        var attempt = 0
+        while (true) {
+            val result = streamOnce(request, secret, onEvent)
+            val retryable = !result.streamed && (result.code == 429 || result.code in setOf(500, 502, 503, 504, 529))
+            if (!retryable || attempt >= 1) return result
+            val wait = (result.retryAfterSeconds ?: 2L)
+            if (wait > 20L) return result
+            delay(wait * 1000L)
+            attempt++
+        }
+    }
+
+    private suspend fun streamOnce(request: Request, secret: String?, onEvent: (String) -> Unit): HttpResult =
+        suspendCancellableCoroutine { cont ->
+            val call = streamingClient.newCall(request)
+            cont.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (cont.isActive) cont.resumeWithException(mapIoException(e, secret))
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    try {
+                        response.use { r ->
+                            val retryAfter = r.header("retry-after")?.trim()?.toLongOrNull()
+                            val isEventStream = r.header("Content-Type").orEmpty().contains("text/event-stream", ignoreCase = true)
+                            if (!r.isSuccessful || !isEventStream) {
+                                val body = r.body?.string().orEmpty()
+                                if (cont.isActive) cont.resume(HttpResult(r.code, body, retryAfter, streamed = false))
+                                return
+                            }
+                            val source = r.body?.source()
+                                ?: throw AiException(AiErrorKind.EMPTY_RESPONSE, "Empty stream")
+                            val parser = SseParser { data -> if (cont.isActive) onEvent(data) }
+                            while (cont.isActive) {
+                                val line = source.readUtf8Line() ?: break
+                                parser.feedLine(line)
+                            }
+                            parser.finish()
+                            if (cont.isActive) cont.resume(HttpResult(r.code, "", retryAfter, streamed = true))
+                        }
+                    } catch (e: AiException) {
+                        if (cont.isActive) cont.resumeWithException(e)
+                    } catch (e: IOException) {
+                        if (cont.isActive) cont.resumeWithException(mapIoException(e, secret))
+                    } catch (e: RuntimeException) {
+                        if (cont.isActive) {
+                            cont.resumeWithException(AiException(AiErrorKind.MALFORMED_RESPONSE, Redactor.redact(e.message, secret), cause = e))
+                        }
+                    }
+                }
+            })
+        }
 
     private suspend fun executeOnce(request: Request, secret: String?): HttpResult =
         suspendCancellableCoroutine { cont ->
@@ -166,5 +241,41 @@ object AiHttp {
             throw AiException(AiErrorKind.BAD_REQUEST, "Empty conversation")
         }
         return out
+    }
+}
+
+/**
+ * Minimal Server-Sent Events line parser: collects the `data:` lines of one event and emits the
+ * joined data when the event ends (blank line). `event:`, `id:`, `retry:` and comment lines are
+ * ignored (the providers repeat the event type inside the JSON data). Pure Kotlin.
+ */
+class SseParser(private val onData: (String) -> Unit) {
+    private val data = StringBuilder()
+    private var hasData = false
+
+    fun feedLine(rawLine: String) {
+        val line = rawLine.removeSuffix("\r")
+        if (line.isEmpty()) {
+            dispatch()
+            return
+        }
+        if (line.startsWith(":")) return
+        if (line == "data" || line.startsWith("data:")) {
+            val value = line.removePrefix("data").removePrefix(":").removePrefix(" ")
+            if (hasData) data.append('\n')
+            data.append(value)
+            hasData = true
+        }
+    }
+
+    /** Emits a last event that was not followed by a blank line. */
+    fun finish() = dispatch()
+
+    private fun dispatch() {
+        if (!hasData) return
+        val value = data.toString()
+        data.setLength(0)
+        hasData = false
+        onData(value)
     }
 }

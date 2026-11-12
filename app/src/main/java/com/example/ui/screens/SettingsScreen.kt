@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalLayoutApi::class)
+
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
@@ -13,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -24,6 +27,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -38,6 +42,7 @@ import com.example.ai.providers.ProviderValidator
 import com.example.data.model.ProviderEntity
 import com.example.ui.aiErrorStringRes
 import com.example.ui.SmartBubbleViewModel
+import com.example.ui.components.SmartBubbleLogo
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,14 +88,17 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     IconButton(
                         onClick = { viewModel.setNavTab(com.example.ui.AppNavTab.CHAT) },
                         modifier = Modifier.testTag("settings_back_button")
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.action_back),
                             tint = MaterialTheme.colorScheme.onSurface
                         )
                     }
@@ -99,20 +107,21 @@ fun SettingsScreen(
                         text = stringResource(R.string.settings_title),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                IconButton(
-                    onClick = { /* Settings action */ },
-                    modifier = Modifier.testTag("settings_gear_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Gear",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                // Decorative section icon (it had an empty click action before).
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(end = 12.dp)
+                        .testTag("settings_gear_button")
+                )
             }
         }
 
@@ -123,6 +132,28 @@ fun SettingsScreen(
             contentPadding = PaddingValues(vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Section: Voice conversation language, first under the header. Full-width row; the
+            // value is shown under the title so long values never get squeezed.
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    SettingsNavRow(
+                        icon = Icons.Outlined.Mic,
+                        title = stringResource(R.string.settings_voice_language),
+                        value = voiceLanguageOptions.firstOrNull { it.first == voiceLanguage }?.second
+                            ?: stringResource(R.string.voice_language_auto),
+                        onClick = { showVoiceLanguageDialog = true },
+                        testTag = "settings_voice_language_row"
+                    )
+                }
+            }
+
             // Section: AI Providers Card
             item {
                 Card(
@@ -140,7 +171,10 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
                                 Box(
                                     modifier = Modifier
                                         .size(36.dp)
@@ -170,7 +204,7 @@ fun SettingsScreen(
                                 }
                             }
                             Icon(
-                                imageVector = Icons.Default.ChevronRight,
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -212,7 +246,7 @@ fun SettingsScreen(
                             onClick = { showAddProviderDialog = true },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(46.dp)
+                                .heightIn(min = 46.dp)
                                 .testTag("add_provider_button"),
                             shape = RoundedCornerShape(10.dp)
                         ) {
@@ -253,18 +287,6 @@ fun SettingsScreen(
                             },
                             onClick = { showLanguageDialog = true },
                             testTag = "settings_language_row"
-                        )
-
-                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                        // Voice conversation language Row
-                        SettingsNavRow(
-                            icon = Icons.Outlined.Mic,
-                            title = stringResource(R.string.settings_voice_language),
-                            value = voiceLanguageOptions.firstOrNull { it.first == voiceLanguage }?.second
-                                ?: stringResource(R.string.voice_language_auto),
-                            onClick = { showVoiceLanguageDialog = true },
-                            testTag = "settings_voice_language_row"
                         )
 
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -455,11 +477,7 @@ fun SettingsScreen(
             onDismissRequest = { showAboutDialog = false },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.BubbleChart,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
+                    SmartBubbleLogo(size = 28.dp)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = "SmartBubble v1.0")
                 }
@@ -544,11 +562,13 @@ fun ProviderItemRow(
 
                     Spacer(modifier = Modifier.width(12.dp))
 
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = provider.name,
                             style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = "${providerTypeLabel(type)} • ${provider.modelName}",
@@ -565,6 +585,7 @@ fun ProviderItemRow(
                 }
 
                 if (provider.isDefault) {
+                    Spacer(modifier = Modifier.width(8.dp))
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
@@ -575,7 +596,9 @@ fun ProviderItemRow(
                             text = stringResource(R.string.settings_default_badge),
                             color = Color(0xFF10A37F),
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -583,48 +606,53 @@ fun ProviderItemRow(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Action Buttons: [Test Connection] [Set as Default] [Edit] [Delete]
+            // Action Buttons: [Test Connection] [Set as Default] [Edit] [Delete]. The text buttons
+            // are as wide as their labels and wrap to a second line when a translation is long;
+            // edit / delete stay together at the end.
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Button(
-                    onClick = onTest,
-                    enabled = !isTesting && hasKey,
-                    modifier = Modifier.weight(1.2f),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    shape = RoundedCornerShape(8.dp)
+                FlowRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    if (isTesting) {
-                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                    } else {
+                    Button(
+                        onClick = onTest,
+                        enabled = !isTesting && hasKey,
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.heightIn(min = 40.dp).testTag("test_provider_${provider.id}")
+                    ) {
+                        if (isTesting) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
                         Text(
                             text = stringResource(R.string.settings_test_connection),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
+                            style = MaterialTheme.typography.labelLarge
                         )
                     }
-                }
 
-                if (!provider.isDefault) {
-                    OutlinedButton(
-                        onClick = onSetDefault,
-                        modifier = Modifier.weight(1.2f),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.settings_set_default),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+                    if (!provider.isDefault) {
+                        OutlinedButton(
+                            onClick = onSetDefault,
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.heightIn(min = 40.dp).testTag("set_default_provider_${provider.id}")
+                        ) {
+                            Text(
+                                text = stringResource(R.string.settings_set_default),
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
                     }
                 }
 
                 IconButton(
                     onClick = onEdit,
-                    modifier = Modifier.size(36.dp).testTag("edit_provider_${provider.id}")
+                    modifier = Modifier.testTag("edit_provider_${provider.id}")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Edit,
@@ -636,7 +664,7 @@ fun ProviderItemRow(
 
                 IconButton(
                     onClick = onDelete,
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.testTag("delete_provider_${provider.id}")
                 ) {
                     Icon(
                         imageVector = Icons.Default.DeleteOutline,
@@ -672,6 +700,10 @@ private fun providerStatusText(provider: ProviderEntity, hasKey: Boolean, isTest
     return stringResource(R.string.provider_status_not_tested) to false
 }
 
+/**
+ * A settings row: icon, title and, below the title, the current value. Title and value use the
+ * full row width (no narrow value column), so long or translated values stay on readable lines.
+ */
 @Composable
 fun SettingsNavRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -684,43 +716,42 @@ fun SettingsNavRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .heightIn(min = 56.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
             .testTag(testTag),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(22.dp)
-            )
-            Spacer(modifier = Modifier.width(14.dp))
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface
             )
-        }
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
             if (value.isNotBlank()) {
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = value,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.testTag("${testTag}_value")
                 )
-                Spacer(modifier = Modifier.width(6.dp))
             }
-            Icon(
-                imageVector = Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-            )
         }
+        Spacer(modifier = Modifier.width(8.dp))
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+        )
     }
 }
 
@@ -760,9 +791,12 @@ fun ProviderDialog(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                AiProviderType.values().toList().chunked(2).forEach { rowTypes ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        rowTypes.forEach { option ->
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    run {
+                        AiProviderType.values().forEach { option ->
                             FilterChip(
                                 selected = type == option,
                                 onClick = {

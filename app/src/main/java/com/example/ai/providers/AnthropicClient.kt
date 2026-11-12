@@ -20,6 +20,7 @@ class AnthropicClient(
         "anthropic-version" to API_VERSION,
         "Accept" to "application/json"
     )
+    private val streamHeaders = headers + ("Accept" to "text/event-stream")
 
     override suspend fun complete(request: AiRequest): AiResponse {
         val url = base.newBuilder().addPathSegments("v1/messages").build()
@@ -35,12 +36,88 @@ class AnthropicClient(
         return parseMessagesResponse(result.body)
     }
 
+    override suspend fun stream(request: AiRequest, onText: (String) -> Unit): AiResponse {
+        val url = base.newBuilder().addPathSegments("v1/messages").build()
+        var acc = StreamAccumulator(onText)
+        var result = AiHttp.executeStream(
+            AiHttp.jsonPost(url, streamHeaders, buildMessagesBody(model, request) + ("stream" to true)), apiKey
+        ) { acc.accept(it) }
+        if (!result.streamed && result.code == 400 && request.maxOutputTokens > LEGACY_MAX_OUTPUT &&
+            AiHttp.providerErrorMessage(result.body).orEmpty().contains("max_tokens")
+        ) {
+            val smaller = request.copy(maxOutputTokens = LEGACY_MAX_OUTPUT)
+            acc = StreamAccumulator(onText)
+            result = AiHttp.executeStream(
+                AiHttp.jsonPost(url, streamHeaders, buildMessagesBody(model, smaller) + ("stream" to true)), apiKey
+            ) { acc.accept(it) }
+        }
+        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey)
+        if (!result.streamed) return parseMessagesResponse(result.body).also { onText(it.text) }
+        return acc.finish()
+    }
+
     override suspend fun testConnection(): Long {
         val start = System.currentTimeMillis()
         val url = base.newBuilder().addPathSegments("v1/models").addPathSegment(model).build()
         val result = AiHttp.execute(AiHttp.get(url, headers), apiKey)
         if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey)
         return System.currentTimeMillis() - start
+    }
+
+    /**
+     * Collects a streamed Messages answer: `content_block_delta` events carry text (`text_delta`;
+     * thinking deltas are skipped), `message_delta` carries the stop reason, `error` events end
+     * the stream with a provider error. Pure Kotlin.
+     */
+    class StreamAccumulator(private val onText: (String) -> Unit) {
+        private val text = StringBuilder()
+        private var stopReason: String? = null
+        private var refusalExplanation: String? = null
+
+        fun accept(data: String) {
+            val root = Json.obj(Json.parse(data))
+                ?: throw AiException(AiErrorKind.MALFORMED_RESPONSE, "Invalid stream event")
+            when (Json.str(root["type"])) {
+                "content_block_delta" -> {
+                    val delta = Json.obj(root["delta"]) ?: return
+                    if (delta["type"] == "text_delta") {
+                        val piece = Json.str(delta["text"]).orEmpty()
+                        if (piece.isNotEmpty()) {
+                            text.append(piece)
+                            onText(piece)
+                        }
+                    }
+                }
+                "message_delta" -> {
+                    val delta = Json.obj(root["delta"]) ?: return
+                    Json.str(delta["stop_reason"])?.let { stopReason = it }
+                    Json.str(Json.obj(delta["stop_details"])?.get("explanation"))?.let { refusalExplanation = it }
+                }
+                "error" -> {
+                    val error = Json.obj(root["error"])
+                    val message = Json.str(error?.get("message"))?.take(200)
+                    val kind = when (Json.str(error?.get("type"))) {
+                        "overloaded_error", "api_error" -> AiErrorKind.PROVIDER_UNAVAILABLE
+                        "rate_limit_error" -> AiErrorKind.RATE_LIMITED
+                        "invalid_request_error" -> AiErrorKind.BAD_REQUEST
+                        "authentication_error" -> AiErrorKind.INVALID_API_KEY
+                        "permission_error" -> AiErrorKind.PERMISSION_DENIED
+                        "request_too_large" -> AiErrorKind.REQUEST_TOO_LARGE
+                        else -> AiErrorKind.UNKNOWN
+                    }
+                    throw AiException(kind, message)
+                }
+            }
+        }
+
+        fun finish(): AiResponse {
+            if (stopReason == "refusal") throw AiException(AiErrorKind.CONTENT_BLOCKED, refusalExplanation?.take(200))
+            if (text.isBlank()) {
+                if (stopReason == "max_tokens") throw AiException(AiErrorKind.TRUNCATED_RESPONSE)
+                throw AiException(AiErrorKind.EMPTY_RESPONSE)
+            }
+            return AiResponse(text.toString(), truncated = stopReason == "max_tokens")
+        }
     }
 
     companion object {

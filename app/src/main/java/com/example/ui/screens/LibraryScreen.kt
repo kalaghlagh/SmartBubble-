@@ -12,6 +12,7 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,6 +26,8 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.model.DocumentEntity
 import com.example.ui.SmartBubbleViewModel
+import com.example.ui.components.FilterChipRow
+import com.example.ui.components.FilterOption
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -35,7 +38,7 @@ fun LibraryScreen(
     modifier: Modifier = Modifier
 ) {
     val documents by viewModel.allDocuments.collectAsState()
-    var selectedFilter by remember { mutableStateOf("All") }
+    var selectedFilter by rememberSaveable { mutableStateOf(LibraryFilter.ALL.key) }
     var searchQuery by remember { mutableStateOf("") }
     var showSearchBar by remember { mutableStateOf(false) }
 
@@ -44,12 +47,7 @@ fun LibraryScreen(
     var renameInput by remember { mutableStateOf("") }
 
     val filteredDocs = documents.filter { doc ->
-        val matchesType = when (selectedFilter) {
-            "Documents" -> doc.fileType.equals("DOCX", ignoreCase = true)
-            "Presentations" -> doc.fileType.equals("PPTX", ignoreCase = true)
-            "Spreadsheets" -> doc.fileType.equals("XLSX", ignoreCase = true)
-            else -> true
-        }
+        val matchesType = LibraryFilter.fromKey(selectedFilter).matches(doc.fileType)
         val matchesSearch = doc.title.contains(searchQuery, ignoreCase = true) ||
                 doc.summary.contains(searchQuery, ignoreCase = true)
         matchesType && matchesSearch
@@ -74,7 +72,10 @@ fun LibraryScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Box(
                             modifier = Modifier
                                 .size(34.dp)
@@ -94,7 +95,9 @@ fun LibraryScreen(
                             text = stringResource(R.string.library_title),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
 
@@ -105,7 +108,7 @@ fun LibraryScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.Search,
-                                contentDescription = "Search",
+                                contentDescription = stringResource(R.string.action_search),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -116,7 +119,7 @@ fun LibraryScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.MoreVert,
-                                contentDescription = "Options",
+                                contentDescription = stringResource(R.string.action_more_options),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -139,7 +142,7 @@ fun LibraryScreen(
                         trailingIcon = {
                             if (searchQuery.isNotEmpty()) {
                                 IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear")
+                                    Icon(imageVector = Icons.Default.Clear, contentDescription = stringResource(R.string.action_clear))
                                 }
                             }
                         }
@@ -150,42 +153,13 @@ fun LibraryScreen(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Filter Pills Row [All] [Documents] [Presentations] [Spreadsheets]
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            val filters = listOf(
-                "All" to stringResource(R.string.filter_all),
-                "Documents" to stringResource(R.string.filter_documents),
-                "Presentations" to stringResource(R.string.filter_presentations),
-                "Spreadsheets" to stringResource(R.string.filter_spreadsheets)
-            )
-
-            filters.forEach { (key, label) ->
-                val isSelected = selectedFilter == key
-                FilterChip(
-                    selected = isSelected,
-                    onClick = { selectedFilter = key },
-                    label = {
-                        Text(
-                            text = label,
-                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                            fontSize = 13.sp
-                        )
-                    },
-                    shape = RoundedCornerShape(20.dp),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                    ),
-                    modifier = Modifier.testTag("library_filter_$key")
-                )
-            }
-        }
-
+        // Category chips: one horizontally scrollable row. Each chip is as wide as its label (one
+        // line, never squeezed), so long translations scroll instead of wrapping letter by letter.
+        // LazyRow follows the layout direction, so the row starts on the right in Arabic.
+        LibraryCategoryRow(
+            selectedKey = selectedFilter,
+            onSelect = { selectedFilter = it }
+        )
         Spacer(modifier = Modifier.height(14.dp))
 
         // Document List
@@ -376,7 +350,7 @@ fun LibraryDocumentItem(
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Share,
-                    contentDescription = "Share",
+                    contentDescription = stringResource(R.string.file_share),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -389,7 +363,7 @@ fun LibraryDocumentItem(
                 ) {
                     Icon(
                         imageVector = Icons.Default.MoreVert,
-                        contentDescription = "More",
+                        contentDescription = stringResource(R.string.action_more_options),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -445,4 +419,39 @@ fun LibraryDocumentItem(
             }
         }
     }
+}
+
+/** Library categories. [key] is saved in UI state; it is not shown to the user. */
+enum class LibraryFilter(val key: String, val labelRes: Int) {
+    ALL("All", R.string.filter_all),
+    DOCUMENTS("Documents", R.string.filter_documents),
+    PRESENTATIONS("Presentations", R.string.filter_presentations),
+    SPREADSHEETS("Spreadsheets", R.string.filter_spreadsheets);
+
+    fun matches(fileType: String): Boolean = when (this) {
+        ALL -> true
+        DOCUMENTS -> fileType.equals("DOCX", ignoreCase = true)
+        PRESENTATIONS -> fileType.equals("PPTX", ignoreCase = true)
+        SPREADSHEETS -> fileType.equals("XLSX", ignoreCase = true)
+    }
+
+    companion object {
+        fun fromKey(key: String): LibraryFilter = entries.firstOrNull { it.key == key } ?: ALL
+    }
+}
+
+@Composable
+fun LibraryCategoryRow(
+    selectedKey: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    FilterChipRow(
+        options = LibraryFilter.entries.map { FilterOption(it.key, stringResource(it.labelRes)) },
+        selectedKey = selectedKey,
+        onSelect = onSelect,
+        testTagPrefix = "library_filter_",
+        rowDescription = stringResource(R.string.library_categories),
+        modifier = modifier
+    )
 }

@@ -7,6 +7,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.withTransaction
 import com.example.R
+import com.example.ai.orchestrator.AiProgressListener
+import com.example.ai.orchestrator.AiProgressStage
 import com.example.ai.orchestrator.CentralAiOrchestrator
 import com.example.ai.orchestrator.ContentOperation
 import com.example.ai.orchestrator.ContextMessage
@@ -49,10 +51,12 @@ import com.example.document.model.ScannedDocumentReviewState
 import com.example.document.docx.DocxEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -150,12 +154,32 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     private val _selectedTemplateForChat = MutableStateFlow<TemplateEntity?>(null)
     val selectedTemplateForChat: StateFlow<TemplateEntity?> = _selectedTemplateForChat.asStateFlow()
 
-    // Orchestration status
-    val taskState = orchestrator.currentState
-    val taskStatusMessage = orchestrator.statusMessage
-
     private val _isGenerating = MutableStateFlow(false)
     val isGenerating: StateFlow<Boolean> = _isGenerating.asStateFlow()
+
+    // ---- Active chat operation (one at a time) ------------------------------------------
+    /** The running chat AI / document operation; cancelled by [cancelGeneration]. */
+    private var chatJob: Job? = null
+
+    /**
+     * Identifies the current chat operation. Progress callbacks (which can arrive on background
+     * threads) are ignored unless they belong to the operation that is still current, so a
+     * cancelled operation can never update the UI later.
+     */
+    @Volatile
+    private var chatOperationId = 0L
+
+    private val _aiProgress = MutableStateFlow<AiProgressStage?>(null)
+    /** Real stage of the running chat operation (null when none is running). */
+    val aiProgress: StateFlow<AiProgressStage?> = _aiProgress.asStateFlow()
+
+    private val _streamingReply = MutableStateFlow("")
+    /** Reply text received so far from the provider for the running operation. */
+    val streamingReply: StateFlow<String> = _streamingReply.asStateFlow()
+
+    private val _generatingSessionId = MutableStateFlow<String?>(null)
+    /** Conversation the running operation belongs to; its progress is shown only there. */
+    val generatingSessionId: StateFlow<String?> = _generatingSessionId.asStateFlow()
 
     private val _snackBarMessage = MutableStateFlow<String?>(null)
     val snackBarMessage: StateFlow<String?> = _snackBarMessage.asStateFlow()
@@ -311,6 +335,13 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun deleteConversation(id: String) {
+        // An answer still being generated for this conversation has nowhere to go: stop it.
+        if (_generatingSessionId.value == id && chatJob != null) {
+            chatOperationId++
+            chatJob?.cancel(CancellationException("Conversation deleted"))
+            finishChatOperation()
+            if (_voiceConversationActive.value) stopVoiceConversation()
+        }
         launchSafely("deleteConversation") {
             database.conversationDao().deleteConversationById(id)
             database.chatDao().deleteMessagesBySessionId(id)
@@ -342,18 +373,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     fun executePrompt(prompt: String, forceFormat: String? = null, fromVoice: Boolean = false) {
         val text = prompt.trim()
         if (text.isEmpty()) return
-        // One AI request at a time: ignore repeated taps while one is running.
-        if (!aiRequestInFlight.compareAndSet(false, true)) {
-            if (fromVoice) {
-                endVoiceConversation()
-                _snackBarMessage.value = str(R.string.voice_busy)
-            }
-            return
-        }
         val sessionId = _currentSessionId.value
-
-        viewModelScope.launch {
-            _isGenerating.value = true
+        // One AI request at a time: ignore repeated taps while one is running.
+        val started = launchChatOperation(sessionId) { listener ->
             try {
                 // Ensure conversation exists in Room
                 var conv = database.conversationDao().getConversationById(sessionId)
@@ -388,10 +410,13 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     userMessage = text,
                     uiLanguage = appLanguage.value,
                     selectedTemplate = _selectedTemplateForChat.value,
-                    forceFormat = DocumentFormat.parse(forceFormat)
+                    forceFormat = DocumentFormat.parse(forceFormat),
+                    listener = listener
                 )
 
                 // Only the provider's real answer is stored; failures are never saved as replies.
+                // A cancelled operation stops here and stores nothing.
+                ensureActive()
                 val doc = result.document
                 val replyId = UUID.randomUUID().toString()
                 database.chatDao().insertMessage(
@@ -427,12 +452,77 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             } catch (e: Exception) {
                 if (fromVoice) endVoiceConversation()
                 reportError("executePrompt", e)
-            } finally {
-                // Always release the loading state, even after an error.
-                _isGenerating.value = false
-                aiRequestInFlight.set(false)
             }
         }
+        if (!started && fromVoice) {
+            endVoiceConversation()
+            _snackBarMessage.value = str(R.string.voice_busy)
+        }
+    }
+
+    /**
+     * Starts the single chat operation for [sessionId] (returns false if one is already running).
+     * The loading state, progress and streamed text are released when it ends, fails or is
+     * cancelled; [block] receives the listener that forwards real progress to the UI.
+     */
+    private fun launchChatOperation(
+        sessionId: String,
+        block: suspend CoroutineScope.(AiProgressListener) -> Unit
+    ): Boolean {
+        if (!aiRequestInFlight.compareAndSet(false, true)) return false
+        val operationId = ++chatOperationId
+        _isGenerating.value = true
+        _generatingSessionId.value = sessionId
+        _aiProgress.value = null
+        _streamingReply.value = ""
+        val listener = object : AiProgressListener {
+            override fun onStage(stage: AiProgressStage) {
+                if (chatOperationId == operationId) _aiProgress.value = stage
+            }
+
+            override fun onPartialReply(text: String) {
+                if (chatOperationId == operationId) _streamingReply.value = text
+            }
+        }
+        // Started only after chatJob is set: viewModelScope runs on Main.immediate, so an eager
+        // start could reach the finally block before the assignment.
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                block(listener)
+            } finally {
+                // Always release the loading state (also after an error); a cancelled operation
+                // was already released by cancelGeneration and must not touch a newer one.
+                if (chatOperationId == operationId) finishChatOperation()
+            }
+        }
+        chatJob = job
+        job.start()
+        return true
+    }
+
+    private fun finishChatOperation() {
+        chatJob = null
+        _isGenerating.value = false
+        _generatingSessionId.value = null
+        _aiProgress.value = null
+        _streamingReply.value = ""
+        aiRequestInFlight.set(false)
+    }
+
+    /**
+     * Stop button: cancels the running chat operation. The in-flight HTTP request is cancelled
+     * (closing a streamed answer), no further provider call or document step starts, an
+     * unfinished document file is deleted and nothing of the cancelled operation is stored.
+     * The chat is usable again immediately.
+     */
+    fun cancelGeneration() {
+        val job = chatJob ?: return
+        chatOperationId++ // ignore any late progress of the cancelled operation
+        job.cancel(CancellationException("Stopped by the user"))
+        finishChatOperation()
+        // A voice turn waiting for this answer cannot continue.
+        if (_voiceConversationActive.value) stopVoiceConversation()
+        _snackBarMessage.value = str(R.string.chat_generation_stopped)
     }
 
     /**
@@ -1227,8 +1317,8 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             return
         }
 
-        viewModelScope.launch {
-            _isGenerating.value = true
+        launchChatOperation(sessionId) { listener ->
+            listener.onStage(AiProgressStage.CREATING_DOCUMENT)
             _scanProgress.value = str(R.string.generate_word_doc)
             var createdFile: File? = null
             var documentSaved = false
@@ -1269,7 +1359,8 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 val allText = reviewState.pages.joinToString("\n\n") { it.rawText }
                 val wordCount = allText.split("\\s+".toRegex()).filter { it.isNotBlank() }.size
 
-                // Insert into Room DocumentDao
+                // Insert into Room DocumentDao (not after a cancellation: the file is then deleted)
+                ensureActive()
                 val docEntity = DocumentEntity(
                     id = docId,
                     title = visibleTitle,
@@ -1338,7 +1429,6 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 if (!documentSaved) withContext(Dispatchers.IO) { createdFile?.delete() }
                 _snackBarMessage.value = "Failed to generate Word document: ${e.message}"
             } finally {
-                _isGenerating.value = false
                 _scanProgress.value = null
             }
         }
@@ -1347,15 +1437,13 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     /** Real AI operation (correct / format / translate / summarize ...) on a Library document. */
     fun executeFollowUpAiAction(actionType: String, docId: String) {
         val operation = ContentOperation.fromActionKey(actionType) ?: return
-        if (!aiRequestInFlight.compareAndSet(false, true)) return
         val sessionId = _currentSessionId.value
-        viewModelScope.launch {
-            _isGenerating.value = true
+        launchChatOperation(sessionId) { listener ->
             try {
                 val doc = database.documentDao().getDocumentById(docId)
                 if (doc == null) {
                     _snackBarMessage.value = str(R.string.msg_file_not_found)
-                    return@launch
+                    return@launchChatOperation
                 }
 
                 val userActionPrompt = when (operation) {
@@ -1383,8 +1471,10 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 val (result, provider) = orchestrator.performContentOperation(
                     operation = operation,
                     content = doc.textContent,
-                    uiLanguage = appLanguage.value
+                    uiLanguage = appLanguage.value,
+                    listener = listener
                 )
+                ensureActive()
 
                 database.chatDao().insertMessage(
                     ChatMessageEntity(
@@ -1405,20 +1495,23 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 _snackBarMessage.value = aiErrorMessage(e, defaultProvider.value)
             } catch (e: Exception) {
                 reportError("executeFollowUpAiAction", e)
-            } finally {
-                _isGenerating.value = false
-                aiRequestInFlight.set(false)
             }
         }
     }
 
     // ------------------------------------------------------------------ localization helpers
 
+    /** Localized resources for the last language used (creating a configuration context each time is costly). */
+    @Volatile
+    private var cachedResources: Pair<String, android.content.res.Resources>? = null
+
     /** Resources in the app's selected language (the application context follows the system locale). */
     private fun localizedResources(): android.content.res.Resources {
+        val language = appLanguage.value.ifBlank { "en" }
+        cachedResources?.let { (lang, res) -> if (lang == language) return res }
         val config = android.content.res.Configuration(context.resources.configuration)
-        config.setLocale(Locale(appLanguage.value.ifBlank { "en" }))
-        return context.createConfigurationContext(config).resources
+        config.setLocale(Locale(language))
+        return context.createConfigurationContext(config).resources.also { cachedResources = language to it }
     }
 
     private fun str(id: Int, vararg args: Any): String =

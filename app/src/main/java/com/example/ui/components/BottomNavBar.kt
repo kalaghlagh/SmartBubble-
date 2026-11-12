@@ -1,7 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,7 +25,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
@@ -48,13 +51,14 @@ fun SmartBubbleBottomNavBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.navigationBars)
-                .height(64.dp)
-                .padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.SpaceAround,
+                .heightIn(min = 64.dp)
+                .padding(horizontal = 4.dp),
+            // Four equal columns: every label gets the same width in every language.
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Chat
             BottomNavItem(
+                modifier = Modifier.weight(1f),
                 label = stringResource(R.string.nav_chat),
                 selectedIcon = Icons.Filled.ChatBubble,
                 unselectedIcon = Icons.Outlined.ChatBubbleOutline,
@@ -65,6 +69,7 @@ fun SmartBubbleBottomNavBar(
 
             // My Templates
             BottomNavItem(
+                modifier = Modifier.weight(1f),
                 label = stringResource(R.string.nav_templates),
                 selectedIcon = Icons.Filled.Description,
                 unselectedIcon = Icons.Outlined.Description,
@@ -75,6 +80,7 @@ fun SmartBubbleBottomNavBar(
 
             // Library
             BottomNavItem(
+                modifier = Modifier.weight(1f),
                 label = stringResource(R.string.nav_library),
                 selectedIcon = Icons.Filled.Folder,
                 unselectedIcon = Icons.Outlined.Folder,
@@ -85,6 +91,7 @@ fun SmartBubbleBottomNavBar(
 
             // Settings
             BottomNavItem(
+                modifier = Modifier.weight(1f),
                 label = stringResource(R.string.nav_settings),
                 selectedIcon = Icons.Filled.Settings,
                 unselectedIcon = Icons.Outlined.Settings,
@@ -98,6 +105,7 @@ fun SmartBubbleBottomNavBar(
 
 @Composable
 private fun BottomNavItem(
+    modifier: Modifier,
     label: String,
     selectedIcon: ImageVector,
     unselectedIcon: ImageVector,
@@ -109,14 +117,16 @@ private fun BottomNavItem(
     val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .clickable(
+            .selectable(
+                selected = isSelected,
                 interactionSource = remember { MutableInteractionSource() },
                 indication = ripple(bounded = false, radius = 28.dp),
+                role = Role.Tab,
                 onClick = onClick
             )
-            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .padding(horizontal = 2.dp, vertical = 6.dp)
             .testTag(testTag),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -130,7 +140,8 @@ private fun BottomNavItem(
         ) {
             Icon(
                 imageVector = if (isSelected) selectedIcon else unselectedIcon,
-                contentDescription = label,
+                // The label below is read by accessibility services; no duplicate description.
+                contentDescription = null,
                 tint = if (isSelected) activeColor else inactiveColor,
                 modifier = Modifier.size(20.dp)
             )
@@ -141,7 +152,12 @@ private fun BottomNavItem(
             fontSize = 11.sp,
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (isSelected) activeColor else inactiveColor,
-            style = MaterialTheme.typography.labelSmall
+            style = MaterialTheme.typography.labelSmall,
+            // One line, never broken inside a word; the four columns are equally wide.
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
         )
     }
 }

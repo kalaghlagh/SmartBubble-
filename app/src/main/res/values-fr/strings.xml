@@ -246,7 +246,7 @@
     <string name="settings_choose_default_provider">Aucun fournisseur par défaut. Touchez « Définir par défaut » sur un fournisseur.</string>
     <string name="settings_no_providers">Aucun fournisseur d’IA pour l’instant. Ajoutez un fournisseur avec votre propre clé API pour utiliser l’IA.</string>
     <string name="settings_voice_language">Langue de la conversation vocale</string>
-    <string name="voice_language_auto">Identique à la langue de l’application</string>
+    <string name="voice_language_auto">Même langue que l’application</string>
     <string name="voice_recognizing">Reconnaissance vocale…</string>
     <string name="voice_thinking">En attente de la réponse de l’IA…</string>
     <string name="voice_speaking">Lecture de la réponse…</string>
@@ -290,4 +290,19 @@
     <string name="template_import_unreadable">Le fichier sélectionné n’a pas pu être ouvert.</string>
     <string name="template_import_too_large">Ce fichier est trop volumineux pour servir de modèle (limite : 50 Mo).</string>
     <string name="template_import_unsupported">Seuls les fichiers Word (DOCX), PowerPoint (PPTX) et Excel (XLSX) peuvent servir de modèles.</string>
+
+    <!-- Chat generation progress and cancellation -->
+    <string name="chat_stop_generation">Arrêter la génération</string>
+    <string name="chat_generation_stopped">Génération arrêtée.</string>
+    <string name="progress_connecting">Connexion au fournisseur IA</string>
+    <string name="progress_processing">Traitement de la demande</string>
+    <string name="progress_generating">Génération du contenu</string>
+    <string name="progress_validating">Vérification du résultat</string>
+    <string name="progress_creating_document">Création du document</string>
+    <string name="action_search">Rechercher</string>
+    <string name="action_more_options">Plus d’options</string>
+    <string name="action_previous_page">Page précédente</string>
+    <string name="action_next_page">Page suivante</string>
+    <string name="library_categories">Catégories de documents</string>
+    <string name="chat_ai_refinements">Améliorations par l’IA</string>
 </resources>

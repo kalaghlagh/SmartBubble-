@@ -25,9 +25,20 @@ The app has four sections: **Chat**, **My Templates**, **Library** and **Setting
 
 - Your message and the recent conversation are sent to the default provider; the reply shown is
   the provider's actual answer. Failed requests show an error and are never saved as replies.
+- Replies are streamed: the text appears while the provider sends it (OpenAI and compatible
+  services, Anthropic Claude and Google Gemini all support streaming; a compatible service that
+  ignores the streaming request is shown when its complete answer arrives). While a request
+  runs, the progress line shows the real stage: connecting, processing, generating content,
+  validating the result, creating the document.
+- **Stop:** while the AI is working, the send button becomes a stop button. Stopping cancels the
+  network request, starts no further step, deletes an unfinished document file and stores
+  nothing from the stopped request ("Generation stopped."). A document that was already saved
+  to the Library before you pressed stop stays there.
 - Ask for a document ("write a report about…", "make a presentation…", "create a budget
   spreadsheet…") and the provider returns structured content that the app renders into a file.
 - Conversations are stored on the device and can be renamed and deleted.
+- Progress and streamed text are shown only in the conversation the request belongs to; the
+  answer is always saved to that conversation, even if you switch to another one meanwhile.
 
 ### Voice conversation
 
@@ -89,6 +100,12 @@ Charts, images inside slides, pivot tables, macros and PowerPoint speaker notes 
 
 Generated and scanned documents with open, share, rename, delete and "export as PDF" (a text
 export, not a visual copy of the Office file).
+
+### App icon
+
+The launcher icon is an adaptive icon built from vector drawables (`ic_launcher_background`,
+`ic_launcher_foreground`, `ic_launcher_monochrome` for themed icons) with PNG fallbacks for
+Android 7.x. The in-app logo (`smart_bubble_logo`) uses the same artwork.
 
 ## Privacy and security
 

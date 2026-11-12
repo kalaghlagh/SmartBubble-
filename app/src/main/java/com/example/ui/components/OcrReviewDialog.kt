@@ -121,7 +121,7 @@ fun OcrReviewDialog(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Close"
+                                contentDescription = stringResource(R.string.action_close)
                             )
                         }
                     },
@@ -409,7 +409,7 @@ fun OcrReviewDialog(
                                 enabled = activeIndex > 0,
                                 modifier = Modifier.testTag("ocr_prev_page_btn")
                             ) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous Page")
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_previous_page))
                             }
 
                             Text(
@@ -423,7 +423,7 @@ fun OcrReviewDialog(
                                 enabled = activeIndex < pages.size - 1,
                                 modifier = Modifier.testTag("ocr_next_page_btn")
                             ) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next Page")
+                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = stringResource(R.string.action_next_page))
                             }
                         }
                     }
