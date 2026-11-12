@@ -38,6 +38,17 @@ sealed class TemplatePreviewData {
         val slides: List<PptxPreviewSlide> = emptyList()
     ) : TemplatePreviewData()
 
+    /**
+     * A PDF template: the original file is the visual reference (shown as a rendered page) and
+     * [profile] holds what was measured on it.
+     * @property fileMissing the original PDF is no longer on the device
+     */
+    data class PdfPreview(
+        val profile: TemplateProfile,
+        val pageCount: Int,
+        val fileMissing: Boolean = false
+    ) : TemplatePreviewData()
+
     data class XlsxPreview(
         val workbookName: String = "Workbook",
         val primaryColorHex: String = "#107C41",
@@ -78,6 +89,15 @@ class TemplatePreviewEngine {
     suspend fun loadPreview(template: TemplateEntity): TemplatePreviewResult = withContext(Dispatchers.IO) {
         val file = File(template.originalFilePath)
         val profile = TemplateProfile.fromJson(template.profileJson)
+
+        if (template.fileType.equals("PDF", ignoreCase = true)) {
+            // Nothing is parsed again: the stored profile was measured at import.
+            val missing = !file.isFile || file.length() == 0L
+            val data = TemplatePreviewData.PdfPreview(profile, profile.pdfPageCount, missing)
+            return@withContext if (missing) {
+                TemplatePreviewResult.Fallback(data, "The original PDF file is missing; showing the stored profile.")
+            } else TemplatePreviewResult.Success(data)
+        }
 
         if (!file.exists() || file.length() == 0L) {
             // File does not exist on disk, fallback to stored profile

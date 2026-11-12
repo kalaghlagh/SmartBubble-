@@ -36,6 +36,12 @@ import com.example.ui.SmartBubbleViewModel
 import com.example.ui.components.FilterChipRow
 import com.example.ui.components.FilterOption
 import com.example.ui.components.TemplatePreviewDialog
+import android.content.Context
+import android.provider.OpenableColumns
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -62,6 +68,7 @@ fun TemplatesScreen(
 
     // Upload dialog state
     var pendingUploadUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingDisplayName by remember { mutableStateOf<String?>(null) }
     var templateNameInput by remember { mutableStateOf("") }
     var showUploadDialog by remember { mutableStateOf(false) }
 
@@ -72,7 +79,9 @@ fun TemplatesScreen(
     ) { uri: Uri? ->
         if (uri != null) {
             pendingUploadUri = uri
-            templateNameInput = "My Custom Template"
+            // The picked file's real name (Storage Access Framework); the template name starts as it.
+            pendingDisplayName = displayNameOf(context, uri)
+            templateNameInput = pendingDisplayName?.substringBeforeLast('.')?.ifBlank { null } ?: "My Custom Template"
             showUploadDialog = true
         }
     }
@@ -82,6 +91,7 @@ fun TemplatesScreen(
             "Docs" -> tmpl.fileType.equals("DOCX", ignoreCase = true)
             "PPTX" -> tmpl.fileType.equals("PPTX", ignoreCase = true)
             "XLSX" -> tmpl.fileType.equals("XLSX", ignoreCase = true)
+            "PDF" -> tmpl.fileType.equals("PDF", ignoreCase = true)
             else -> true
         }
         val matchesSearch = tmpl.name.contains(searchQuery, ignoreCase = true)
@@ -165,6 +175,7 @@ fun TemplatesScreen(
                             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                             "application/vnd.openxmlformats-officedocument.presentationml.presentation",
                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            "application/pdf",
                             "*/*"
                         )
                     )
@@ -202,7 +213,8 @@ fun TemplatesScreen(
                 FilterOption("All", stringResource(R.string.filter_all)),
                 FilterOption("Docs", stringResource(R.string.filter_docs)),
                 FilterOption("PPTX", stringResource(R.string.filter_pptx)),
-                FilterOption("XLSX", stringResource(R.string.filter_xlsx))
+                FilterOption("XLSX", stringResource(R.string.filter_xlsx)),
+                FilterOption("PDF", stringResource(R.string.filter_pdf))
             ),
             selectedKey = selectedFilter,
             onSelect = { selectedFilter = it },
@@ -252,8 +264,13 @@ fun TemplatesScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(filteredTemplates, key = { it.id }) { template ->
+                    // First-page image of PDF templates (rendered on the device, cached).
+                    val thumbnail by produceState<ImageBitmap?>(null, template.id, template.originalFilePath) {
+                        value = viewModel.templateThumbnail(template)?.asImageBitmap()
+                    }
                     TemplateItemCard(
                         template = template,
+                        thumbnail = thumbnail,
                         onPreview = { viewModel.openTemplatePreview(template) },
                         onDuplicate = {
                             templateToDuplicate = template
@@ -337,10 +354,17 @@ fun TemplatesScreen(
     // Template Preview Dialog
     if (selectedPreviewTemplate != null) {
         val tmpl = selectedPreviewTemplate!!
+        val previewThumbnail by produceState<ImageBitmap?>(null, tmpl.id) {
+            value = viewModel.templateThumbnail(tmpl)?.asImageBitmap()
+        }
         TemplatePreviewDialog(
             template = tmpl,
             previewResult = previewResult,
             isLoading = isPreviewLoading,
+            pageImage = previewThumbnail,
+            onOpenOriginal = if (tmpl.fileType.equals("PDF", ignoreCase = true)) {
+                { viewModel.openTemplateOriginal(tmpl) }
+            } else null,
             onClose = { viewModel.closeTemplatePreview() },
             onUseTemplate = {
                 viewModel.selectTemplateForChat(tmpl)
@@ -352,7 +376,7 @@ fun TemplatesScreen(
                 duplicateNameInput = context.getString(R.string.template_duplicate_name_format, tmpl.name)
             },
             onToggleDefault = {
-                val isDef = tmpl.isDefaultWord || tmpl.isDefaultPpt || tmpl.isDefaultExcel
+                val isDef = tmpl.isDefaultWord || tmpl.isDefaultPpt || tmpl.isDefaultExcel || tmpl.isDefaultPdf
                 if (isDef) viewModel.removeDefaultTemplate(tmpl) else viewModel.setDefaultTemplate(tmpl)
             }
         )
@@ -388,7 +412,7 @@ fun TemplatesScreen(
                         val uri = pendingUploadUri
                         val name = templateNameInput.trim().ifBlank { "Custom Template" }
                         if (uri != null) {
-                            viewModel.importTemplateFromUri(uri, name)
+                            viewModel.importTemplateFromUri(uri, name, pendingDisplayName)
                         }
                         showUploadDialog = false
                         pendingUploadUri = null
@@ -414,6 +438,7 @@ fun TemplatesScreen(
 @Composable
 fun TemplateItemCard(
     template: TemplateEntity,
+    thumbnail: ImageBitmap? = null,
     onPreview: () -> Unit,
     onDuplicate: () -> Unit,
     onOptions: () -> Unit = {},
@@ -433,6 +458,7 @@ fun TemplateItemCard(
         "DOCX" -> Color(0xFF1D52D8)
         "PPTX" -> Color(0xFFE05D26)
         "XLSX" -> Color(0xFF107C41)
+        "PDF" -> Color(0xFFD83B01)
         else -> Color(0xFF1D52D8)
     }
 
@@ -440,8 +466,11 @@ fun TemplateItemCard(
         "DOCX" -> "W"
         "PPTX" -> "P"
         "XLSX" -> "X"
+        "PDF" -> "PDF"
         else -> "D"
     }
+    val isPdf = template.fileType.equals("PDF", ignoreCase = true)
+    val profile = remember(template.id, template.profileJson) { TemplateProfile.fromJson(template.profileJson) }
 
     val sizeFormatted = remember(template.fileSize) {
         if (template.fileSize >= 1024 * 1024) {
@@ -455,6 +484,7 @@ fun TemplateItemCard(
         "DOCX" -> template.isDefaultWord
         "PPTX" -> template.isDefaultPpt
         "XLSX" -> template.isDefaultExcel
+        "PDF" -> template.isDefaultPdf
         else -> template.isDefaultWord
     }
 
@@ -478,15 +508,26 @@ fun TemplateItemCard(
                 modifier = Modifier
                     .size(46.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(badgeColor),
+                    .background(if (thumbnail != null) Color.White else badgeColor)
+                    .testTag("template_badge_${template.id}"),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = badgeLetter,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp
-                )
+                if (thumbnail != null) {
+                    Image(
+                        bitmap = thumbnail,
+                        contentDescription = stringResource(R.string.template_pdf_first_page),
+                        contentScale = ContentScale.Crop,
+                        alignment = Alignment.TopCenter,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Text(
+                        text = badgeLetter,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = if (badgeLetter.length > 1) 13.sp else 18.sp
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(14.dp))
@@ -536,6 +577,26 @@ fun TemplateItemCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+
+                // Original file name (when known) and scanned-PDF status.
+                if (profile.sourceFileName.isNotBlank()) {
+                    Text(
+                        text = profile.sourceFileName,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("template_filename_${template.id}")
+                    )
+                }
+                if (isPdf && profile.isImageOnlyPdf) {
+                    Text(
+                        text = stringResource(R.string.template_pdf_no_text_short),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        maxLines = 2
+                    )
+                }
 
                 // 4. Added date
                 Text(
@@ -594,15 +655,19 @@ fun TemplateItemCard(
                         modifier = Modifier.testTag("menu_duplicate_${template.id}")
                     )
 
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.template_options_title)) },
-                        leadingIcon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
-                        onClick = {
-                            menuExpanded = false
-                            onOptions()
-                        },
-                        modifier = Modifier.testTag("menu_options_${template.id}")
-                    )
+                    // Generation settings concern Office template files; a PDF template is applied
+                    // through its measured style only, so the setting does not exist for it.
+                    if (!isPdf) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.template_options_title)) },
+                            leadingIcon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onOptions()
+                            },
+                            modifier = Modifier.testTag("menu_options_${template.id}")
+                        )
+                    }
 
                     if (!isDefault) {
                         DropdownMenuItem(
@@ -722,4 +787,13 @@ fun TemplateOptionsDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
+}
+
+/** The file name of a document picked with the Storage Access Framework, or null. */
+private fun displayNameOf(context: Context, uri: Uri): String? = try {
+    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+        if (c.moveToFirst()) c.getString(0) else null
+    }
+} catch (e: Exception) {
+    null
 }

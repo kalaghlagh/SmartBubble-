@@ -917,6 +917,7 @@ fun ChatScreen(
                                         "DOCX" -> "W"
                                         "PPTX" -> "P"
                                         "XLSX" -> "X"
+                                        "PDF" -> "PDF"
                                         else -> "D"
                                     },
                                     color = Color.White,

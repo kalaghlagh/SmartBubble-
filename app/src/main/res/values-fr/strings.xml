@@ -289,7 +289,7 @@
     <string name="msg_template_options_saved">Paramètres du modèle enregistrés.</string>
     <string name="template_import_unreadable">Le fichier sélectionné n’a pas pu être ouvert.</string>
     <string name="template_import_too_large">Ce fichier est trop volumineux pour servir de modèle (limite : 50 Mo).</string>
-    <string name="template_import_unsupported">Seuls les fichiers Word (DOCX), PowerPoint (PPTX) et Excel (XLSX) peuvent servir de modèles.</string>
+    <string name="template_import_unsupported">Seuls les fichiers Word (DOCX), PowerPoint (PPTX), Excel (XLSX) et PDF peuvent servir de modèles.</string>
 
     <!-- Chat generation progress and cancellation -->
     <string name="chat_stop_generation">Arrêter la génération</string>
@@ -397,4 +397,58 @@
     <string name="offline_generation_failed">Le document n’a pas pu être créé sur cet appareil. Rien n’a été enregistré.</string>
     <string name="offline_save_failed">Le document n’a pas pu être enregistré dans la Bibliothèque.</string>
     <string name="offline_cancelled">Mise en forme hors ligne annulée. Rien n’a été enregistré.</string>
+
+    <!-- PDF templates -->
+    <string name="filter_pdf">PDF</string>
+    <string name="template_import_pdf_encrypted">Ce PDF est protégé par un mot de passe ou chiffré : il ne peut pas servir de modèle. Retirez la protection puis importez-le à nouveau.</string>
+    <string name="template_import_pdf_damaged">Ce PDF n’a pas pu être lu. Il est peut-être endommagé ou dans un format non pris en charge.</string>
+    <string name="template_pdf_imported_no_text">Modèle PDF « %1$s » enregistré. Il ne contient pas de texte extractible (numérisé) : seul son format de page peut être utilisé.</string>
+    <string name="template_pdf_no_text_short">PDF numérisé : aucun texte extractible</string>
+    <string name="template_pdf_first_page">Première page du modèle PDF</string>
+    <string name="pdf_open_original">Ouvrir le PDF d’origine</string>
+    <string name="pdf_original_missing">Le fichier PDF d’origine est introuvable.</string>
+    <string name="pdf_page_image_unavailable">L’image de la page n’est pas disponible sur cet appareil.</string>
+    <string name="pdf_no_text_detail">Ce PDF ne contient pas de texte extractible (il semble numérisé). Les styles de texte détaillés n’ont pas pu être extraits ; seuls le format et l’orientation de page sont utilisés. Il n’a été envoyé à aucun service d’OCR.</string>
+    <string name="pdf_partial_detail">Une partie de ce PDF utilise une compression illisible sur l’appareil ; certains styles peuvent manquer.</string>
+    <string name="pdf_extracted_title">Mise en forme extraite</string>
+    <string name="pdf_extracted_note">Mesurée sur cet appareil à partir du PDF. Le PDF d’origine reste la référence visuelle.</string>
+    <string name="pdf_fidelity_note">Les documents créés avec ce modèle reproduisent ces valeurs au plus près ; ils ne sont pas une copie exacte du PDF.</string>
+    <string name="pdf_portrait">Portrait</string>
+    <string name="pdf_landscape">Paysage</string>
+    <string name="pdf_pages_count">%1$d pages</string>
+    <string name="pdf_label_page">Page</string>
+    <string name="pdf_label_margins">Marges</string>
+    <string name="pdf_margins_value">haut %1$d · bas %2$d · gauche %3$d · droite %4$d pt</string>
+    <string name="pdf_label_body">Texte</string>
+    <string name="pdf_label_headings">Titres</string>
+    <string name="pdf_bold">gras</string>
+    <string name="pdf_label_alignment">Alignement</string>
+    <string name="pdf_headings_short">titres :</string>
+    <string name="pdf_align_start">début</string>
+    <string name="pdf_align_center">centré</string>
+    <string name="pdf_align_end">fin</string>
+    <string name="pdf_align_justify">justifié</string>
+    <string name="pdf_label_spacing">Espacement</string>
+    <string name="pdf_line_spacing">interligne %1$s×</string>
+    <string name="pdf_paragraph_spacing">paragraphe %1$d pt</string>
+    <string name="pdf_label_header">En-tête</string>
+    <string name="pdf_label_footer">Pied de page</string>
+    <string name="pdf_label_page_numbers">Numéros de page</string>
+    <string name="pdf_zone_header">en-tête</string>
+    <string name="pdf_zone_footer">pied de page</string>
+    <string name="pdf_label_lists">Listes</string>
+    <string name="pdf_label_table">Tableaux</string>
+    <string name="pdf_table_detected">détecté · cellules %1$s</string>
+    <string name="pdf_label_direction">Sens</string>
+    <string name="pdf_rtl">De droite à gauche</string>
+    <string name="pdf_ltr">De gauche à droite</string>
+    <string name="pdf_label_background">Arrière-plan</string>
+    <string name="pdf_shapes_count">%1$d formes colorées</string>
+    <string name="pdf_value_none">Non trouvé</string>
+    <string name="offline_note_pdf_no_table">« %1$s » est un modèle PDF sans tableau : il ne peut pas mettre en forme une feuille de calcul.</string>
+    <string name="offline_note_pdf_not_pptx">« %1$s » est un modèle PDF ; les modèles PDF ne peuvent pas servir pour PowerPoint.</string>
+    <string name="offline_note_default_incompatible">Votre modèle par défaut « %1$s » (%2$s) ne peut pas servir pour %3$s.</string>
+    <string name="offline_note_pdf_profile">« %1$s » est un modèle PDF : son format, ses marges, polices, couleurs, en-tête et pied de page sont reproduits depuis le PDF. Le résultat est proche de l’original, sans en être une copie exacte.</string>
+    <string name="offline_note_pdf_image_only">« %1$s » est un PDF numérisé sans texte : seul son format de page peut être utilisé.</string>
+    <string name="offline_note_pdf_shapes_word">Les formes colorées du PDF ne sont pas reproduites dans Word.</string>
 </resources>

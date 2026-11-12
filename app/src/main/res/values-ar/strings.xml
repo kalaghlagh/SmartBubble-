@@ -289,7 +289,7 @@
     <string name="msg_template_options_saved">تم حفظ إعدادات القالب.</string>
     <string name="template_import_unreadable">تعذّر فتح الملف المحدد.</string>
     <string name="template_import_too_large">هذا الملف كبير جدًا لاستخدامه كقالب (الحد الأقصى: 50 ميغابايت).</string>
-    <string name="template_import_unsupported">يمكن استخدام ملفات Word (DOCX) وPowerPoint (PPTX) وExcel (XLSX) فقط كقوالب.</string>
+    <string name="template_import_unsupported">لا يمكن استخدام سوى ملفات Word (DOCX) وPowerPoint (PPTX) وExcel (XLSX) وPDF كقوالب.</string>
 
     <!-- Chat generation progress and cancellation -->
     <string name="chat_stop_generation">إيقاف التوليد</string>
@@ -397,4 +397,58 @@
     <string name="offline_generation_failed">تعذّر إنشاء المستند على هذا الجهاز. لم يُحفظ أي شيء.</string>
     <string name="offline_save_failed">تعذّر حفظ المستند في المكتبة.</string>
     <string name="offline_cancelled">أُلغي التنسيق دون اتصال. لم يُحفظ أي شيء.</string>
+
+    <!-- PDF templates -->
+    <string name="filter_pdf">PDF</string>
+    <string name="template_import_pdf_encrypted">ملف PDF هذا محمي بكلمة مرور أو مشفّر، لذا لا يمكن استخدامه كقالب. أزل الحماية ثم استورده مجددًا.</string>
+    <string name="template_import_pdf_damaged">تعذّرت قراءة ملف PDF هذا. ربما يكون تالفًا أو بتنسيق غير مدعوم.</string>
+    <string name="template_pdf_imported_no_text">تم حفظ قالب PDF «%1$s». لا يحتوي على نص قابل للاستخراج (ممسوح ضوئيًا)، لذا يمكن استخدام حجم صفحته فقط.</string>
+    <string name="template_pdf_no_text_short">PDF ممسوح ضوئيًا: لا يوجد نص قابل للاستخراج</string>
+    <string name="template_pdf_first_page">الصفحة الأولى من قالب PDF</string>
+    <string name="pdf_open_original">فتح ملف PDF الأصلي</string>
+    <string name="pdf_original_missing">ملف PDF الأصلي مفقود.</string>
+    <string name="pdf_page_image_unavailable">صورة الصفحة غير متاحة على هذا الجهاز.</string>
+    <string name="pdf_no_text_detail">لا يحتوي ملف PDF هذا على نص قابل للاستخراج (يبدو ممسوحًا ضوئيًا). تعذّر استخراج أنماط النص التفصيلية؛ يُستخدم حجم الصفحة واتجاهها فقط. لم يُرسل إلى أي خدمة تعرّف ضوئي.</string>
+    <string name="pdf_partial_detail">يستخدم جزء من ملف PDF ضغطًا لا يمكن قراءته على الجهاز؛ قد تنقص بعض الأنماط.</string>
+    <string name="pdf_extracted_title">التنسيق المستخرج</string>
+    <string name="pdf_extracted_note">تم قياسه على هذا الجهاز من ملف PDF. يبقى ملف PDF الأصلي المرجع المرئي.</string>
+    <string name="pdf_fidelity_note">تعيد المستندات المنشأة بهذا القالب هذه القيم بأقرب ما يمكن؛ وهي ليست نسخة مطابقة من ملف PDF.</string>
+    <string name="pdf_portrait">عمودي</string>
+    <string name="pdf_landscape">أفقي</string>
+    <string name="pdf_pages_count">الصفحات: %1$d</string>
+    <string name="pdf_label_page">الصفحة</string>
+    <string name="pdf_label_margins">الهوامش</string>
+    <string name="pdf_margins_value">أعلى %1$d · أسفل %2$d · يسار %3$d · يمين %4$d نقطة</string>
+    <string name="pdf_label_body">النص</string>
+    <string name="pdf_label_headings">العناوين</string>
+    <string name="pdf_bold">عريض</string>
+    <string name="pdf_label_alignment">المحاذاة</string>
+    <string name="pdf_headings_short">العناوين:</string>
+    <string name="pdf_align_start">البداية</string>
+    <string name="pdf_align_center">وسط</string>
+    <string name="pdf_align_end">النهاية</string>
+    <string name="pdf_align_justify">ضبط</string>
+    <string name="pdf_label_spacing">التباعد</string>
+    <string name="pdf_line_spacing">السطر %1$s×</string>
+    <string name="pdf_paragraph_spacing">الفقرة %1$d نقطة</string>
+    <string name="pdf_label_header">الترويسة</string>
+    <string name="pdf_label_footer">التذييل</string>
+    <string name="pdf_label_page_numbers">أرقام الصفحات</string>
+    <string name="pdf_zone_header">الترويسة</string>
+    <string name="pdf_zone_footer">التذييل</string>
+    <string name="pdf_label_lists">القوائم</string>
+    <string name="pdf_label_table">الجداول</string>
+    <string name="pdf_table_detected">مكتشف · الخلايا %1$s</string>
+    <string name="pdf_label_direction">الاتجاه</string>
+    <string name="pdf_rtl">من اليمين إلى اليسار</string>
+    <string name="pdf_ltr">من اليسار إلى اليمين</string>
+    <string name="pdf_label_background">الخلفية</string>
+    <string name="pdf_shapes_count">أشكال ملونة: %1$d</string>
+    <string name="pdf_value_none">غير موجود</string>
+    <string name="offline_note_pdf_no_table">«%1$s» قالب PDF بدون جدول، لذا لا يمكنه تنسيق جدول بيانات.</string>
+    <string name="offline_note_pdf_not_pptx">«%1$s» قالب PDF؛ لا يمكن استخدام قوالب PDF لعروض PowerPoint.</string>
+    <string name="offline_note_default_incompatible">لا يمكن استخدام قالبك الافتراضي «%1$s» (%2$s) لملف %3$s.</string>
+    <string name="offline_note_pdf_profile">«%1$s» قالب PDF: يُعاد إنتاج حجم صفحته وهوامشه وخطوطه وألوانه وترويسته وتذييله من ملف PDF. النتيجة قريبة من الأصل وليست نسخة مطابقة.</string>
+    <string name="offline_note_pdf_image_only">«%1$s» ملف PDF ممسوح ضوئيًا بدون نص: يمكن استخدام حجم صفحته فقط.</string>
+    <string name="offline_note_pdf_shapes_word">لا تُعاد إنتاج الأشكال الملونة من ملف PDF في Word.</string>
 </resources>

@@ -51,7 +51,9 @@ import com.example.data.model.DocumentEntity
 import com.example.data.model.ProviderEntity
 import com.example.data.model.TemplateEntity
 import com.example.template.analysis.TemplateAnalysisEngine
-import com.example.template.analysis.TemplateFileInspector
+import com.example.template.storage.TemplateImportException
+import com.example.template.storage.TemplateImporter
+import com.example.template.storage.TemplateThumbnails
 import com.example.template.domain.TemplateProfile
 import com.example.template.preview.TemplatePreviewEngine
 import com.example.template.preview.TemplatePreviewResult
@@ -96,9 +98,6 @@ enum class AppNavTab {
 }
 
 class SmartBubbleViewModel(application: Application) : AndroidViewModel(application) {
-
-    /** A template import problem with a localized explanation for the user. */
-    private class TemplateImportException(val messageRes: Int) : Exception()
 
     private companion object {
         const val TAG = "SmartBubbleViewModel"
@@ -918,73 +917,80 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    fun importTemplateFromUri(uri: Uri, userDefinedName: String) {
-        viewModelScope.launch {
-            var persistentTemplateFile: File? = null
-            var saved = false
-            try {
-                // Copying and analysing the file is blocking I/O: keep it off the main thread.
-                val (file, profile) = withContext(Dispatchers.IO) {
-                    val templateDir = File(context.filesDir, "templates").apply { mkdirs() }
-                    val staging = File(templateDir, "import_${UUID.randomUUID()}.tmp")
-                    persistentTemplateFile = staging
+    private val templatesDir: File get() = File(context.filesDir, "templates")
 
-                    val input = context.contentResolver.openInputStream(uri)
-                        ?: throw TemplateImportException(R.string.template_import_unreadable)
-                    // Bounded copy: stop as soon as the size limit is exceeded.
-                    input.use { stream ->
-                        FileOutputStream(staging).use { output ->
-                            val buffer = ByteArray(64 * 1024)
-                            var total = 0L
-                            while (true) {
-                                val read = stream.read(buffer)
-                                if (read < 0) break
-                                total += read
-                                if (total > TemplateFileInspector.MAX_FILE_BYTES) {
-                                    throw TemplateImportException(R.string.template_import_too_large)
-                                }
-                                output.write(buffer, 0, read)
-                            }
-                        }
-                    }
-                    // The type comes from the file content, not from its name or MIME type.
-                    val type = when (val result = TemplateFileInspector.inspect(staging)) {
-                        is TemplateFileInspector.Result.Valid -> result.type
-                        TemplateFileInspector.Result.TooLarge ->
-                            throw TemplateImportException(R.string.template_import_too_large)
-                        TemplateFileInspector.Result.NotOfficeDocument ->
-                            throw TemplateImportException(R.string.template_import_unsupported)
-                    }
-                    val target = File(templateDir, "template_${UUID.randomUUID()}.${type.extension}")
-                    if (!staging.renameTo(target)) throw java.io.IOException("Could not store the template file.")
-                    persistentTemplateFile = target
-                    target to templateAnalysisEngine.analyzeFile(target, userDefinedName)
-                }
-                val templateEntity = TemplateEntity(
-                    id = profile.templateId,
-                    name = profile.name,
-                    fileType = profile.originalFileType,
-                    originalFilePath = file.absolutePath,
-                    fileSize = file.length(),
-                    profileJson = profile.toJson(),
-                    compatibilityStatus = "Compatible",
-                    thumbnailColorHex = profile.primaryColorHex
+    private val templateImporter by lazy {
+        TemplateImporter(
+            templatesDir = templatesDir,
+            dao = database.templateDao(),
+            analysis = templateAnalysisEngine,
+            pdfThumbnail = { pdf, id -> TemplateThumbnails.renderPdfFirstPage(pdf, TemplateThumbnails.fileFor(templatesDir, id)) }
+        )
+    }
+
+    /**
+     * Imports a DOCX, PPTX, XLSX or PDF template picked with the Storage Access Framework. Copy,
+     * type check and analysis run locally off the main thread; [sourceFileName] is the picked
+     * file's name (shown for the template).
+     */
+    fun importTemplateFromUri(uri: Uri, userDefinedName: String, sourceFileName: String? = null) {
+        viewModelScope.launch {
+            try {
+                val entity = templateImporter.import(
+                    open = { context.contentResolver.openInputStream(uri) },
+                    userName = userDefinedName,
+                    sourceFileName = sourceFileName
                 )
-                database.templateDao().insertTemplate(templateEntity)
-                saved = true
-                _snackBarMessage.value = str(R.string.msg_template_imported, profile.name)
+                _snackBarMessage.value = when {
+                    entity.compatibilityStatus == "Review" -> str(R.string.template_pdf_imported_no_text, entity.name)
+                    else -> str(R.string.msg_template_imported, entity.name)
+                }
             } catch (e: CancellationException) {
-                if (!saved) withContext(NonCancellable + Dispatchers.IO) { persistentTemplateFile?.delete() }
                 throw e
             } catch (e: TemplateImportException) {
-                if (!saved) withContext(Dispatchers.IO) { persistentTemplateFile?.delete() }
-                _snackBarMessage.value = str(e.messageRes)
+                _snackBarMessage.value = str(
+                    when (e.reason) {
+                        TemplateImportException.Reason.UNREADABLE -> R.string.template_import_unreadable
+                        TemplateImportException.Reason.TOO_LARGE -> R.string.template_import_too_large
+                        TemplateImportException.Reason.UNSUPPORTED -> R.string.template_import_unsupported
+                        TemplateImportException.Reason.PDF_ENCRYPTED -> R.string.template_import_pdf_encrypted
+                        TemplateImportException.Reason.PDF_DAMAGED -> R.string.template_import_pdf_damaged
+                    }
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "importTemplateFromUri failed", e)
-                // Do not leave an orphaned partial copy behind.
-                if (!saved) withContext(Dispatchers.IO) { persistentTemplateFile?.delete() }
                 _snackBarMessage.value = "Template import failed: ${e.message}"
             }
+        }
+    }
+
+    /** First-page image of a PDF template (rendered on the device and cached), or null. */
+    suspend fun templateThumbnail(template: TemplateEntity): android.graphics.Bitmap? {
+        if (!template.fileType.equals("PDF", ignoreCase = true)) return null
+        return withContext(Dispatchers.IO) {
+            TemplateThumbnails.load(templatesDir, template.id, File(template.originalFilePath))
+        }
+    }
+
+    /**
+     * Opens the original PDF of a template in a PDF viewer. A read-only copy in the app's export
+     * cache is shared (the template folder itself is never exposed); the original is unchanged.
+     */
+    fun openTemplateOriginal(template: TemplateEntity) {
+        launchSafely("openTemplateOriginal") {
+            val source = File(template.originalFilePath)
+            if (!source.isFile) {
+                _snackBarMessage.value = str(R.string.msg_file_not_found)
+                return@launchSafely
+            }
+            val copy = withContext(Dispatchers.IO) {
+                val dir = File(context.cacheDir, "pdf_exports").apply { mkdirs() }
+                val name = TemplateProfile.fromJson(template.profileJson).sourceFileName.ifBlank { template.name }
+                File(dir, DocumentFileNames.sanitizeBaseName(DocumentFileNames.stripDocumentExtension(name.removeSuffix(".pdf"))) + ".pdf").also {
+                    source.copyTo(it, overwrite = true)
+                }
+            }
+            deliveryManager.openFile(copy, DeliveryManager.MIME_PDF)
         }
     }
 
@@ -1000,6 +1006,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             if (template.originalFilePath.isNotBlank()) {
                 withContext(Dispatchers.IO) { File(template.originalFilePath).delete() }
             }
+            withContext(Dispatchers.IO) { TemplateThumbnails.fileFor(templatesDir, template.id).delete() }
             _snackBarMessage.value = str(R.string.msg_template_deleted)
         }
     }
@@ -1020,6 +1027,10 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                         "XLSX" -> {
                             dao.clearDefaultExcel()
                             dao.setDefaultExcelFlag(template.id, true)
+                        }
+                        "PDF" -> {
+                            dao.clearDefaultPdf()
+                            dao.setDefaultPdfFlag(template.id, true)
                         }
                         else -> { // "DOCX" and any other type (unchanged behaviour)
                             dao.clearDefaultWord()
@@ -1046,6 +1057,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 when (template.fileType.uppercase()) {
                     "PPTX" -> dao.setDefaultPptFlag(template.id, false)
                     "XLSX" -> dao.setDefaultExcelFlag(template.id, false)
+                    "PDF" -> dao.setDefaultPdfFlag(template.id, false)
                     else -> dao.setDefaultWordFlag(template.id, false)
                 }
                 _snackBarMessage.value = str(R.string.msg_template_removed_default, template.name)
@@ -1103,6 +1115,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     "DOCX" -> "docx"
                     "PPTX" -> "pptx"
                     "XLSX" -> "xlsx"
+                    "PDF" -> "pdf"
                     else -> "docx"
                 }
                 val newFile = File(templateDir, "template_${newId}.$ext")

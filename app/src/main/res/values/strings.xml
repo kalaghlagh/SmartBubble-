@@ -289,7 +289,7 @@
     <string name="msg_template_options_saved">Template settings saved.</string>
     <string name="template_import_unreadable">The selected file could not be opened.</string>
     <string name="template_import_too_large">This file is too large to use as a template (limit: 50 MB).</string>
-    <string name="template_import_unsupported">Only Word (DOCX), PowerPoint (PPTX) and Excel (XLSX) files can be used as templates.</string>
+    <string name="template_import_unsupported">Only Word (DOCX), PowerPoint (PPTX), Excel (XLSX) and PDF files can be used as templates.</string>
 
     <!-- Chat generation progress and cancellation -->
     <string name="chat_stop_generation">Stop generating</string>
@@ -397,4 +397,58 @@
     <string name="offline_generation_failed">The document could not be created on this device. Nothing was saved.</string>
     <string name="offline_save_failed">The document could not be saved to the Library.</string>
     <string name="offline_cancelled">Offline formatting cancelled. Nothing was saved.</string>
+
+    <!-- PDF templates -->
+    <string name="filter_pdf">PDF</string>
+    <string name="template_import_pdf_encrypted">This PDF is password-protected or encrypted, so it cannot be used as a template. Remove the protection and import it again.</string>
+    <string name="template_import_pdf_damaged">This PDF could not be read. It may be damaged or use an unsupported format.</string>
+    <string name="template_pdf_imported_no_text">PDF template “%1$s” saved. It contains no extractable text (scanned), so only its page size can be used.</string>
+    <string name="template_pdf_no_text_short">Scanned PDF: no extractable text</string>
+    <string name="template_pdf_first_page">First page of the PDF template</string>
+    <string name="pdf_open_original">Open original PDF</string>
+    <string name="pdf_original_missing">The original PDF file is missing.</string>
+    <string name="pdf_page_image_unavailable">The page image is not available on this device.</string>
+    <string name="pdf_no_text_detail">This PDF has no extractable text (it looks scanned). Detailed text styles could not be extracted; only its page size and orientation are used. It was not sent to any OCR service.</string>
+    <string name="pdf_partial_detail">Part of this PDF uses a compression that cannot be read on the device; some styles may be missing.</string>
+    <string name="pdf_extracted_title">Extracted formatting</string>
+    <string name="pdf_extracted_note">Measured on this device from the PDF. The original PDF stays the visual reference.</string>
+    <string name="pdf_fidelity_note">Documents made with this template reproduce these values as closely as possible; they are not an exact copy of the PDF.</string>
+    <string name="pdf_portrait">Portrait</string>
+    <string name="pdf_landscape">Landscape</string>
+    <string name="pdf_pages_count">%1$d pages</string>
+    <string name="pdf_label_page">Page</string>
+    <string name="pdf_label_margins">Margins</string>
+    <string name="pdf_margins_value">top %1$d · bottom %2$d · left %3$d · right %4$d pt</string>
+    <string name="pdf_label_body">Body text</string>
+    <string name="pdf_label_headings">Headings</string>
+    <string name="pdf_bold">bold</string>
+    <string name="pdf_label_alignment">Alignment</string>
+    <string name="pdf_headings_short">headings:</string>
+    <string name="pdf_align_start">start</string>
+    <string name="pdf_align_center">centered</string>
+    <string name="pdf_align_end">end</string>
+    <string name="pdf_align_justify">justified</string>
+    <string name="pdf_label_spacing">Spacing</string>
+    <string name="pdf_line_spacing">line %1$s×</string>
+    <string name="pdf_paragraph_spacing">paragraph %1$d pt</string>
+    <string name="pdf_label_header">Header</string>
+    <string name="pdf_label_footer">Footer</string>
+    <string name="pdf_label_page_numbers">Page numbers</string>
+    <string name="pdf_zone_header">header</string>
+    <string name="pdf_zone_footer">footer</string>
+    <string name="pdf_label_lists">Lists</string>
+    <string name="pdf_label_table">Tables</string>
+    <string name="pdf_table_detected">detected · cells %1$s</string>
+    <string name="pdf_label_direction">Direction</string>
+    <string name="pdf_rtl">Right to left</string>
+    <string name="pdf_ltr">Left to right</string>
+    <string name="pdf_label_background">Background</string>
+    <string name="pdf_shapes_count">%1$d colored shapes</string>
+    <string name="pdf_value_none">Not found</string>
+    <string name="offline_note_pdf_no_table">“%1$s” is a PDF template without a table, so it cannot format a spreadsheet.</string>
+    <string name="offline_note_pdf_not_pptx">“%1$s” is a PDF template; PDF templates cannot be used for PowerPoint.</string>
+    <string name="offline_note_default_incompatible">Your default template “%1$s” (%2$s) cannot be used for %3$s.</string>
+    <string name="offline_note_pdf_profile">“%1$s” is a PDF template: its page size, margins, fonts, colors, header and footer are reproduced from the PDF. The result is close to the original, not an exact copy.</string>
+    <string name="offline_note_pdf_image_only">“%1$s” is a scanned PDF without text: only its page size can be used.</string>
+    <string name="offline_note_pdf_shapes_word">Colored shapes of the PDF are not reproduced in Word.</string>
 </resources>

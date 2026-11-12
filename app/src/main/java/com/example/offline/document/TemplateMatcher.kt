@@ -19,19 +19,40 @@ class RoomTemplateRepository(private val dao: TemplateDao) : TemplateRepository 
     override suspend fun defaultFor(templateType: String): TemplateEntity? = when (templateType) {
         "PPTX" -> dao.getDefaultPptTemplate()
         "XLSX" -> dao.getDefaultExcelTemplate()
+        "PDF" -> dao.getDefaultPdfTemplate()
         else -> dao.getDefaultWordTemplate()
     }
 
     override suspend fun all(): List<TemplateEntity> = dao.getAllTemplatesOnce()
 }
 
+/** Why a PDF template cannot be used for a format. */
+enum class IncompatibleReason { PDF_NO_TABLE_FOR_XLSX, PDF_NOT_FOR_PPTX }
+
 /** Why a template was used. */
 enum class TemplateSource { EXPLICIT, DEFAULT, BUILT_IN }
 
 /** Facts about template fidelity shown in the preview (localized by the UI). */
 sealed class TemplateNote {
-    /** The chosen template does not fit the output format; it was not used. */
-    data class Incompatible(val templateName: String, val templateType: String, val format: OfflineFormat) : TemplateNote()
+    /**
+     * The chosen (or default) template does not fit the output format; it was not used.
+     * @property reason why a PDF template does not fit (null for a plain type mismatch)
+     */
+    data class Incompatible(
+        val templateName: String,
+        val templateType: String,
+        val format: OfflineFormat,
+        val reason: IncompatibleReason? = null,
+        val isDefault: Boolean = false
+    ) : TemplateNote()
+
+    /**
+     * A PDF template is applied through its measured style (page size, margins, fonts, colors,
+     * header/footer): close to the original but not an exact copy.
+     * @property imageOnly scanned PDF: only its page size could be used
+     * @property shapesNotInWord its colored shapes cannot be reproduced in a Word document
+     */
+    data class PdfProfileApplied(val templateName: String, val imageOnly: Boolean, val shapesNotInWord: Boolean) : TemplateNote()
 
     /** The chosen template no longer exists in My Templates. */
     object NotFound : TemplateNote()
@@ -72,6 +93,11 @@ data class TemplateMatch(
  *  3. the built-in clean formatting profile.
  * An unrelated template is never used silently: an explicit template of the wrong type is
  * reported with [TemplateNote.Incompatible] and the choice continues with step 2.
+ *
+ * PDF templates take part like the others. They apply to Word and PDF output (through their
+ * measured style), to Excel only when the PDF contains a table, and never to PowerPoint. When
+ * no default of the output's own type exists, the default PDF template is considered; if it
+ * does not fit, that is reported and the built-in formatting is used.
  */
 class TemplateMatcher(private val repository: TemplateRepository) {
 
@@ -79,7 +105,7 @@ class TemplateMatcher(private val repository: TemplateRepository) {
         /** Selection value meaning "use the built-in formatting" chosen explicitly. */
         const val BUILT_IN_ID = "offline-builtin"
 
-        private val SUPPORTED_TYPES = setOf("DOCX", "PPTX", "XLSX")
+        private val SUPPORTED_TYPES = setOf("DOCX", "PPTX", "XLSX", "PDF")
 
         /**
          * Neutral formatting used when no template applies. Unlike the AI path's default profile
@@ -100,9 +126,22 @@ class TemplateMatcher(private val repository: TemplateRepository) {
             keepTemplateContent = false
         )
 
-        fun isCompatible(entity: TemplateEntity, format: OfflineFormat): Boolean {
+        fun isCompatible(entity: TemplateEntity, format: OfflineFormat): Boolean = incompatibility(entity, format) == null &&
+            entity.fileType.uppercase() in SUPPORTED_TYPES
+
+        /** Null when [entity] can be used for [format]; otherwise why it cannot. */
+        fun incompatibility(entity: TemplateEntity, format: OfflineFormat): TemplateNote.Incompatible? {
             val type = entity.fileType.uppercase()
-            return type in SUPPORTED_TYPES && type == format.templateType
+            val mismatch = TemplateNote.Incompatible(entity.name, type, format)
+            if (type == "PDF") {
+                return when (format) {
+                    OfflineFormat.DOCX, OfflineFormat.PDF -> null
+                    OfflineFormat.XLSX -> if (TemplateProfile.fromJson(entity.profileJson).tableDetected) null
+                        else mismatch.copy(reason = IncompatibleReason.PDF_NO_TABLE_FOR_XLSX)
+                    OfflineFormat.PPTX -> mismatch.copy(reason = IncompatibleReason.PDF_NOT_FOR_PPTX)
+                }
+            }
+            return if (type in SUPPORTED_TYPES && type == format.templateType) null else mismatch
         }
     }
 
@@ -122,11 +161,26 @@ class TemplateMatcher(private val repository: TemplateRepository) {
             when {
                 explicit == null -> notes.add(TemplateNote.NotFound)
                 isCompatible(explicit, format) -> return resolve(TemplateSource.EXPLICIT, explicit, format, notes)
-                else -> notes.add(TemplateNote.Incompatible(explicit.name, explicit.fileType.uppercase(), format))
+                else -> notes.add(incompatibility(explicit, format) ?: TemplateNote.Incompatible(explicit.name, explicit.fileType.uppercase(), format))
             }
         }
-        val default = repository.defaultFor(format.templateType)?.takeIf { isCompatible(it, format) }
-        if (default != null) return resolve(TemplateSource.DEFAULT, default, format, notes)
+        // Defaults: the output's own type first, then the other compatible type.
+        val defaultTypes = when (format) {
+            OfflineFormat.PDF -> listOf("PDF", "DOCX")
+            OfflineFormat.DOCX -> listOf("DOCX", "PDF")
+            OfflineFormat.XLSX -> listOf("XLSX", "PDF")
+            OfflineFormat.PPTX -> listOf("PPTX", "PDF")
+        }
+        val rejectedDefaults = ArrayList<TemplateNote>()
+        for (type in defaultTypes) {
+            val candidate = repository.defaultFor(type) ?: continue
+            val problem = incompatibility(candidate, format)
+            if (problem == null && candidate.fileType.uppercase() in SUPPORTED_TYPES) {
+                return resolve(TemplateSource.DEFAULT, candidate, format, notes)
+            }
+            rejectedDefaults.add((problem ?: TemplateNote.Incompatible(candidate.name, candidate.fileType.uppercase(), format)).copy(isDefault = true))
+        }
+        notes.addAll(rejectedDefaults)
         notes.add(TemplateNote.NoTemplate(format))
         return TemplateMatch(TemplateSource.BUILT_IN, null, builtInProfile(), null, notes)
     }
@@ -134,6 +188,11 @@ class TemplateMatcher(private val repository: TemplateRepository) {
     private fun resolve(source: TemplateSource, entity: TemplateEntity, format: OfflineFormat, notes: MutableList<TemplateNote>): TemplateMatch {
         // A damaged profile falls back to default colors inside fromJson.
         val profile = TemplateProfile.fromJson(entity.profileJson)
+        if (profile.isPdfLayout) {
+            // The PDF is never used as a file template: its measured style is reproduced.
+            notes.add(TemplateNote.PdfProfileApplied(entity.name, profile.isImageOnlyPdf, format == OfflineFormat.DOCX && profile.decorations.isNotEmpty()))
+            return TemplateMatch(source, entity, profile, null, notes)
+        }
         val file = File(entity.originalFilePath).takeIf { it.isFile && it.length() > 0 }
         when {
             format == OfflineFormat.PDF -> notes.add(TemplateNote.PdfProfileOnly)

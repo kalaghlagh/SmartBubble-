@@ -5,12 +5,12 @@ import java.util.zip.ZipInputStream
 
 /**
  * Checks an imported file before it is accepted as a template. The type is decided by the
- * file's CONTENT (its OOXML main part), never by its name or the MIME type a provider claims,
+ * file's CONTENT (its OOXML main part or the PDF header), never by its name or the MIME type a provider claims,
  * and the archive is bounded so a crafted file cannot exhaust memory when it is processed.
  */
 object TemplateFileInspector {
 
-    enum class Type(val extension: String) { DOCX("docx"), PPTX("pptx"), XLSX("xlsx") }
+    enum class Type(val extension: String) { DOCX("docx"), PPTX("pptx"), XLSX("xlsx"), PDF("pdf") }
 
     sealed class Result {
         data class Valid(val type: Type) : Result()
@@ -28,6 +28,8 @@ object TemplateFileInspector {
     fun inspect(file: File): Result {
         if (!file.isFile || file.length() == 0L) return Result.NotOfficeDocument
         if (file.length() > MAX_FILE_BYTES) return Result.TooLarge
+        // PDF templates: recognized by their "%PDF-" header (readability is checked when analyzed).
+        if (com.example.template.pdf.PdfDocumentReader.looksLikePdf(file)) return Result.Valid(Type.PDF)
         var type: Type? = null
         var entries = 0
         var unpacked = 0L

@@ -160,9 +160,9 @@ provider, and only after you confirm.
 
 ### My Templates
 
-- Import DOCX, PPTX and XLSX files (up to 50 MB). The file type is checked from the file's
+- Import DOCX, PPTX, XLSX and PDF files (up to 50 MB). The file type is checked from the file's
   content. The original template file is never modified; generated files are separate.
-- Preview, duplicate, delete, and set one default template per file type.
+- Preview, duplicate, delete, and set one default template per file type (PDF included).
 - **Generation settings** per template:
   - *Use the template file's design* – keeps the template's own styles and structure. Turned
     off, only its colors and fonts are applied to a newly built file.
@@ -174,10 +174,44 @@ provider, and only after you confirm.
 | DOCX | Styles, headers, footers, page size and margins. `{{TITLE}}`, `{{SUBTITLE}}`, `{{DATE}}` and `{{BODY}}` placeholders are filled. |
 | PPTX | Slide masters, layouts and theme. New slides use the template's title and content layouts. |
 | XLSX | Cell styles and theme. New sheets use SmartBubble's header and cell styles added to the template's style sheet. |
-| PDF | Colors and margins only (PDF output is drawn by the app, not built from a template file). |
+| PDF output from a Word template | Colors and margins only (PDF output is drawn by the app, not built from a template file). |
+| PDF template | Its measured layout and styles (see below). |
 
 Formatting is preserved where the engines support it; it is not guaranteed to be identical.
 Charts, images inside slides, pivot tables, macros and PowerPoint speaker notes are not generated.
+
+#### PDF templates
+
+A PDF can be imported as a template like an Office file. The original PDF is copied into the
+app's private storage, never changed, and stays the visual reference: the preview shows its first
+page (rendered on the device) and *Open original PDF* opens a read-only copy in a PDF viewer.
+
+At import the PDF is measured **on the device** (no AI provider, no OCR service, nothing
+uploaded): page size and orientation, margins, header and footer text and positions, page
+numbers, fonts and sizes of body text and headings, text and heading colors, alignment, line and
+paragraph spacing, list markers and indent, ruled tables (border color, header-row fill, cell
+alignment), page background and colored shapes. Only the first three pages are analyzed. The
+preview lists every measured value; values that were not found are shown as "Not found".
+
+| Output | What a PDF template gives |
+|---|---|
+| DOCX | Page size, orientation, margins, fonts, sizes, colors, alignment, spacing, list indent, table borders and header fill, page background, and a real Word header/footer with the PDF's own header/footer text and a page-number field. Colored shapes are not reproduced. |
+| PDF | Page size, margins, background, colored shapes, header/footer text and page numbers at their measured positions, fonts mapped to the closest Android family (serif, sans-serif or monospace), sizes, colors, alignment and spacing. |
+| XLSX | Only when the PDF contains a table: its font and table header color. Otherwise the preview explains why it is not used. |
+| PPTX | Not supported: a PDF template is never used for presentations. |
+
+PDF templates follow the usual priority (selected template, then default, then the built-in
+formatting). For Word output the default Word template comes first and the default PDF template
+is used only when there is none; for PDF output it is the other way round. A default PDF template
+that does not fit the output (for example PowerPoint) is reported and the built-in formatting is
+used.
+
+Limits: the result is close to the PDF, not an exact copy. Fonts that are not on the device are
+replaced in PDF output; text inside images, gradients and vector artwork are not reproduced.
+Scanned (image-only) PDFs are kept and previewed, but only their page size can be used; the app
+says so instead of treating them as empty. Encrypted or password-protected PDFs and damaged PDFs
+are refused with a clear message. Only Flate-compressed PDF content can be measured; other
+compressions are reported as partially read.
 
 ### Library
 

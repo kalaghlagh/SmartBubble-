@@ -1,6 +1,7 @@
 package com.example.template.analysis
 
 import com.example.template.domain.TemplateProfile
+import com.example.template.pdf.PdfTemplateAnalyzer
 import java.io.File
 import java.io.FileInputStream
 import java.util.UUID
@@ -8,7 +9,12 @@ import java.util.zip.ZipInputStream
 
 class TemplateAnalysisEngine {
 
-    fun analyzeFile(file: File, userDefinedName: String? = null): TemplateProfile {
+    /**
+     * @param sourceFileName the name of the file the user picked (kept for display)
+     * @throws com.example.template.pdf.PdfEncryptedException for an encrypted PDF
+     * @throws com.example.template.pdf.PdfReadException for a PDF that cannot be read
+     */
+    fun analyzeFile(file: File, userDefinedName: String? = null, sourceFileName: String? = null): TemplateProfile {
         val extension = file.extension.lowercase()
         val templateId = UUID.randomUUID().toString()
         val name = userDefinedName?.ifBlank { null } ?: file.nameWithoutExtension.replace('_', ' ')
@@ -17,7 +23,7 @@ class TemplateAnalysisEngine {
             "docx" -> analyzeDocx(file, templateId, name)
             "pptx" -> analyzePptx(file, templateId, name)
             "xlsx" -> analyzeXlsx(file, templateId, name)
-            "pdf" -> analyzePdf(file, templateId, name)
+            "pdf" -> analyzePdf(file, templateId, name, sourceFileName ?: file.name)
             else -> {
                 TemplateProfile.defaultProfile().copy(
                     templateId = templateId,
@@ -180,22 +186,10 @@ class TemplateAnalysisEngine {
         )
     }
 
-    private fun analyzePdf(file: File, templateId: String, name: String): TemplateProfile {
-        // PDF reference analysis: standard A4 visual reference
-        return TemplateProfile(
-            templateId = templateId,
-            name = name,
-            originalFileType = "PDF",
-            primaryColorHex = "#24D6E8",
-            secondaryColorHex = "#10182B",
-            headingFont = "Helvetica",
-            bodyFont = "Helvetica",
-            marginTopPt = 54,
-            marginBottomPt = 54,
-            marginLeftPt = 54,
-            marginRightPt = 54,
-            isAnalysisComplete = true,
-            extractedPropertiesSummary = "PDF Visual Reference Profile (A4 Layout, Clean Margins, Corporate Palette)"
-        )
-    }
+    /**
+     * PDF templates are measured locally (page layout, fonts, colors, header/footer, tables...).
+     * Scanned PDFs keep their page size and are marked as having no extractable text.
+     */
+    private fun analyzePdf(file: File, templateId: String, name: String, sourceFileName: String): TemplateProfile =
+        PdfTemplateAnalyzer.analyze(file).toProfile(templateId, name, sourceFileName)
 }

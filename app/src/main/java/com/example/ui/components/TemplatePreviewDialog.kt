@@ -45,7 +45,11 @@ fun TemplatePreviewDialog(
     onClose: () -> Unit,
     onUseTemplate: () -> Unit,
     onDuplicate: () -> Unit,
-    onToggleDefault: () -> Unit
+    onToggleDefault: () -> Unit,
+    /** Rendered first page (PDF templates). */
+    pageImage: androidx.compose.ui.graphics.ImageBitmap? = null,
+    /** Opens the original file in a viewer (PDF templates). */
+    onOpenOriginal: (() -> Unit)? = null
 ) {
     Dialog(
         onDismissRequest = onClose,
@@ -288,6 +292,9 @@ fun TemplatePreviewDialog(
                             is TemplatePreviewData.XlsxPreview -> {
                                 XlsxRealisticPreview(xlsx = previewData)
                             }
+                            is TemplatePreviewData.PdfPreview -> {
+                                PdfTemplatePreview(pdf = previewData, pageImage = pageImage, onOpenOriginal = onOpenOriginal)
+                            }
                             null -> {
                                 // Empty state placeholder
                                 Box(
@@ -319,11 +326,12 @@ fun TemplateMetadataHeaderCard(
     template: TemplateEntity,
     onToggleDefault: () -> Unit
 ) {
-    val isDefault = template.isDefaultWord || template.isDefaultPpt || template.isDefaultExcel
+    val isDefault = template.isDefaultWord || template.isDefaultPpt || template.isDefaultExcel || template.isDefaultPdf
     val typeColor = when (template.fileType.uppercase()) {
         "DOCX" -> Color(0xFF1D52D8)
         "PPTX" -> Color(0xFFE05D26)
         "XLSX" -> Color(0xFF107C41)
+        "PDF" -> Color(0xFFD83B01)
         else -> MaterialTheme.colorScheme.primary
     }
 
