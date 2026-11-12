@@ -159,6 +159,25 @@ class ProviderManager(
     }
 
     /**
+     * Models offered by a provider, for the Settings model picker. Uses [apiKey] when given
+     * (provider not saved yet or key being replaced), else the stored key of [providerId].
+     * Returns null when the provider has no model list the app supports.
+     */
+    suspend fun fetchModels(type: AiProviderType, baseUrl: String, apiKey: String, providerId: String?): List<ModelInfo>? =
+        withContext(Dispatchers.IO) {
+            if (!type.listsModels) return@withContext null
+            val key = apiKey.trim().ifBlank {
+                val id = providerId ?: throw AiException(AiErrorKind.MISSING_API_KEY)
+                try {
+                    credentials.readKey(id)
+                } catch (e: CredentialSecurityException) {
+                    throw AiException(AiErrorKind.CREDENTIAL_UNAVAILABLE, cause = e)
+                } ?: throw AiException(AiErrorKind.MISSING_API_KEY)
+            }
+            AiProviderFactory.createClient(type, baseUrl.trim(), key, model = "").listModels()
+        }
+
+    /**
      * Real connection test: an authenticated request that also checks the configured model.
      * The result is stored as the provider's status. Throws [AiException] on failure.
      */

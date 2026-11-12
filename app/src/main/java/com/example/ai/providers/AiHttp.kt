@@ -59,9 +59,17 @@ object AiHttp {
     fun parseBaseUrl(raw: String): HttpUrl {
         val url = raw.trim().trimEnd('/').toHttpUrlOrNull()
             ?: throw AiException(AiErrorKind.INVALID_CONFIGURATION, "Invalid base URL")
-        if (!url.isHttps) throw AiException(AiErrorKind.INVALID_CONFIGURATION, "Base URL must use https")
+        val loopbackForTests = allowLoopbackHttpForTests && url.host in setOf("127.0.0.1", "localhost")
+        if (!url.isHttps && !loopbackForTests) throw AiException(AiErrorKind.INVALID_CONFIGURATION, "Base URL must use https")
         return url
     }
+
+    /**
+     * Unit tests only: lets clients talk to a local mock server over http://127.0.0.1. Never set
+     * by the app (and the app's network security config forbids cleartext traffic anyway).
+     */
+    @Volatile
+    internal var allowLoopbackHttpForTests = false
 
     fun jsonPost(url: HttpUrl, headers: Map<String, String>, body: Map<String, Any?>): Request =
         Request.Builder().url(url).apply { headers.forEach { (k, v) -> header(k, v) } }
@@ -203,6 +211,8 @@ object AiHttp {
             code == 400 && (lower.contains("api key not valid") || body.contains("API_KEY_INVALID")) ->
                 AiErrorKind.INVALID_API_KEY
             code == 402 -> AiErrorKind.QUOTA_OR_BILLING
+            // OpenRouter reports moderation of the input as 403 ("flagged").
+            code == 403 && (lower.contains("moderation") || lower.contains("flagged")) -> AiErrorKind.CONTENT_BLOCKED
             code == 403 -> AiErrorKind.PERMISSION_DENIED
             code == 404 -> AiErrorKind.MODEL_NOT_FOUND
             code == 408 -> AiErrorKind.TIMEOUT

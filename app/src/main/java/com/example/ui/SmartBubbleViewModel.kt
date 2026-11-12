@@ -16,6 +16,8 @@ import com.example.ai.orchestrator.ConversationContext
 import com.example.ai.orchestrator.DocumentFormat
 import com.example.ai.providers.AiErrorKind
 import com.example.ai.providers.AiException
+import com.example.ai.providers.AiProviderType
+import com.example.ai.providers.ModelInfo
 import com.example.ai.providers.ProviderInput
 import com.example.ai.providers.ProviderManager
 import com.example.ai.providers.ProviderValidationException
@@ -64,6 +66,15 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 import java.util.UUID
+
+/** State of the model list shown in the provider dialog. */
+data class ModelCatalogUiState(
+    val loading: Boolean = false,
+    val type: AiProviderType? = null,
+    val models: List<ModelInfo>? = null,
+    val error: String? = null,
+    val unsupported: Boolean = false
+)
 
 enum class AppNavTab {
     CHAT,
@@ -1039,6 +1050,39 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 _testingProviderIds.value = _testingProviderIds.value - provider.id
             }
         }
+    }
+
+    private val _modelCatalog = MutableStateFlow(ModelCatalogUiState())
+    /** Model list loaded for the provider dialog (Settings). */
+    val modelCatalog: StateFlow<ModelCatalogUiState> = _modelCatalog.asStateFlow()
+    private var modelCatalogJob: Job? = null
+
+    /**
+     * Loads the provider's real model list with [apiKey] (or the stored key of [providerId] when
+     * the field is empty). Only the provider being configured is contacted.
+     */
+    fun loadProviderModels(type: AiProviderType, baseUrl: String, apiKey: String, providerId: String?) {
+        modelCatalogJob?.cancel()
+        _modelCatalog.value = ModelCatalogUiState(loading = true, type = type)
+        modelCatalogJob = viewModelScope.launch {
+            _modelCatalog.value = try {
+                val models = providerManager.fetchModels(type, baseUrl, apiKey, providerId)
+                if (models == null) ModelCatalogUiState(type = type, unsupported = true)
+                else ModelCatalogUiState(type = type, models = models)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AiException) {
+                ModelCatalogUiState(type = type, error = aiErrorReason(e))
+            } catch (e: Exception) {
+                Log.e(TAG, "loadProviderModels failed", e)
+                ModelCatalogUiState(type = type, error = e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun clearProviderModels() {
+        modelCatalogJob?.cancel()
+        _modelCatalog.value = ModelCatalogUiState()
     }
 
     /** Adds a provider; the API key is encrypted before anything is stored. */

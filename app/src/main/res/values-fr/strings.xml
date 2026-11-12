@@ -305,4 +305,22 @@
     <string name="action_next_page">Page suivante</string>
     <string name="library_categories">Catégories de documents</string>
     <string name="chat_ai_refinements">Améliorations par l’IA</string>
+
+    <!-- Provider model list and capabilities -->
+    <string name="models_load">Charger les modèles</string>
+    <string name="models_loading">Chargement des modèles…</string>
+    <string name="models_filter">Filtrer les modèles</string>
+    <string name="models_count">%1$d modèles disponibles</string>
+    <string name="models_error">Impossible de charger la liste des modèles : %1$s</string>
+    <string name="models_empty">Aucun modèle de discussion n’a été renvoyé pour cette clé.</string>
+    <string name="models_unsupported">Ce fournisseur ne publie pas de liste de modèles. Saisissez l’identifiant du modèle.</string>
+    <string name="models_need_key">Saisissez la clé API pour charger les modèles.</string>
+    <string name="models_more">%1$d de plus. Affinez le filtre pour les voir.</string>
+    <string name="cap_vision">Vision</string>
+    <string name="cap_json">Sortie JSON</string>
+    <string name="cap_tools">Appel d’outils</string>
+    <string name="cap_reasoning">Raisonnement</string>
+    <string name="cap_context">Contexte %1$s</string>
+    <string name="model_capabilities_label">Selon le fournisseur : %1$s</string>
+    <string name="model_no_json_note">Ce modèle ne prend pas en charge le mode JSON : les documents sont demandés par instructions uniquement.</string>
 </resources>

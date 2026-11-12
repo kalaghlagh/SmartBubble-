@@ -8,7 +8,15 @@ enum class AiProviderType(val storageKey: String, val defaultBaseUrl: String) {
     OPENAI("OpenAI", "https://api.openai.com/v1"),
     ANTHROPIC("Anthropic Claude", "https://api.anthropic.com"),
     GEMINI("Google Gemini", "https://generativelanguage.googleapis.com"),
+    DEEPSEEK("DeepSeek", "https://api.deepseek.com"),
+    MISTRAL("Mistral AI", "https://api.mistral.ai/v1"),
+    GROQ("Groq", "https://api.groq.com/openai/v1"),
+    XAI("xAI", "https://api.x.ai/v1"),
+    OPENROUTER("OpenRouter", "https://openrouter.ai/api/v1"),
     OPENAI_COMPATIBLE("OpenAI-compatible", "");
+
+    /** True when the provider publishes a model list the app can show. */
+    val listsModels: Boolean get() = this != ANTHROPIC && this != GEMINI && this != OPENAI_COMPATIBLE
 
     companion object {
         /** Maps stored values (including legacy "Custom") to a type; unknown values are OpenAI-compatible. */
@@ -16,6 +24,11 @@ enum class AiProviderType(val storageKey: String, val defaultBaseUrl: String) {
             OPENAI.storageKey -> OPENAI
             ANTHROPIC.storageKey, "Anthropic", "Claude" -> ANTHROPIC
             GEMINI.storageKey, "Gemini" -> GEMINI
+            DEEPSEEK.storageKey -> DEEPSEEK
+            MISTRAL.storageKey, "Mistral" -> MISTRAL
+            GROQ.storageKey -> GROQ
+            XAI.storageKey, "Grok" -> XAI
+            OPENROUTER.storageKey -> OPENROUTER
             else -> OPENAI_COMPATIBLE
         }
     }

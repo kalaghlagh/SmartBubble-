@@ -15,11 +15,22 @@ The app has four sections: **Chat**, **My Templates**, **Library** and **Setting
 ### AI providers (Settings)
 
 - Add, edit, test, set as default and delete providers: OpenAI, Anthropic Claude, Google Gemini,
-  and OpenAI-compatible services (custom base URL).
+  DeepSeek, Mistral AI, Groq, xAI (Grok), OpenRouter, and other OpenAI-compatible services
+  (custom base URL).
+- For OpenAI, DeepSeek, Mistral AI, Groq, xAI and OpenRouter, "Load models" fetches the
+  provider's real model list with your key and lets you pick a model. Capabilities are shown only
+  when the provider reports them (Mistral: vision, tool calling, context; Groq: context; xAI:
+  vision; OpenRouter: vision, JSON output, tool calling, reasoning, context). Anthropic, Gemini
+  and generic compatible services: type the model ID.
+- JSON mode is requested only where the provider supports it and the model is not known to lack
+  it; otherwise the same model is asked for JSON through instructions. Reasoning text of
+  thinking models (DeepSeek reasoner, xAI, OpenRouter, Mistral) is never shown as the answer.
 - You supply your own API key and model ID. The app ships with no keys and no built-in provider.
 - **The default provider handles every AI task.** The app never switches provider on its own.
   If the default provider fails, the error is shown and you decide what to do.
-- "Test connection" makes a real authenticated request that also checks the model ID.
+- "Test connection" makes a real authenticated request that also checks the model ID (for the
+  newer providers: the model must appear in the provider's model list; OpenRouter's key is
+  checked separately because its catalog is public).
 
 ### Chat
 
