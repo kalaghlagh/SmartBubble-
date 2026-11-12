@@ -33,6 +33,8 @@ import com.example.R
 import com.example.data.model.TemplateEntity
 import com.example.template.domain.TemplateProfile
 import com.example.ui.SmartBubbleViewModel
+import com.example.ui.components.FilterChipRow
+import com.example.ui.components.FilterOption
 import com.example.ui.components.TemplatePreviewDialog
 import java.text.SimpleDateFormat
 import java.util.*
@@ -109,7 +111,10 @@ fun TemplatesScreen(
                         text = stringResource(R.string.templates_title),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
 
                     IconButton(
@@ -118,7 +123,7 @@ fun TemplatesScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Search,
-                            contentDescription = "Search",
+                            contentDescription = stringResource(R.string.action_search),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -140,7 +145,7 @@ fun TemplatesScreen(
                         trailingIcon = {
                             if (searchQuery.isNotEmpty()) {
                                 IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear")
+                                    Icon(imageVector = Icons.Default.Clear, contentDescription = stringResource(R.string.action_clear))
                                 }
                             }
                         }
@@ -169,7 +174,7 @@ fun TemplatesScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .height(52.dp)
+                .heightIn(min = 52.dp)
                 .testTag("upload_template_button"),
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
@@ -191,40 +196,18 @@ fun TemplatesScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Filter Pills Row [All] [Docs] [PPTX] [XLSX]
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            val filters = listOf(
-                "All" to stringResource(R.string.filter_all),
-                "Docs" to stringResource(R.string.filter_docs),
-                "PPTX" to stringResource(R.string.filter_pptx),
-                "XLSX" to stringResource(R.string.filter_xlsx)
-            )
-
-            filters.forEach { (key, label) ->
-                val isSelected = selectedFilter == key
-                FilterChip(
-                    selected = isSelected,
-                    onClick = { selectedFilter = key },
-                    label = {
-                        Text(
-                            text = label,
-                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
-                        )
-                    },
-                    shape = RoundedCornerShape(20.dp),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                    ),
-                    modifier = Modifier.testTag("filter_$key")
-                )
-            }
-        }
+        // Filter chips [All] [Docs] [PPTX] [XLSX]: one horizontally scrollable row (see FilterChipRow).
+        FilterChipRow(
+            options = listOf(
+                FilterOption("All", stringResource(R.string.filter_all)),
+                FilterOption("Docs", stringResource(R.string.filter_docs)),
+                FilterOption("PPTX", stringResource(R.string.filter_pptx)),
+                FilterOption("XLSX", stringResource(R.string.filter_xlsx))
+            ),
+            selectedKey = selectedFilter,
+            onSelect = { selectedFilter = it },
+            testTagPrefix = "filter_"
+        )
 
         Spacer(modifier = Modifier.height(12.dp))
 

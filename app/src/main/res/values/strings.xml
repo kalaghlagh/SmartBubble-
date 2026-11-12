@@ -290,4 +290,19 @@
     <string name="template_import_unreadable">The selected file could not be opened.</string>
     <string name="template_import_too_large">This file is too large to use as a template (limit: 50 MB).</string>
     <string name="template_import_unsupported">Only Word (DOCX), PowerPoint (PPTX) and Excel (XLSX) files can be used as templates.</string>
+
+    <!-- Chat generation progress and cancellation -->
+    <string name="chat_stop_generation">Stop generating</string>
+    <string name="chat_generation_stopped">Generation stopped.</string>
+    <string name="progress_connecting">Connecting to AI provider</string>
+    <string name="progress_processing">Processing request</string>
+    <string name="progress_generating">Generating content</string>
+    <string name="progress_validating">Validating result</string>
+    <string name="progress_creating_document">Creating document</string>
+    <string name="action_search">Search</string>
+    <string name="action_more_options">More options</string>
+    <string name="action_previous_page">Previous page</string>
+    <string name="action_next_page">Next page</string>
+    <string name="library_categories">Document categories</string>
+    <string name="chat_ai_refinements">AI refinements</string>
 </resources>

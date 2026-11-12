@@ -76,6 +76,7 @@ Decide whether the user's latest message asks you to produce a document file, th
 - To produce a file: {"intent":"document","format":"DOCX|PPTX|XLSX|PDF","title":"<document title>","brief":"<a precise, detailed brief of everything the document must contain, based on the user's request and the conversation>","reply":"<one short sentence telling the user what you are preparing>"}
 
 Rules:
+- Always write "intent" as the first key and, for a chat answer, "reply" as the second key.
 - Choose "document" only when the user asks for a file, document, report, letter, presentation, slides, spreadsheet or table file to be produced. Questions about content, rewriting text in the chat, translations of short text, and general conversation are "chat".
 - Format: PPTX for presentations or slides; XLSX for spreadsheets, budgets and data tables; PDF only when PDF is explicitly requested; otherwise DOCX.
 - Write "reply" (and the document title and brief) in the language the user writes in. If unclear, use ${languageName(uiLanguage)}. Keep Arabic text exactly as Arabic (right-to-left); never transliterate it.

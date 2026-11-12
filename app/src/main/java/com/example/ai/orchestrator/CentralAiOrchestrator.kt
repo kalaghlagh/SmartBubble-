@@ -26,28 +26,16 @@ import com.example.template.preview.TemplatePreviewData
 import com.example.template.preview.TemplatePreviewEngine
 import com.example.template.preview.TemplatePreviewResult
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
-
-enum class TaskLifecycleState {
-    CREATED,
-    ANALYZING,
-    GENERATING,
-    VALIDATING,
-    RENDERING,
-    SAVING,
-    OPENING,
-    COMPLETED,
-    FAILED,
-    NEEDS_CLARIFICATION
-}
+import java.util.concurrent.ConcurrentHashMap
 
 /** Result of one chat turn handled by the orchestrator. */
 data class ChatTurnResult(
@@ -71,6 +59,11 @@ data class ChatTurnResult(
  * Document flow: plan (default provider) -> structured JSON content (default provider) ->
  * local schema validation, with one repair round by the default provider -> document engine ->
  * file validation -> Library + reply composed only after the file exists.
+ *
+ * Progress and cancellation: each operation reports its real stages to an [AiProgressListener].
+ * Provider answers are streamed, so a chat reply is shown as it arrives. Cancelling the calling
+ * coroutine cancels the in-flight HTTP request; no further provider call, rendering or saving
+ * starts after that, and a document file that was not saved to the Library is deleted.
  */
 class CentralAiOrchestrator(
     private val context: Context,
@@ -84,11 +77,12 @@ class CentralAiOrchestrator(
     private val pdfEngine = PdfEngine()
     private val previewEngine = TemplatePreviewEngine()
 
-    private val _currentState = MutableStateFlow(TaskLifecycleState.CREATED)
-    val currentState: StateFlow<TaskLifecycleState> = _currentState.asStateFlow()
-
-    private val _statusMessage = MutableStateFlow("")
-    val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
+    /**
+     * Template outlines sent to the AI, keyed by template id + file size + modification time:
+     * reading a template means unzipping and parsing it, which is skipped while the file is
+     * unchanged.
+     */
+    private val templateOutlineCache = ConcurrentHashMap<String, String>()
 
     // ------------------------------------------------------------------ chat + documents
 
@@ -97,35 +91,29 @@ class CentralAiOrchestrator(
      * @param history earlier messages of the conversation (oldest first), without the new message
      * @param selectedTemplate template the user attached to the chat (optional)
      * @param forceFormat when set, a document of this format is produced without planning
+     * @param listener receives the real stages and the chat reply while it is streamed
      */
     suspend fun handleChatTurn(
         history: List<ContextMessage>,
         userMessage: String,
         uiLanguage: String,
         selectedTemplate: TemplateEntity?,
-        forceFormat: DocumentFormat? = null
+        forceFormat: DocumentFormat? = null,
+        listener: AiProgressListener = AiProgressListener.NONE
     ): ChatTurnResult = withContext(Dispatchers.IO) {
-        try {
-            _currentState.value = TaskLifecycleState.ANALYZING
-            val (provider, client) = providerManager.defaultClient()
-            val conversation = ConversationContext.build(history, userMessage)
+        listener.onStage(AiProgressStage.CONNECTING)
+        val (provider, client) = providerManager.defaultClient()
+        val conversation = ConversationContext.build(history, userMessage)
 
-            val plan: Plan = if (forceFormat != null) {
-                Plan.Document(forceFormat, title = null, brief = userMessage, reply = null)
-            } else {
-                planTurn(client, conversation, uiLanguage, selectedTemplate)
-            }
+        val plan: Plan = if (forceFormat != null) {
+            Plan.Document(forceFormat, title = null, brief = userMessage, reply = null)
+        } else {
+            planTurn(client, conversation, uiLanguage, selectedTemplate, listener)
+        }
 
-            when (plan) {
-                is Plan.Chat -> {
-                    _currentState.value = TaskLifecycleState.COMPLETED
-                    ChatTurnResult(reply = plan.reply, provider = provider)
-                }
-                is Plan.Document -> generateDocument(client, provider, conversation, plan, uiLanguage, selectedTemplate)
-            }
-        } catch (e: Exception) {
-            _currentState.value = TaskLifecycleState.FAILED
-            throw e
+        when (plan) {
+            is Plan.Chat -> ChatTurnResult(reply = plan.reply, provider = provider)
+            is Plan.Document -> generateDocument(client, provider, conversation, plan, uiLanguage, selectedTemplate, listener)
         }
     }
 
@@ -138,19 +126,40 @@ class CentralAiOrchestrator(
         client: AiProviderClient,
         conversation: List<AiMessage>,
         uiLanguage: String,
-        selectedTemplate: TemplateEntity?
+        selectedTemplate: TemplateEntity?,
+        listener: AiProgressListener
     ): Plan {
         val templateNote = selectedTemplate?.let {
             "The user selected the ${it.fileType} template \"${it.name}\". If they ask for a document, prefer the ${it.fileType} format unless they ask for another one."
         }
-        val response = client.complete(
+        // The planner's answer is streamed: a chat reply is shown while it arrives. Pieces are
+        // delivered in order on one OkHttp thread.
+        val extractor = PlannerReplyExtractor()
+        val throttle = StreamThrottle()
+        var started = false
+        var generating = false
+        val response = client.stream(
             AiRequest(
                 system = OrchestratorPrompts.planner(uiLanguage, templateNote),
                 messages = conversation,
                 expectJson = true,
                 maxOutputTokens = 16_000
             )
-        )
+        ) { piece ->
+            if (!started) {
+                started = true
+                listener.onStage(AiProgressStage.PROCESSING)
+            }
+            extractor.feed(piece)
+            if (extractor.hasReply) {
+                if (!generating) {
+                    generating = true
+                    listener.onStage(AiProgressStage.GENERATING)
+                }
+                if (throttle.ready()) extractor.currentReply()?.let(listener::onPartialReply)
+            }
+        }
+        currentCoroutineContext().ensureActive()
         val obj = Json.extractObject(response.text)
         if (obj == null) {
             // The model answered in plain text: that IS its answer (never fabricated).
@@ -207,6 +216,13 @@ class CentralAiOrchestrator(
     /** Short description of the template's real structure so the AI can fit its content. */
     private suspend fun describeTemplate(entity: TemplateEntity?): String? {
         entity ?: return null
+        val file = File(entity.originalFilePath)
+        val cacheKey = "${entity.id}|${entity.name}|${file.length()}|${file.lastModified()}"
+        templateOutlineCache[cacheKey]?.let { return it }
+        return loadTemplateOutline(entity).also { templateOutlineCache[cacheKey] = it }
+    }
+
+    private suspend fun loadTemplateOutline(entity: TemplateEntity): String {
         val data = when (val r = previewEngine.loadPreview(entity)) {
             is TemplatePreviewResult.Success -> r.data
             is TemplatePreviewResult.Fallback -> r.data
@@ -229,11 +245,13 @@ class CentralAiOrchestrator(
         conversation: List<AiMessage>,
         plan: Plan.Document,
         uiLanguage: String,
-        selectedTemplate: TemplateEntity?
+        selectedTemplate: TemplateEntity?,
+        listener: AiProgressListener
     ): ChatTurnResult {
-        _currentState.value = TaskLifecycleState.GENERATING
         val template = chooseTemplate(plan.format, selectedTemplate)
         val templateDescription = describeTemplate(template.entity)
+        currentCoroutineContext().ensureActive()
+        listener.onStage(AiProgressStage.GENERATING)
 
         val writerMessages = conversation.dropLast(1) + AiMessage(
             AiRole.USER,
@@ -244,31 +262,37 @@ class CentralAiOrchestrator(
             }
         )
         val date = DateFormat.getDateInstance(DateFormat.LONG, Locale.forLanguageTag(uiLanguage)).format(Date())
-        val parsed = requestStructuredContent(client, writerMessages, plan.format, uiLanguage, templateDescription, date)
+        val parsed = requestStructuredContent(client, writerMessages, plan.format, uiLanguage, templateDescription, date, listener)
 
-        // Render the real file.
-        _currentState.value = TaskLifecycleState.RENDERING
+        // Render the real file (nothing is created once the operation was cancelled).
+        currentCoroutineContext().ensureActive()
+        listener.onStage(AiProgressStage.CREATING_DOCUMENT)
         val documentsDir = File(context.filesDir, "generated_docs").apply { mkdirs() }
         val outputFile = DocumentFileNames.createUniqueFile(documentsDir, parsed.document.title, plan.format.extension)
         var saved = false
         try {
-            val engineResult: EngineResult = when (val doc = parsed.document) {
-                is ParsedDocument.Word -> if (plan.format == DocumentFormat.PDF) {
-                    pdfEngine.generatePdf(doc.model, outputFile, template.profile)
-                    EngineResult(outputFile, templateApplied = false)
-                } else {
-                    docxEngine.generateDocxDetailed(doc.model, outputFile, template.profile, template.file)
+            // The engines write blocking file I/O; cancelling interrupts the wait and the
+            // unfinished file is deleted below. The template file is only read, never written.
+            val engineResult: EngineResult = runInterruptible(Dispatchers.IO) {
+                when (val doc = parsed.document) {
+                    is ParsedDocument.Word -> if (plan.format == DocumentFormat.PDF) {
+                        pdfEngine.generatePdf(doc.model, outputFile, template.profile)
+                        EngineResult(outputFile, templateApplied = false)
+                    } else {
+                        docxEngine.generateDocxDetailed(doc.model, outputFile, template.profile, template.file)
+                    }
+                    is ParsedDocument.Presentation -> pptxEngine.generatePptxDetailed(doc.model, outputFile, template.profile, template.file)
+                    is ParsedDocument.Spreadsheet -> xlsxEngine.generateXlsxDetailed(doc.model, outputFile, template.profile, template.file)
                 }
-                is ParsedDocument.Presentation -> pptxEngine.generatePptxDetailed(doc.model, outputFile, template.profile, template.file)
-                is ParsedDocument.Spreadsheet -> xlsxEngine.generateXlsxDetailed(doc.model, outputFile, template.profile, template.file)
             }
 
-            _currentState.value = TaskLifecycleState.VALIDATING
+            currentCoroutineContext().ensureActive()
             DocumentFileValidator.validate(outputFile, plan.format.extension)?.let { problem ->
                 throw IllegalStateException(problem)
             }
 
-            _currentState.value = TaskLifecycleState.SAVING
+            // Last cancellation point: after this the document is complete and is saved.
+            currentCoroutineContext().ensureActive()
             val visibleTitle = DocumentFileNames.displayTitle(parsed.document.title) + "." + plan.format.extension
             val plain = parsed.document.plainText
             val counts = countsOf(parsed.document)
@@ -290,7 +314,6 @@ class CentralAiOrchestrator(
             database.documentDao().insertDocument(docEntity)
             saved = true
 
-            _currentState.value = TaskLifecycleState.OPENING
             deliveryManager.deliverBoth(outputFile, plain, mimeTypeFor(plan.format), docEntity.title, openImmediately = false)
 
             // The reply is composed only now that the file exists and was validated.
@@ -306,7 +329,6 @@ class CentralAiOrchestrator(
                     notes.forEach { append("• ").append(it).append('\n') }
                 }
             }.trim()
-            _currentState.value = TaskLifecycleState.COMPLETED
             return ChatTurnResult(reply, provider, docEntity, engineResult.templateApplied)
         } finally {
             if (!saved) outputFile.delete()
@@ -320,10 +342,15 @@ class CentralAiOrchestrator(
         format: DocumentFormat,
         uiLanguage: String,
         templateDescription: String?,
-        date: String
+        date: String,
+        listener: AiProgressListener
     ): DocumentSchemaParser.Result {
         val system = OrchestratorPrompts.documentWriter(format, uiLanguage, templateDescription)
-        val first = client.complete(AiRequest(system, messages, expectJson = true, maxOutputTokens = 16_000))
+        // Streamed (not shown): long documents keep arriving in pieces instead of waiting for
+        // one large response, and cancelling closes the stream.
+        val first = client.stream(AiRequest(system, messages, expectJson = true, maxOutputTokens = 16_000)) {}
+        currentCoroutineContext().ensureActive()
+        listener.onStage(AiProgressStage.VALIDATING)
         val firstError = try {
             if (first.truncated) "The JSON was cut off because it was too long; make it more concise."
             else return DocumentSchemaParser.parse(first.text, format, date)
@@ -331,10 +358,10 @@ class CentralAiOrchestrator(
             e.message ?: "Invalid structure."
         }
 
-        _currentState.value = TaskLifecycleState.VALIDATING
         val repairMessages = messages + AiMessage(AiRole.ASSISTANT, first.text.take(20_000)) +
             AiMessage(AiRole.USER, OrchestratorPrompts.repair(firstError))
-        val second = client.complete(AiRequest(system, repairMessages, expectJson = true, maxOutputTokens = 16_000))
+        val second = client.stream(AiRequest(system, repairMessages, expectJson = true, maxOutputTokens = 16_000)) {}
+        currentCoroutineContext().ensureActive()
         if (second.truncated) throw AiException(AiErrorKind.TRUNCATED_RESPONSE)
         return try {
             DocumentSchemaParser.parse(second.text, format, date)
@@ -367,23 +394,33 @@ class CentralAiOrchestrator(
         content: String,
         uiLanguage: String,
         instruction: String? = null,
-        targetLanguage: String? = null
+        targetLanguage: String? = null,
+        listener: AiProgressListener = AiProgressListener.NONE
     ): Pair<String, ProviderEntity> = withContext(Dispatchers.IO) {
         if (content.isBlank() && operation != ContentOperation.GENERATE) {
             throw AiException(AiErrorKind.BAD_REQUEST, "No content to process")
         }
+        listener.onStage(AiProgressStage.CONNECTING)
         val (provider, client) = providerManager.defaultClient()
         val user = buildString {
             if (!instruction.isNullOrBlank()) append(instruction.trim()).append("\n\n")
             if (content.isNotBlank()) append("--- CONTENT ---\n").append(content.take(MAX_CONTENT_CHARS))
         }
-        val response = client.complete(
+        // Streamed: the result text is shown while it arrives.
+        val received = StringBuilder()
+        val throttle = StreamThrottle()
+        val response = client.stream(
             AiRequest(
                 system = OrchestratorPrompts.contentOperation(operation, uiLanguage, targetLanguage),
                 messages = listOf(AiMessage(AiRole.USER, user)),
                 maxOutputTokens = 16_000
             )
-        )
+        ) { piece ->
+            if (received.isEmpty()) listener.onStage(AiProgressStage.GENERATING)
+            received.append(piece)
+            if (throttle.ready()) listener.onPartialReply(received.toString())
+        }
+        currentCoroutineContext().ensureActive()
         val text = response.text.trim()
         if (text.isEmpty()) throw AiException(AiErrorKind.EMPTY_RESPONSE)
         (if (response.truncated) "$text\n\n…" else text) to provider

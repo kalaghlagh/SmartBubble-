@@ -290,4 +290,19 @@
     <string name="template_import_unreadable">تعذّر فتح الملف المحدد.</string>
     <string name="template_import_too_large">هذا الملف كبير جدًا لاستخدامه كقالب (الحد الأقصى: 50 ميغابايت).</string>
     <string name="template_import_unsupported">يمكن استخدام ملفات Word (DOCX) وPowerPoint (PPTX) وExcel (XLSX) فقط كقوالب.</string>
+
+    <!-- Chat generation progress and cancellation -->
+    <string name="chat_stop_generation">إيقاف التوليد</string>
+    <string name="chat_generation_stopped">تم إيقاف التوليد.</string>
+    <string name="progress_connecting">الاتصال بمزود الذكاء الاصطناعي</string>
+    <string name="progress_processing">معالجة الطلب</string>
+    <string name="progress_generating">إنشاء المحتوى</string>
+    <string name="progress_validating">التحقق من النتيجة</string>
+    <string name="progress_creating_document">إنشاء المستند</string>
+    <string name="action_search">بحث</string>
+    <string name="action_more_options">خيارات إضافية</string>
+    <string name="action_previous_page">الصفحة السابقة</string>
+    <string name="action_next_page">الصفحة التالية</string>
+    <string name="library_categories">فئات المستندات</string>
+    <string name="chat_ai_refinements">تحسينات الذكاء الاصطناعي</string>
 </resources>

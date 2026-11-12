@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Monochrome adaptive icon layer (themed icons, Android 13+): single colour, same shapes.
+     Generated from the SmartBubble icon design (one glass bubble, three round highlights). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M27.00,54.00 A27.00,27.00 0 1,1 81.00,54.00 A27.00,27.00 0 1,1 27.00,54.00 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.2" />
+    <path
+        android:pathData="M35.5,45 C36.5,36 44,30.2 52.5,30 C46.5,33 42.2,38.2 40.6,45.4 C40,48.6 35.3,48.4 35.5,45 Z"
+        android:fillColor="#FFFFFFFF" />
+    <path
+        android:pathData="M56.90,46.00 A4.60,4.60 0 1,1 66.10,46.00 A4.60,4.60 0 1,1 56.90,46.00 Z"
+        android:fillColor="#FFFFFFFF" />
+    <path
+        android:pathData="M43.30,59.00 A3.20,3.20 0 1,1 49.70,59.00 A3.20,3.20 0 1,1 43.30,59.00 Z"
+        android:fillColor="#FFFFFFFF" />
+    <path
+        android:pathData="M61.30,64.50 A2.20,2.20 0 1,1 65.70,64.50 A2.20,2.20 0 1,1 61.30,64.50 Z"
+        android:fillColor="#FFFFFFFF" />
+</vector>

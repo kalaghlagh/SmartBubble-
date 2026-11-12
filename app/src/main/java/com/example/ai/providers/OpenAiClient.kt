@@ -1,6 +1,7 @@
 package com.example.ai.providers
 
 import okhttp3.HttpUrl
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * OpenAI Chat Completions API (POST {base}/chat/completions, Bearer auth). Also used for
@@ -17,18 +18,49 @@ class OpenAiClient(
     private val base: HttpUrl = AiHttp.parseBaseUrl(normalizeBaseUrl(baseUrl))
     private val headers = mapOf("Authorization" to "Bearer $apiKey", "Accept" to "application/json")
 
-    override suspend fun complete(request: AiRequest): AiResponse {
-        val url = base.newBuilder().addPathSegments("chat/completions").build()
-        val jsonMode = request.expectJson && type == AiProviderType.OPENAI
-        var result = AiHttp.execute(AiHttp.jsonPost(url, headers, buildChatBody(model, request, jsonMode)), apiKey)
-        if (jsonMode && result.code == 400 &&
+    private val chatUrl: HttpUrl get() = base.newBuilder().addPathSegments("chat/completions").build()
+    private val modelKey: String get() = "$base|$model"
+
+    private fun useJsonMode(request: AiRequest) =
+        request.expectJson && type == AiProviderType.OPENAI && modelKey !in jsonModeRejected
+
+    /** True when the model rejected JSON mode; remembered so the next requests skip the failing call. */
+    private fun rejectedJsonMode(jsonMode: Boolean, result: HttpResult): Boolean {
+        val rejected = jsonMode && !result.streamed && result.code == 400 &&
             AiHttp.providerErrorMessage(result.body).orEmpty().contains("response_format")
-        ) {
+        if (rejected) jsonModeRejected += modelKey
+        return rejected
+    }
+
+    override suspend fun complete(request: AiRequest): AiResponse {
+        val jsonMode = useJsonMode(request)
+        var result = AiHttp.execute(AiHttp.jsonPost(chatUrl, headers, buildChatBody(model, request, jsonMode)), apiKey)
+        if (rejectedJsonMode(jsonMode, result)) {
             // Some models don't support JSON mode; the JSON is then requested via instructions only.
-            result = AiHttp.execute(AiHttp.jsonPost(url, headers, buildChatBody(model, request, useJsonMode = false)), apiKey)
+            result = AiHttp.execute(AiHttp.jsonPost(chatUrl, headers, buildChatBody(model, request, useJsonMode = false)), apiKey)
         }
         if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey)
         return parseChatResponse(result.body)
+    }
+
+    override suspend fun stream(request: AiRequest, onText: (String) -> Unit): AiResponse {
+        val jsonMode = useJsonMode(request)
+        var acc = StreamAccumulator(onText)
+        var result = AiHttp.executeStream(
+            AiHttp.jsonPost(chatUrl, headers, buildChatBody(model, request, jsonMode) + ("stream" to true)), apiKey
+        ) { acc.accept(it) }
+        if (rejectedJsonMode(jsonMode, result)) {
+            acc = StreamAccumulator(onText)
+            result = AiHttp.executeStream(
+                AiHttp.jsonPost(chatUrl, headers, buildChatBody(model, request, useJsonMode = false) + ("stream" to true)), apiKey
+            ) { acc.accept(it) }
+        }
+        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey)
+        if (!result.streamed) {
+            // A compatible gateway that ignores "stream" answers with one normal response.
+            return parseChatResponse(result.body).also { onText(it.text) }
+        }
+        return acc.finish()
     }
 
     override suspend fun testConnection(): Long {
@@ -49,7 +81,48 @@ class OpenAiClient(
         throw AiHttp.mapHttpError(result.code, result.body, apiKey)
     }
 
+    /** Collects a streamed Chat Completions answer (`data: {chunk}` events, then `data: [DONE]`). Pure Kotlin. */
+    class StreamAccumulator(private val onText: (String) -> Unit) {
+        private val text = StringBuilder()
+        private val refusal = StringBuilder()
+        private var finish: String? = null
+
+        fun accept(data: String) {
+            if (data.trim() == "[DONE]") return
+            val root = Json.obj(Json.parse(data))
+                ?: throw AiException(AiErrorKind.MALFORMED_RESPONSE, "Invalid stream event")
+            root["error"]?.let { throw AiHttp.mapHttpError(500, data, null) }
+            // Chunks without choices (e.g. usage) carry no text.
+            val choice = Json.obj(Json.arr(root["choices"])?.firstOrNull()) ?: return
+            Json.str(choice["finish_reason"])?.let { finish = it }
+            val delta = Json.obj(choice["delta"]) ?: return
+            Json.str(delta["refusal"])?.let { refusal.append(it) }
+            val piece = when (val content = delta["content"]) {
+                is String -> content
+                is List<*> -> content.mapNotNull { Json.obj(it)?.let { part -> Json.str(part["text"]) } }.joinToString("")
+                else -> null
+            }
+            if (!piece.isNullOrEmpty()) {
+                text.append(piece)
+                onText(piece)
+            }
+        }
+
+        fun finish(): AiResponse {
+            if (text.isBlank()) {
+                if (refusal.isNotBlank() || finish == "content_filter") {
+                    throw AiException(AiErrorKind.CONTENT_BLOCKED, refusal.toString().take(200).ifBlank { null })
+                }
+                throw AiException(AiErrorKind.EMPTY_RESPONSE)
+            }
+            return AiResponse(text.toString(), truncated = finish == "length")
+        }
+    }
+
     companion object {
+        /** "base|model" of models that rejected JSON mode during this app session. */
+        private val jsonModeRejected: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
         fun normalizeBaseUrl(raw: String): String =
             raw.trim().trimEnd('/').removeSuffix("/chat/completions").trimEnd('/')
 
