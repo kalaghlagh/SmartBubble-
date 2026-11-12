@@ -574,8 +574,8 @@ class SmartBubbleDocumentEngineTest {
         val pptResult = previewEngine.loadPreview(pptEntity)
         assertTrue(pptResult is com.example.template.preview.TemplatePreviewResult.Success)
         val pptData = (pptResult as com.example.template.preview.TemplatePreviewResult.Success).data as com.example.template.preview.TemplatePreviewData.PptxPreview
-        assertTrue(pptData.slides.isNotEmpty())
-        assertEquals("Revenue Growth", pptData.slides.first().title)
+        // The generated deck starts with its title slide, followed by the content slides.
+        assertEquals(listOf("Quarterly Business Review", "Revenue Growth"), pptData.slides.map { it.title })
 
         // XLSX Test
         val xlsxFile = tempFolder.newFile("sample_preview_sheet.xlsx")
