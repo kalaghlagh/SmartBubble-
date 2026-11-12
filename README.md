@@ -128,7 +128,7 @@ The release build reads the upload keystore from the environment:
 | `KEYSTORE_PATH` | Path to the keystore (default: `my-upload-key.jks` in the project root) |
 | `STORE_PASSWORD` | Keystore password |
 | `KEY_PASSWORD` | Password of the signing key |
-| `KEY_ALIAS` | Alias of the signing key in the keystore (default: `upload`; the GitHub workflow uses `smartbubble`) |
+| `KEY_ALIAS` | Alias of the signing key in the keystore (default: `smartbubble`) |
 | `VERSION_CODE`, `VERSION_NAME` | Optional overrides (defaults: `1`, `1.0`) |
 
 ```bash
@@ -152,10 +152,10 @@ Actions):
 | `STORE_PASSWORD` | Keystore password |
 | `KEY_PASSWORD` | Key password |
 
-The workflow signs with the key alias `smartbubble`. If your keystore uses another alias, set the
-repository variable `KEY_ALIAS` (Settings > Secrets and variables > Actions > Variables). Before
-building, the workflow checks the keystore, the alias and both passwords and reports which
-secret is wrong, without printing any secret.
+The workflow signs with the key alias `smartbubble`, set once as `KEY_ALIAS` at the top of the
+workflow file and used both for the keystore check and by Gradle. Before building, the workflow
+checks the keystore, the alias and both passwords and reports which secret is wrong, without
+printing any secret; after building, it confirms the APK is signed with that key.
 
 Unit tests run when the manual input `run_tests` is ticked or the repository variable
 `RUN_UNIT_TESTS` is `true`. Outputs are workflow artifacts; the workflow does not create a
