@@ -15,11 +15,22 @@ The app has four sections: **Chat**, **My Templates**, **Library** and **Setting
 ### AI providers (Settings)
 
 - Add, edit, test, set as default and delete providers: OpenAI, Anthropic Claude, Google Gemini,
-  and OpenAI-compatible services (custom base URL).
+  DeepSeek, Mistral AI, Groq, xAI (Grok), OpenRouter, and other OpenAI-compatible services
+  (custom base URL).
+- For OpenAI, DeepSeek, Mistral AI, Groq, xAI and OpenRouter, "Load models" fetches the
+  provider's real model list with your key and lets you pick a model. Capabilities are shown only
+  when the provider reports them (Mistral: vision, tool calling, context; Groq: context; xAI:
+  vision; OpenRouter: vision, JSON output, tool calling, reasoning, context). Anthropic, Gemini
+  and generic compatible services: type the model ID.
+- JSON mode is requested only where the provider supports it and the model is not known to lack
+  it; otherwise the same model is asked for JSON through instructions. Reasoning text of
+  thinking models (DeepSeek reasoner, xAI, OpenRouter, Mistral) is never shown as the answer.
 - You supply your own API key and model ID. The app ships with no keys and no built-in provider.
 - **The default provider handles every AI task.** The app never switches provider on its own.
   If the default provider fails, the error is shown and you decide what to do.
-- "Test connection" makes a real authenticated request that also checks the model ID.
+- "Test connection" makes a real authenticated request that also checks the model ID (for the
+  newer providers: the model must appear in the provider's model list; OpenRouter's key is
+  checked separately because its catalog is public).
 
 ### Chat
 
@@ -39,6 +50,24 @@ The app has four sections: **Chat**, **My Templates**, **Library** and **Setting
 - Conversations are stored on the device and can be renamed and deleted.
 - Progress and streamed text are shown only in the conversation the request belongs to; the
   answer is always saved to that conversation, even if you switch to another one meanwhile.
+
+### Built-in commands (Chat)
+
+Type `/` in the message box to see the commands; keep typing to filter, tap one (or use the
+arrow keys and Tab/Enter on a hardware keyboard) to insert it, then add your instructions and
+send. Choosing a command never sends anything by itself. Command names and descriptions are
+English in every app language.
+
+| Command | What it does |
+|---|---|
+| `/docx`, `/pptx`, `/xlsx`, `/pdf` | Creates that file from the text after the command (same document engines and templates as a normal request). |
+| `/summarize`, `/translate`, `/correct`, `/rewrite`, `/analyze` | Processes the text after the command; with no text, the most recent document in the conversation. |
+| `/clear` | Opens "Clear Conversations?": *Clear Current Chat* empties the open conversation; *Delete All Conversations* (asks a second time) deletes every conversation and message. |
+
+All AI commands go through the default provider and the central orchestrator, with streaming,
+the stop button and progress like any other request. If a command needs content that is missing,
+the app asks for it and keeps your text. `/clear` never deletes Library documents, templates,
+providers or API keys.
 
 ### Voice conversation
 

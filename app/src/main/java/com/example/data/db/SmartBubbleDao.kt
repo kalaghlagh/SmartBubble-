@@ -162,6 +162,9 @@ interface ChatDao {
     @Query("SELECT COUNT(*) FROM chat_messages")
     suspend fun countMessages(): Int
 
+    @Query("DELETE FROM chat_messages")
+    suspend fun deleteAllMessages()
+
     /** Conversation history used as AI context (oldest first). */
     @Query("SELECT * FROM chat_messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")
     suspend fun getMessagesForSessionOnce(sessionId: String): List<ChatMessageEntity>
@@ -196,4 +199,7 @@ interface ConversationDao {
 
     @Query("SELECT COUNT(*) FROM conversations")
     suspend fun countConversations(): Int
+
+    @Query("DELETE FROM conversations")
+    suspend fun deleteAllConversations()
 }

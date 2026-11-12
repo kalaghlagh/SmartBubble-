@@ -42,6 +42,9 @@ import com.example.ai.providers.ProviderValidator
 import com.example.data.model.ProviderEntity
 import com.example.ui.aiErrorStringRes
 import com.example.ui.SmartBubbleViewModel
+import com.example.ui.ModelCatalogUiState
+import com.example.ai.providers.ModelInfo
+import com.example.ai.providers.ModelCapabilities
 import com.example.ui.components.SmartBubbleLogo
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,6 +56,7 @@ fun SettingsScreen(
     val providers by viewModel.allProviders.collectAsState()
     val providersWithKeys by viewModel.providersWithKeys.collectAsState()
     val testingProviderIds by viewModel.testingProviderIds.collectAsState()
+    val modelCatalog by viewModel.modelCatalog.collectAsState()
     var editingProvider by remember { mutableStateOf<ProviderEntity?>(null) }
     val appLanguage by viewModel.appLanguage.collectAsState()
     val appTheme by viewModel.appTheme.collectAsState()
@@ -325,9 +329,15 @@ fun SettingsScreen(
         ProviderDialog(
             existing = null,
             hasStoredKey = false,
-            onDismiss = { showAddProviderDialog = false },
+            modelCatalog = modelCatalog,
+            onLoadModels = { type, url, key -> viewModel.loadProviderModels(type, url, key, providerId = null) },
+            onDismiss = {
+                viewModel.clearProviderModels()
+                showAddProviderDialog = false
+            },
             onSave = { input ->
                 viewModel.addProvider(input)
+                viewModel.clearProviderModels()
                 showAddProviderDialog = false
             }
         )
@@ -338,9 +348,15 @@ fun SettingsScreen(
         ProviderDialog(
             existing = provider,
             hasStoredKey = provider.id in providersWithKeys,
-            onDismiss = { editingProvider = null },
+            modelCatalog = modelCatalog,
+            onLoadModels = { type, url, key -> viewModel.loadProviderModels(type, url, key, providerId = provider.id) },
+            onDismiss = {
+                viewModel.clearProviderModels()
+                editingProvider = null
+            },
             onSave = { input ->
                 viewModel.updateProvider(provider.id, input)
+                viewModel.clearProviderModels()
                 editingProvider = null
             }
         )
@@ -547,6 +563,11 @@ fun ProviderItemRow(
                                     AiProviderType.OPENAI -> Color(0xFF10A37F)
                                     AiProviderType.GEMINI -> Color(0xFF1D52D8)
                                     AiProviderType.ANTHROPIC -> Color(0xFFD97706)
+                                    AiProviderType.DEEPSEEK -> Color(0xFF4D6BFE)
+                                    AiProviderType.MISTRAL -> Color(0xFFE8590C)
+                                    AiProviderType.GROQ -> Color(0xFFD9480F)
+                                    AiProviderType.XAI -> Color(0xFF212529)
+                                    AiProviderType.OPENROUTER -> Color(0xFF6566F1)
                                     AiProviderType.OPENAI_COMPATIBLE -> MaterialTheme.colorScheme.primary
                                 }
                             ),
@@ -683,6 +704,11 @@ private fun providerTypeLabel(type: AiProviderType): String = when (type) {
     AiProviderType.OPENAI -> "OpenAI"
     AiProviderType.ANTHROPIC -> "Anthropic Claude"
     AiProviderType.GEMINI -> "Google Gemini"
+    AiProviderType.DEEPSEEK -> "DeepSeek"
+    AiProviderType.MISTRAL -> "Mistral AI"
+    AiProviderType.GROQ -> "Groq"
+    AiProviderType.XAI -> "xAI (Grok)"
+    AiProviderType.OPENROUTER -> "OpenRouter"
     AiProviderType.OPENAI_COMPATIBLE -> stringResource(R.string.provider_type_compatible)
 }
 
@@ -763,6 +789,8 @@ fun SettingsNavRow(
 fun ProviderDialog(
     existing: ProviderEntity?,
     hasStoredKey: Boolean,
+    modelCatalog: ModelCatalogUiState,
+    onLoadModels: (AiProviderType, String, String) -> Unit,
     onDismiss: () -> Unit,
     onSave: (ProviderInput) -> Unit
 ) {
@@ -775,6 +803,7 @@ fun ProviderDialog(
     var showKey by remember { mutableStateOf(false) }
     var invalid by remember { mutableStateOf(emptySet<ProviderField>()) }
     val requireKey = existing == null || !hasStoredKey
+    val typeLabels = AiProviderType.values().associateWith { providerTypeLabel(it) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -802,6 +831,8 @@ fun ProviderDialog(
                                 onClick = {
                                     // Replace the URL only if it is still the previous type's default.
                                     if (url.isBlank() || url == type.defaultBaseUrl) url = option.defaultBaseUrl
+                                    // Suggest the provider's name while the user has not typed one.
+                                    if (name.isBlank() || name == typeLabels[type]) name = typeLabels[option].orEmpty()
                                     type = option
                                 },
                                 label = { Text(providerTypeLabel(option), fontSize = 12.sp) },
@@ -881,6 +912,18 @@ fun ProviderDialog(
                     },
                     modifier = Modifier.fillMaxWidth().testTag("provider_api_key_field")
                 )
+
+                // Real model list of the chosen provider (loaded with the key above).
+                if (type.listsModels) {
+                    ModelPicker(
+                        catalog = modelCatalog.takeIf { it.type == type },
+                        canLoad = key.isNotBlank() || !requireKey,
+                        selectedModel = model,
+                        onLoad = { onLoadModels(type, url.trim(), key.trim()) },
+                        onSelect = { model = it }
+                    )
+                }
+
             }
         },
         confirmButton = {
@@ -916,5 +959,183 @@ private fun modelExample(type: AiProviderType): String = when (type) {
     AiProviderType.OPENAI -> "gpt-4.1"
     AiProviderType.ANTHROPIC -> "claude-sonnet-5-5"
     AiProviderType.GEMINI -> "gemini-2.5-flash"
-    AiProviderType.OPENAI_COMPATIBLE -> "deepseek-chat"
+    AiProviderType.DEEPSEEK -> "deepseek-chat"
+    AiProviderType.MISTRAL -> "mistral-large-latest"
+    AiProviderType.GROQ -> "llama-3.3-70b-versatile"
+    AiProviderType.XAI -> "grok-4"
+    AiProviderType.OPENROUTER -> "openai/gpt-4o"
+    AiProviderType.OPENAI_COMPATIBLE -> "model-id"
+}
+
+/**
+ * Loads and shows the provider's real model list. Choosing a model fills the model field; the
+ * field stays editable. Capabilities are shown only when the provider reports them.
+ */
+@Composable
+private fun ModelPicker(
+    catalog: ModelCatalogUiState?,
+    canLoad: Boolean,
+    selectedModel: String,
+    onLoad: () -> Unit,
+    onSelect: (String) -> Unit
+) {
+    var filter by remember { mutableStateOf("") }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = onLoad,
+            enabled = canLoad && catalog?.loading != true,
+            modifier = Modifier.heightIn(min = 40.dp).testTag("provider_load_models")
+        ) {
+            if (catalog?.loading == true) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.models_loading))
+            } else {
+                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.models_load))
+            }
+        }
+        if (!canLoad) {
+            Text(
+                text = stringResource(R.string.models_need_key),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        when {
+            catalog == null || catalog.loading -> Unit
+            catalog.error != null -> Text(
+                text = stringResource(R.string.models_error, catalog.error),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.testTag("provider_models_error")
+            )
+            catalog.unsupported -> Text(
+                text = stringResource(R.string.models_unsupported),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            catalog.models.isNullOrEmpty() -> Text(
+                text = stringResource(R.string.models_empty),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            else -> {
+                val all = catalog.models.orEmpty()
+                Text(
+                    text = stringResource(R.string.models_count, all.size),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (all.size > 8) {
+                    OutlinedTextField(
+                        value = filter,
+                        onValueChange = { filter = it },
+                        label = { Text(stringResource(R.string.models_filter)) },
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        modifier = Modifier.fillMaxWidth().testTag("provider_models_filter")
+                    )
+                }
+                val matching = all.filter {
+                    filter.isBlank() || it.id.contains(filter.trim(), ignoreCase = true) ||
+                        it.displayName?.contains(filter.trim(), ignoreCase = true) == true
+                }
+                val shown = matching.take(MAX_LISTED_MODELS)
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // Plain column (the dialog content already scrolls); the list is capped.
+                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                        shown.forEach { info ->
+                            ModelRow(info = info, selected = info.answersTo(selectedModel), onClick = { onSelect(info.id) })
+                        }
+                        if (matching.size > shown.size) {
+                            Text(
+                                text = stringResource(R.string.models_more, matching.size - shown.size),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                            )
+                        }
+                    }
+                }
+                all.firstOrNull { it.answersTo(selectedModel) }?.let { selected ->
+                    capabilityText(selected)?.let {
+                        Text(
+                            text = stringResource(R.string.model_capabilities_label, it),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("provider_model_capabilities")
+                        )
+                    }
+                    if (selected.capabilities.jsonOutput == false) {
+                        Text(
+                            text = stringResource(R.string.model_no_json_note),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private const val MAX_LISTED_MODELS = 60
+
+@Composable
+private fun ModelRow(info: ModelInfo, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .testTag("provider_model_${info.id}"),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Spacer(modifier = Modifier.width(6.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = info.id,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+            )
+            val details = listOfNotNull(info.displayName, capabilityText(info)).joinToString(" • ")
+            if (details.isNotBlank()) {
+                Text(
+                    text = details,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/** Capabilities the provider reported as present (unknown or absent ones are not listed). */
+@Composable
+private fun capabilityText(info: ModelInfo): String? {
+    val caps: ModelCapabilities = info.capabilities
+    val parts = listOfNotNull(
+        stringResource(R.string.cap_vision).takeIf { caps.vision == true },
+        stringResource(R.string.cap_json).takeIf { caps.jsonOutput == true },
+        stringResource(R.string.cap_tools).takeIf { caps.toolCalling == true },
+        stringResource(R.string.cap_reasoning).takeIf { caps.reasoning == true },
+        info.contextLength?.let { stringResource(R.string.cap_context, formatTokens(it)) }
+    )
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+}
+
+/** 131072 -> "131K", 1000000 -> "1M" (token counts; digits are locale-neutral). */
+internal fun formatTokens(tokens: Int): String = when {
+    tokens >= 1_000_000 && tokens % 1_000_000 == 0 -> "${tokens / 1_000_000}M"
+    tokens >= 1_000_000 -> String.format(java.util.Locale.ROOT, "%.1fM", tokens / 1_000_000.0)
+    tokens >= 1_000 -> "${tokens / 1_000}K"
+    else -> tokens.toString()
 }

@@ -38,14 +38,17 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import kotlin.math.abs
 
 /**
  * Layout checks with the real string resources in English, French (long labels) and Arabic
  * (RTL), on a narrow 320dp screen. Robolectric applies the locale and layout direction from
- * the qualifiers.
+ * the qualifiers. Native graphics mode is required so text is really measured (in the legacy
+ * mode text has no width and widths cannot be checked).
  */
 @RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ResponsiveUiTest {
 
     @get:Rule

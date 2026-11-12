@@ -16,6 +16,8 @@ import com.example.ai.orchestrator.ConversationContext
 import com.example.ai.orchestrator.DocumentFormat
 import com.example.ai.providers.AiErrorKind
 import com.example.ai.providers.AiException
+import com.example.ai.providers.AiProviderType
+import com.example.ai.providers.ModelInfo
 import com.example.ai.providers.ProviderInput
 import com.example.ai.providers.ProviderManager
 import com.example.ai.providers.ProviderValidationException
@@ -30,7 +32,12 @@ import com.example.core.voice.VoiceAssistantManager
 import com.example.core.voice.VoiceError
 import com.example.core.voice.VoiceState
 import com.example.core.voice.VoiceText
+import com.example.data.db.ConversationCleaner
 import com.example.data.db.SmartBubbleDatabase
+import com.example.ui.commands.SendResult
+import com.example.ui.commands.SlashAction
+import com.example.ui.commands.SlashCommand
+import com.example.ui.commands.SlashCommands
 import com.example.data.model.ChatMessageEntity
 import com.example.data.model.ConversationEntity
 import com.example.data.model.DocumentEntity
@@ -64,6 +71,15 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 import java.util.UUID
+
+/** State of the model list shown in the provider dialog. */
+data class ModelCatalogUiState(
+    val loading: Boolean = false,
+    val type: AiProviderType? = null,
+    val models: List<ModelInfo>? = null,
+    val error: String? = null,
+    val unsupported: Boolean = false
+)
 
 enum class AppNavTab {
     CHAT,
@@ -370,9 +386,16 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
      * @param fromVoice the text is a voice transcription: the real reply is read aloud and the
      *   voice conversation continues (or ends, with the error shown, if the request fails).
      */
-    fun executePrompt(prompt: String, forceFormat: String? = null, fromVoice: Boolean = false) {
+    fun executePrompt(
+        prompt: String,
+        forceFormat: String? = null,
+        fromVoice: Boolean = false,
+        displayText: String? = null
+    ): Boolean {
         val text = prompt.trim()
-        if (text.isEmpty()) return
+        if (text.isEmpty()) return false
+        // What the conversation shows and stores as the user's message (e.g. "/docx ...").
+        val shown = displayText?.trim()?.ifEmpty { null } ?: text
         val sessionId = _currentSessionId.value
         // One AI request at a time: ignore repeated taps while one is running.
         val started = launchChatOperation(sessionId) { listener ->
@@ -383,7 +406,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     conv = ConversationEntity(
                         id = sessionId,
                         title = str(R.string.new_conversation),
-                        lastMessagePreview = text.take(50),
+                        lastMessagePreview = shown.take(50),
                         updatedAt = System.currentTimeMillis()
                     )
                     database.conversationDao().insertConversation(conv)
@@ -392,7 +415,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 // Auto-generate conversation title from the first meaningful request
                 val genericTitles = listOf("New Conversation", "محادثة جديدة", "Nouvelle conversation", "New Chat")
                 if (genericTitles.any { conv.title.equals(it, ignoreCase = true) }) {
-                    val firstLine = text.lineSequence().firstOrNull()?.trim() ?: text
+                    val firstLine = shown.lineSequence().firstOrNull()?.trim() ?: shown
                     val autoTitle = if (firstLine.length > 32) firstLine.take(32) + "…" else firstLine
                     database.conversationDao().updateTitle(sessionId, autoTitle)
                 }
@@ -400,9 +423,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 // Conversation context = messages stored BEFORE this one (restored after restart too).
                 val history = buildContextHistory(sessionId)
 
-                database.conversationDao().updateLastMessage(sessionId, text.take(60))
+                database.conversationDao().updateLastMessage(sessionId, shown.take(60))
                 database.chatDao().insertMessage(
-                    ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = sessionId, isUser = true, content = text)
+                    ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = sessionId, isUser = true, content = shown)
                 )
 
                 val result = orchestrator.handleChatTurn(
@@ -457,6 +480,164 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         if (!started && fromVoice) {
             endVoiceConversation()
             _snackBarMessage.value = str(R.string.voice_busy)
+        }
+        return started
+    }
+
+    // ------------------------------------------------------------------ built-in slash commands
+
+    private val conversationCleaner = ConversationCleaner(database)
+
+    private val _clearDialogVisible = MutableStateFlow(false)
+    /** "/clear" was sent: the "Clear Conversations?" dialog is shown (nothing is deleted yet). */
+    val clearDialogVisible: StateFlow<Boolean> = _clearDialogVisible.asStateFlow()
+
+    /**
+     * Sends the composer text. A built-in command ("/docx ...", "/summarize ...", "/clear") is
+     * routed to the existing orchestrator path for it; any other text is a normal chat message.
+     * Every AI command goes through [CentralAiOrchestrator] with the default provider.
+     */
+    fun sendMessage(message: String): SendResult {
+        val text = message.trim()
+        if (text.isEmpty()) return SendResult.NEEDS_INPUT
+        val parsed = SlashCommands.parse(text)
+            ?: return if (executePrompt(text)) SendResult.SENT else SendResult.BUSY
+        return when (val action = parsed.command.action) {
+            SlashAction.Clear -> {
+                _clearDialogVisible.value = true
+                SendResult.CLEAR_DIALOG
+            }
+            is SlashAction.Document -> {
+                if (parsed.argument.isBlank()) {
+                    _snackBarMessage.value = str(R.string.command_needs_document_brief, parsed.command.token)
+                    SendResult.NEEDS_INPUT
+                } else if (executePrompt(parsed.argument, forceFormat = action.format.name, displayText = text)) {
+                    SendResult.SENT
+                } else SendResult.BUSY
+            }
+            is SlashAction.Content -> runContentCommand(action.operation, parsed.command, parsed.argument, text)
+        }
+    }
+
+    /**
+     * Content command: the text after the command is the content. Without text, the most recent
+     * document in this conversation is used; without either, the user is asked for content.
+     */
+    private fun runContentCommand(
+        operation: ContentOperation,
+        command: SlashCommand,
+        argument: String,
+        shown: String
+    ): SendResult {
+        val documentId = if (argument.isBlank()) chatMessages.value.lastOrNull { it.attachedDocId != null }?.attachedDocId else null
+        if (argument.isBlank() && documentId == null) {
+            _snackBarMessage.value = str(R.string.command_needs_content, command.token)
+            return SendResult.NEEDS_INPUT
+        }
+        val sessionId = _currentSessionId.value
+        val started = launchChatOperation(sessionId) { listener ->
+            try {
+                val document = documentId?.let { database.documentDao().getDocumentById(it) }
+                if (documentId != null && document == null) {
+                    _snackBarMessage.value = str(R.string.msg_file_not_found)
+                    return@launchChatOperation
+                }
+                if (database.conversationDao().getConversationById(sessionId) == null) {
+                    database.conversationDao().insertConversation(
+                        ConversationEntity(id = sessionId, title = str(R.string.new_conversation))
+                    )
+                }
+                database.chatDao().insertMessage(
+                    ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = sessionId, isUser = true, content = shown)
+                )
+                database.conversationDao().updateLastMessage(sessionId, shown.take(60))
+
+                val (result, provider) = orchestrator.performContentOperation(
+                    operation = operation,
+                    content = document?.textContent ?: argument,
+                    uiLanguage = appLanguage.value,
+                    listener = listener
+                )
+                ensureActive()
+                database.chatDao().insertMessage(
+                    ChatMessageEntity(
+                        id = UUID.randomUUID().toString(),
+                        sessionId = sessionId,
+                        isUser = false,
+                        content = result,
+                        attachedDocId = document?.id,
+                        attachedDocTitle = document?.title,
+                        attachedDocType = document?.fileType,
+                        orchestratorNote = "${command.token} • ${provider.name}"
+                    )
+                )
+                database.conversationDao().updateLastMessage(sessionId, result.take(60))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AiException) {
+                _snackBarMessage.value = aiErrorMessage(e, defaultProvider.value)
+            } catch (e: Exception) {
+                reportError("runContentCommand", e)
+            }
+        }
+        return if (started) SendResult.SENT else SendResult.BUSY
+    }
+
+    fun dismissClearDialog() {
+        _clearDialogVisible.value = false
+    }
+
+    /** Stops an operation that would write into conversations that are being deleted. */
+    private fun stopOperationFor(sessionIds: Set<String>?) {
+        val running = _generatingSessionId.value ?: return
+        if (chatJob == null || (sessionIds != null && running !in sessionIds)) return
+        chatOperationId++
+        chatJob?.cancel(CancellationException("Conversation cleared"))
+        finishChatOperation()
+        if (_voiceConversationActive.value) stopVoiceConversation()
+    }
+
+    /** "Clear Current Chat" (confirmed in the dialog): empties the active conversation only. */
+    fun clearCurrentConversation() {
+        _clearDialogVisible.value = false
+        val sessionId = _currentSessionId.value
+        stopOperationFor(setOf(sessionId))
+        viewModelScope.launch {
+            try {
+                conversationCleaner.clearConversation(sessionId, str(R.string.new_conversation))
+                _snackBarMessage.value = str(R.string.clear_current_done)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "clearCurrentConversation failed", e)
+                _snackBarMessage.value = str(R.string.clear_failed)
+            }
+        }
+    }
+
+    /**
+     * "Delete All Conversations" (confirmed twice): deletes every conversation and message, then
+     * opens a new empty conversation. Documents, templates, providers and keys are kept.
+     */
+    fun deleteAllConversations() {
+        _clearDialogVisible.value = false
+        stopOperationFor(null)
+        viewModelScope.launch {
+            try {
+                conversationCleaner.deleteAllConversations()
+                val newId = UUID.randomUUID().toString()
+                database.conversationDao().insertConversation(
+                    ConversationEntity(id = newId, title = str(R.string.new_conversation))
+                )
+                _currentSessionId.value = newId
+                preferences.setActiveConversationId(newId)
+                _snackBarMessage.value = str(R.string.clear_all_done)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "deleteAllConversations failed", e)
+                _snackBarMessage.value = str(R.string.clear_failed)
+            }
         }
     }
 
@@ -1039,6 +1220,39 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 _testingProviderIds.value = _testingProviderIds.value - provider.id
             }
         }
+    }
+
+    private val _modelCatalog = MutableStateFlow(ModelCatalogUiState())
+    /** Model list loaded for the provider dialog (Settings). */
+    val modelCatalog: StateFlow<ModelCatalogUiState> = _modelCatalog.asStateFlow()
+    private var modelCatalogJob: Job? = null
+
+    /**
+     * Loads the provider's real model list with [apiKey] (or the stored key of [providerId] when
+     * the field is empty). Only the provider being configured is contacted.
+     */
+    fun loadProviderModels(type: AiProviderType, baseUrl: String, apiKey: String, providerId: String?) {
+        modelCatalogJob?.cancel()
+        _modelCatalog.value = ModelCatalogUiState(loading = true, type = type)
+        modelCatalogJob = viewModelScope.launch {
+            _modelCatalog.value = try {
+                val models = providerManager.fetchModels(type, baseUrl, apiKey, providerId)
+                if (models == null) ModelCatalogUiState(type = type, unsupported = true)
+                else ModelCatalogUiState(type = type, models = models)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AiException) {
+                ModelCatalogUiState(type = type, error = aiErrorReason(e))
+            } catch (e: Exception) {
+                Log.e(TAG, "loadProviderModels failed", e)
+                ModelCatalogUiState(type = type, error = e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun clearProviderModels() {
+        modelCatalogJob?.cancel()
+        _modelCatalog.value = ModelCatalogUiState()
     }
 
     /** Adds a provider; the API key is encrypted before anything is stored. */

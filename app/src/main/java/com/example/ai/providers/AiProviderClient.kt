@@ -25,6 +25,12 @@ interface AiProviderClient {
      * Returns the latency in milliseconds; throws [AiException] on failure.
      */
     suspend fun testConnection(): Long
+
+    /**
+     * Models the provider offers to this key, with the capabilities it reports. Returns null
+     * when the provider has no model list the app supports (the model id is then typed in).
+     */
+    suspend fun listModels(): List<ModelInfo>? = null
 }
 
 object AiProviderFactory {
@@ -34,11 +40,22 @@ object AiProviderFactory {
         if (provider.modelName.isBlank()) throw AiException(AiErrorKind.INVALID_CONFIGURATION, "Model is not set")
         val type = AiProviderType.fromStorageKey(provider.providerType)
         val baseUrl = provider.baseUrl.ifBlank { type.defaultBaseUrl }
+        return createClient(type, baseUrl, apiKey, provider.modelName.trim())
+    }
+
+    /** Client for [type]; [model] may be blank only for listing models. */
+    fun createClient(type: AiProviderType, baseUrl: String, apiKey: String, model: String): AiProviderClient {
+        if (apiKey.isBlank()) throw AiException(AiErrorKind.MISSING_API_KEY)
+        val url = baseUrl.ifBlank { type.defaultBaseUrl }
         return when (type) {
-            AiProviderType.OPENAI, AiProviderType.OPENAI_COMPATIBLE ->
-                OpenAiClient(type, baseUrl, apiKey, provider.modelName.trim())
-            AiProviderType.ANTHROPIC -> AnthropicClient(baseUrl, apiKey, provider.modelName.trim())
-            AiProviderType.GEMINI -> GeminiClient(baseUrl, apiKey, provider.modelName.trim())
+            AiProviderType.OPENAI, AiProviderType.OPENAI_COMPATIBLE -> OpenAiClient(type, url, apiKey, model)
+            AiProviderType.DEEPSEEK -> DeepSeekClient(url, apiKey, model)
+            AiProviderType.MISTRAL -> MistralClient(url, apiKey, model)
+            AiProviderType.GROQ -> GroqClient(url, apiKey, model)
+            AiProviderType.XAI -> XaiClient(url, apiKey, model)
+            AiProviderType.OPENROUTER -> OpenRouterClient(url, apiKey, model)
+            AiProviderType.ANTHROPIC -> AnthropicClient(url, apiKey, model)
+            AiProviderType.GEMINI -> GeminiClient(url, apiKey, model)
         }
     }
 }

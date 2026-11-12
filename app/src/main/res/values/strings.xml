@@ -305,4 +305,37 @@
     <string name="action_next_page">Next page</string>
     <string name="library_categories">Document categories</string>
     <string name="chat_ai_refinements">AI refinements</string>
+
+    <!-- Provider model list and capabilities -->
+    <string name="models_load">Load models</string>
+    <string name="models_loading">Loading models…</string>
+    <string name="models_filter">Filter models</string>
+    <string name="models_count">%1$d models available</string>
+    <string name="models_error">Could not load the model list: %1$s</string>
+    <string name="models_empty">No chat models were returned for this key.</string>
+    <string name="models_unsupported">This provider does not publish a model list. Enter the model ID.</string>
+    <string name="models_need_key">Enter the API key to load the models.</string>
+    <string name="models_more">%1$d more. Refine the filter to see them.</string>
+    <string name="cap_vision">Vision</string>
+    <string name="cap_json">JSON output</string>
+    <string name="cap_tools">Tool calling</string>
+    <string name="cap_reasoning">Reasoning</string>
+    <string name="cap_context">%1$s context</string>
+    <string name="model_capabilities_label">Reported by the provider: %1$s</string>
+    <string name="model_no_json_note">This model does not support JSON mode: documents are requested through instructions only.</string>
+
+    <!-- Slash commands and /clear -->
+    <string name="command_needs_document_brief">Add what the document should contain after %1$s.</string>
+    <string name="command_needs_content">Add the text to process after %1$s, or create or scan a document in this conversation first.</string>
+    <string name="commands_suggestions_desc">Command suggestions</string>
+    <string name="clear_title">Clear Conversations?</string>
+    <string name="clear_message">Choose what to delete. Library documents, templates and AI provider settings are not affected.</string>
+    <string name="clear_current">Clear Current Chat</string>
+    <string name="clear_all">Delete All Conversations</string>
+    <string name="clear_all_confirm_title">Delete all conversations?</string>
+    <string name="clear_all_confirm_message">All conversations and their messages will be permanently deleted from this device. This cannot be undone. Library documents, templates and AI provider settings are kept.</string>
+    <string name="clear_all_confirm_button">Delete All</string>
+    <string name="clear_current_done">Current chat cleared.</string>
+    <string name="clear_all_done">All conversations deleted.</string>
+    <string name="clear_failed">Could not delete. Nothing was changed.</string>
 </resources>

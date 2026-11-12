@@ -305,4 +305,37 @@
     <string name="action_next_page">الصفحة التالية</string>
     <string name="library_categories">فئات المستندات</string>
     <string name="chat_ai_refinements">تحسينات الذكاء الاصطناعي</string>
+
+    <!-- Provider model list and capabilities -->
+    <string name="models_load">تحميل النماذج</string>
+    <string name="models_loading">جارٍ تحميل النماذج…</string>
+    <string name="models_filter">تصفية النماذج</string>
+    <string name="models_count">عدد النماذج المتاحة: %1$d</string>
+    <string name="models_error">تعذّر تحميل قائمة النماذج: %1$s</string>
+    <string name="models_empty">لم يُرجِع المزوّد أي نموذج محادثة لهذا المفتاح.</string>
+    <string name="models_unsupported">لا ينشر هذا المزوّد قائمة نماذج. أدخل معرّف النموذج.</string>
+    <string name="models_need_key">أدخل مفتاح API لتحميل النماذج.</string>
+    <string name="models_more">%1$d نماذج أخرى. دقّق التصفية لعرضها.</string>
+    <string name="cap_vision">الرؤية</string>
+    <string name="cap_json">مخرجات JSON</string>
+    <string name="cap_tools">استدعاء الأدوات</string>
+    <string name="cap_reasoning">الاستدلال</string>
+    <string name="cap_context">سياق %1$s</string>
+    <string name="model_capabilities_label">حسب المزوّد: %1$s</string>
+    <string name="model_no_json_note">لا يدعم هذا النموذج وضع JSON: تُطلب المستندات عبر التعليمات فقط.</string>
+
+    <!-- Slash commands and /clear -->
+    <string name="command_needs_document_brief">أضف بعد %1$s ما يجب أن يتضمّنه المستند.</string>
+    <string name="command_needs_content">أضف بعد %1$s النص المراد معالجته، أو أنشئ مستندًا أو امسحه ضوئيًا في هذه المحادثة أولًا.</string>
+    <string name="commands_suggestions_desc">اقتراحات الأوامر</string>
+    <string name="clear_title">مسح المحادثات؟</string>
+    <string name="clear_message">اختر ما تريد حذفه. لن تتأثر مستندات المكتبة والقوالب وإعدادات مزوّدي الذكاء الاصطناعي.</string>
+    <string name="clear_current">مسح المحادثة الحالية</string>
+    <string name="clear_all">حذف جميع المحادثات</string>
+    <string name="clear_all_confirm_title">حذف جميع المحادثات؟</string>
+    <string name="clear_all_confirm_message">سيتم حذف جميع المحادثات ورسائلها نهائيًا من هذا الجهاز. لا يمكن التراجع عن ذلك. ستبقى مستندات المكتبة والقوالب وإعدادات مزوّدي الذكاء الاصطناعي.</string>
+    <string name="clear_all_confirm_button">حذف الكل</string>
+    <string name="clear_current_done">تم مسح المحادثة الحالية.</string>
+    <string name="clear_all_done">تم حذف جميع المحادثات.</string>
+    <string name="clear_failed">تعذّر الحذف. لم يتغيّر شيء.</string>
 </resources>
