@@ -403,7 +403,7 @@ class XlsxEngine {
                 // (e.g. "007") and values such as "NaN"/"1e5"/"+5%" as text.
                 val isNum = parsed != null && parsed.isFinite() && numeric.none { it.isLetter() } &&
                     !(numeric.length > 1 && numeric.startsWith("0") && !numeric.startsWith("0."))
-                if (isNum && !str.startsWith("+")) {
+                if (isNum && !str.startsWith("+") && !sheet.keepValuesAsText) {
                     val cleanNum = str.replace(",", "").replace("$", "").trim()
                     sb.append("\n            <c r=\"$colLetter$rowNum\" s=\"${styles.number}\"><v>$cleanNum</v></c>")
                 } else {

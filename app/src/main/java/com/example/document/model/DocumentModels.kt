@@ -80,5 +80,7 @@ data class SheetModel(
     val headers: List<String>,
     val rows: List<List<Any>>, // string, double/int, formula
     val summaryFormulaLabel: String? = null,
-    val summaryFormula: String? = null
+    val summaryFormula: String? = null,
+    /** Write every cell as text exactly as given (no conversion of "1,250" or "007" to numbers). */
+    val keepValuesAsText: Boolean = false
 )

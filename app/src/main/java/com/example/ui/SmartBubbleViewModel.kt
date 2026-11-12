@@ -34,6 +34,13 @@ import com.example.core.voice.VoiceState
 import com.example.core.voice.VoiceText
 import com.example.data.db.ConversationCleaner
 import com.example.data.db.SmartBubbleDatabase
+import com.example.offline.RuleBasedFormattingEngine
+import com.example.offline.document.OfflineDocumentGenerator
+import com.example.offline.document.OfflineFormattingController
+import com.example.offline.document.OfflineMessage
+import com.example.offline.document.RoomOfflineLibrary
+import com.example.offline.document.RoomTemplateRepository
+import com.example.offline.document.TemplateMatcher
 import com.example.ui.commands.SendResult
 import com.example.ui.commands.SlashAction
 import com.example.ui.commands.SlashCommand
@@ -98,6 +105,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
         /** DocumentEntity.providerUsed value of documents created by on-device OCR. */
         const val LOCAL_OCR_SOURCE = "OCR"
+
+        /** Cache folder of offline documents waiting for "Save to Library". */
+        const val OFFLINE_DRAFTS_DIR = "offline_drafts"
     }
 
     private val context = application.applicationContext
@@ -279,6 +289,8 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 withContext(Dispatchers.IO) {
                     sampleDataSeeder.runStartupTasks()
                     PageImageLoader.purgeStaleScans(context)
+                    // Offline documents that were never saved (app closed before "Save to Library").
+                    File(context.cacheDir, OFFLINE_DRAFTS_DIR).deleteRecursively()
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -482,6 +494,56 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             _snackBarMessage.value = str(R.string.voice_busy)
         }
         return started
+    }
+
+    // ------------------------------------------------------------------ Offline Formatting Agent
+
+    /**
+     * Local, rule-based formatting of long pasted text (no AI provider, no API key, no network).
+     * It does not use [orchestrator] or [providerManager]: only the template repository, the
+     * document engines and the Library.
+     */
+    val offlineFormatting = OfflineFormattingController(
+        scope = viewModelScope,
+        matcher = TemplateMatcher(RoomTemplateRepository(database.templateDao())),
+        generator = OfflineDocumentGenerator(File(context.cacheDir, OFFLINE_DRAFTS_DIR)),
+        library = RoomOfflineLibrary(File(context.filesDir, "generated_docs"), database.documentDao()),
+        onMessage = { _snackBarMessage.value = offlineMessageText(it) },
+        onSaved = { doc, _ -> addOfflineChatNote(doc) }
+    )
+
+    private fun offlineMessageText(message: OfflineMessage): String = when (message) {
+        is OfflineMessage.Saved -> str(R.string.offline_saved, message.title)
+        is OfflineMessage.TooLong -> str(R.string.offline_too_long, message.maxCharacters)
+        OfflineMessage.NothingToFormat -> str(R.string.offline_nothing)
+        OfflineMessage.AnalysisFailed -> str(R.string.offline_analysis_failed)
+        OfflineMessage.GenerationFailed -> str(R.string.offline_generation_failed)
+        OfflineMessage.SaveFailed -> str(R.string.offline_save_failed)
+        OfflineMessage.Cancelled -> str(R.string.offline_cancelled)
+    }
+
+    /** Shows the saved document in the current conversation (no AI request is made). */
+    private suspend fun addOfflineChatNote(doc: DocumentEntity) {
+        val sessionId = _currentSessionId.value
+        if (database.conversationDao().getConversationById(sessionId) == null) {
+            database.conversationDao().insertConversation(
+                ConversationEntity(id = sessionId, title = str(R.string.new_conversation))
+            )
+        }
+        val note = str(R.string.offline_chat_note, doc.title)
+        database.chatDao().insertMessage(
+            ChatMessageEntity(
+                id = UUID.randomUUID().toString(),
+                sessionId = sessionId,
+                isUser = false,
+                content = note,
+                attachedDocId = doc.id,
+                attachedDocTitle = doc.title,
+                attachedDocType = doc.fileType,
+                orchestratorNote = "${RoomOfflineLibrary.SOURCE} • ${RuleBasedFormattingEngine.ID}"
+            )
+        )
+        database.conversationDao().updateLastMessage(sessionId, note.take(60))
     }
 
     // ------------------------------------------------------------------ built-in slash commands
@@ -718,10 +780,11 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         for (m in messages.asReversed()) {
             val docId = m.attachedDocId
             val docText = if (docId != null && seenDocs.add(docId)) {
-                // Scanned documents stay on the device: their text is only sent to the provider
-                // when the user explicitly runs an AI action on them.
+                // Scanned and offline-formatted documents stay on the device: their text is only
+                // sent to the provider when the user explicitly runs an AI action on them.
                 database.documentDao().getDocumentById(docId)
-                    ?.takeIf { it.providerUsed != LOCAL_OCR_SOURCE }?.textContent
+                    ?.takeIf { it.providerUsed != LOCAL_OCR_SOURCE && it.providerUsed != RoomOfflineLibrary.SOURCE }
+                    ?.textContent
             } else null
             out += ContextMessage(m.isUser, m.content, docText, m.attachedDocTitle)
         }
