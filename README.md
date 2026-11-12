@@ -127,7 +127,8 @@ The release build reads the upload keystore from the environment:
 |---|---|
 | `KEYSTORE_PATH` | Path to the keystore (default: `my-upload-key.jks` in the project root) |
 | `STORE_PASSWORD` | Keystore password |
-| `KEY_PASSWORD` | Password of the key with the alias `upload` |
+| `KEY_PASSWORD` | Password of the signing key |
+| `KEY_ALIAS` | Alias of the signing key in the keystore (default: `upload`; the GitHub workflow uses `smartbubble`) |
 | `VERSION_CODE`, `VERSION_NAME` | Optional overrides (defaults: `1`, `1.0`) |
 
 ```bash
@@ -147,18 +148,23 @@ Actions):
 
 | Secret | Value |
 |---|---|
-| `KEYSTORE_BASE64` | `base64 -w0 my-upload-key.jks` (the key alias must be `upload`) |
+| `KEYSTORE_BASE64` | `base64 -w0 <your keystore>.jks` |
 | `STORE_PASSWORD` | Keystore password |
 | `KEY_PASSWORD` | Key password |
+
+The workflow signs with the key alias `smartbubble`. If your keystore uses another alias, set the
+repository variable `KEY_ALIAS` (Settings > Secrets and variables > Actions > Variables). Before
+building, the workflow checks the keystore, the alias and both passwords and reports which
+secret is wrong, without printing any secret.
 
 Unit tests run when the manual input `run_tests` is ticked or the repository variable
 `RUN_UNIT_TESTS` is `true`. Outputs are workflow artifacts; the workflow does not create a
 GitHub release and does not upload to Google Play. Never commit a keystore or passwords.
 
-To create an upload keystore:
+To create a keystore (only if you do not have one yet; never replace an existing release key):
 
 ```bash
-keytool -genkeypair -v -keystore my-upload-key.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000
+keytool -genkeypair -v -keystore release.jks -alias smartbubble -keyalg RSA -keysize 2048 -validity 10000
 ```
 
 Keep the keystore and its passwords safe: updates must be signed with the same key.
