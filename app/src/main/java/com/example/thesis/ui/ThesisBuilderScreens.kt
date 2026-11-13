@@ -867,8 +867,13 @@ private fun ThesisSectionEditor(host: ThesisHost) {
         value = new
         if (new.text != draft?.text) controller.updateDraft(new.text)
     }
+    // A failing command leaves the text as it is and says so; it never closes the app or loses text.
     fun applyOp(op: (EditorText) -> EditorText) {
-        val r = op(EditorText.of(value.text, value.selection.start, value.selection.end))
+        val r = try { op(EditorText.of(value.text, value.selection.start, value.selection.end)) } catch (e: Exception) {
+            android.util.Log.e("ThesisEditor", "Editor command failed", e)
+            android.widget.Toast.makeText(context, context.getString(R.string.thesis_edit_failed), android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         commit(TextFieldValue(r.text, TextRange(r.start, r.end)))
     }
     // Blocks go after the selection: selected text is never replaced by an insertion.
@@ -977,8 +982,11 @@ private fun ThesisSectionEditor(host: ThesisHost) {
             if (draft.media.isNotEmpty()) MediaStrip(state.assets, draft, onEdit = { editingMedia = it })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ContentAction(Icons.Outlined.ContentPaste, R.string.thesis_paste_text, "thesis_paste_text", true) {
-                    val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.primaryClip
-                    val text = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+                    // Some clipboard items (links to content of another app) can throw when read: treated as no text.
+                    val text = try {
+                        val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.primaryClip
+                        clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+                    } catch (e: Exception) { android.util.Log.w("ThesisEditor", "Clipboard could not be read", e); null }
                     if (text.isNullOrBlank()) android.widget.Toast.makeText(context, context.getString(R.string.thesis_clipboard_empty), android.widget.Toast.LENGTH_SHORT).show()
                     else insertAtCursor(text)
                 }

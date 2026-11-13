@@ -711,6 +711,7 @@
     <string name="thesis_chat_none">No Chat messages yet. Copy text from Chat and use Paste Text, or chat first.</string>
     <string name="thesis_chat_you">You</string>
     <string name="thesis_clipboard_empty">The clipboard has no text.</string>
+    <string name="thesis_edit_failed">The change could not be made. Your text was not changed.</string>
     <string name="thesis_collapse">Collapse</string>
     <string name="thesis_continue_editing">Continue Editing</string>
     <string name="thesis_copied">Copied</string>

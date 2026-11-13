@@ -65,7 +65,8 @@ object EditorOps {
     private val HEADING = Regex("""^#{1,6}\s+""")
     private val BULLET = Regex("""^[-•*]\s+""")
     private val NUMBER = Regex("""^\d{1,3}[.)]\s+""")
-    private val ALIGN = Regex("""^\{(center|end|justify)}\s?""")
+    // "}" is escaped: Android's ICU regex engine rejects a bare "}" (the desktop JVM accepts it).
+    private val ALIGN = Regex("""^\{(center|end|justify)\}\s?""")
 
     private fun stripList(l: String) = l.replaceFirst(BULLET, "").replaceFirst(NUMBER, "")
 

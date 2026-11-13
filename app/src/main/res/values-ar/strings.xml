@@ -711,6 +711,7 @@
     <string name="thesis_chat_none">لا توجد رسائل في الدردشة بعد. انسخ نصًا من الدردشة واستخدم لصق النص.</string>
     <string name="thesis_chat_you">أنت</string>
     <string name="thesis_clipboard_empty">الحافظة لا تحتوي على نص.</string>
+    <string name="thesis_edit_failed">تعذّر تنفيذ التعديل. لم يتغيّر نصّك.</string>
     <string name="thesis_collapse">طي</string>
     <string name="thesis_continue_editing">متابعة التحرير</string>
     <string name="thesis_copied">تم النسخ</string>
