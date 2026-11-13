@@ -2,11 +2,18 @@ name: Release APK
 
 # Builds SmartBubble on demand. Nothing is published: all outputs are workflow artifacts.
 #
-#   Always ............ debug APK (uploaded only when the whole build, and the unit tests when
-#                       they run, succeeded; the artifact name and build-info.txt carry the commit)
+#   Always ............ Debug APK, uploaded whenever the Debug build itself succeeds, also when
+#                       tests or lint fail (a diagnostic build for real-device testing). Its
+#                       artifact name says whether the checks passed:
+#                         SmartBubble-Debug-<sha>-run<N>                        all checks passed
+#                         SmartBubble-Debug-<sha>-run<N>-UNVERIFIED-checks-failed  a check failed
+#                         SmartBubble-Debug-<sha>-run<N>-UNVERIFIED-tests-not-run  tests not requested
+#                       Failing checks still make the run red. If the build fails, its log is
+#                       uploaded instead and the summary says that no APK exists.
 #   When authorized ... unit tests (manual input `run_tests`, or repository variable
 #                       RUN_UNIT_TESTS = true)
-#   When signing secrets are configured ... signed release APK and AAB
+#   When signing secrets are configured ... signed release APK and AAB (only when the build and
+#                       every check that ran succeeded; unchanged)
 #
 # Triggers: manual run (Actions tab > Release APK > Run workflow) or pushing a tag `v*`.
 # There is deliberately no push / pull-request trigger.
@@ -88,13 +95,27 @@ jobs:
           echo "Building commit $GITHUB_SHA ($GITHUB_REF_NAME), run $GITHUB_RUN_NUMBER."
 
       - name: Build debug APK
+        id: build_debug
+        shell: bash
         run: |
+          set -o pipefail
           # Never package or upload a leftover APK: start from an empty output folder.
           rm -rf app/build/outputs/apk/debug
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$RUNNER_TEMP/assemble-debug.log"
+
+      # The build failed: there is no APK; keep the build log (Gradle output only, no secrets:
+      # the Debug build uses no signing secrets).
+      - name: Upload Debug build log
+        if: ${{ failure() && steps.build_debug.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-build-log-${{ env.SHORT_SHA }}-run${{ github.run_number }}
+          path: ${{ runner.temp }}/assemble-debug.log
+          if-no-files-found: warn
 
       # Tests run BEFORE the APK is uploaded: a red run publishes no APK.
       - name: Run unit tests
+        id: unit_tests
         if: ${{ inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true' }}
         run: ./gradlew testDebugUnitTest --stacktrace
 
@@ -155,10 +176,12 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Build instrumented test APK
+        id: build_test_apk
         if: ${{ inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true' }}
         run: ./gradlew assembleDebugAndroidTest --stacktrace
 
       - name: Run instrumented tests on an Android emulator
+        id: device_tests
         if: ${{ inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true' }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -196,6 +219,7 @@ jobs:
       # Android lint: API calls above minSdk 24 (NewApi), wrong resources, missing translations and
       # other Android-only errors the JVM tests cannot see. Errors fail the run.
       - name: Android lint
+        id: lint
         # Runs even when an earlier test step failed, so every run reports its lint errors too.
         if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
         run: ./gradlew lintDebug --stacktrace
@@ -223,9 +247,19 @@ jobs:
           path: app/build/reports/lint-results-debug.*
           if-no-files-found: ignore
 
-      # Only reached when the build (and the tests, when they ran) succeeded. The APK must have
-      # been built in this run from this commit: its versionName carries the commit.
+      # Uploaded whenever the Debug build succeeded, after the checks, whatever their result: a
+      # diagnostic APK for real-device testing. Its name and CI-STATUS.txt say whether the checks
+      # passed; failed checks keep the run red. The APK must have been built in this run from
+      # this commit: its versionName carries the commit.
       - name: Verify debug APK
+        id: debug_apk
+        if: ${{ always() && steps.build_debug.outcome == 'success' }}
+        env:
+          TESTS_REQUESTED: ${{ inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true' }}
+          UNIT: ${{ steps.unit_tests.outcome }}
+          TEST_APK: ${{ steps.build_test_apk.outcome }}
+          DEVICE: ${{ steps.device_tests.outcome }}
+          LINT: ${{ steps.lint.outcome }}
         run: |
           shopt -s nullglob
           apks=(app/build/outputs/apk/debug/*.apk)
@@ -239,11 +273,21 @@ jobs:
             *"+$SHORT_SHA") ;;
             *) echo "::error::The debug APK versionName '$version' does not carry commit $SHORT_SHA: not built from this commit."; exit 1;;
           esac
+          # Status of the checks in this run.
+          if [ "$TESTS_REQUESTED" != "true" ]; then
+            status="tests-not-run"; label="UNVERIFIED: tests and lint were not run for this build."
+          elif [ "$UNIT" = "success" ] && [ "$TEST_APK" = "success" ] && [ "$DEVICE" = "success" ] && [ "$LINT" = "success" ]; then
+            status="verified"; label="All CI checks passed (unit tests, emulator tests, lint). Not yet tested on a physical phone."
+          else
+            status="checks-failed"; label="UNVERIFIED, POTENTIALLY UNSTABLE: CI checks failed (unit=$UNIT, test-apk=$TEST_APK, emulator=$DEVICE, lint=$LINT). Diagnostic build for real-device testing only."
+          fi
+          name="SmartBubble-Debug-$SHORT_SHA-run$GITHUB_RUN_NUMBER"
+          [ "$status" = "verified" ] || name="$name-UNVERIFIED-$status"
           out="$RUNNER_TEMP/debug"
-          mkdir -p "$out"
-          name="SmartBubble-debug-$SHORT_SHA-run$GITHUB_RUN_NUMBER"
+          rm -rf "$out"; mkdir -p "$out"
           cp "$apk" "$out/$name.apk"
           {
+            echo "build_type=Debug"
             echo "source_commit=$GITHUB_SHA"
             echo "ref=$GITHUB_REF_NAME"
             echo "workflow_run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
@@ -251,23 +295,84 @@ jobs:
             echo "built_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "version_name=$version"
             echo "apk_sha256=$(sha256sum "$out/$name.apk" | cut -d' ' -f1)"
+            echo "ci_status=$status"
           } > "$out/build-info.txt"
-          cat "$out/build-info.txt"
+          {
+            echo "$label"
+            echo "unit_tests=${UNIT:-skipped}"
+            echo "instrumented_test_apk=${TEST_APK:-skipped}"
+            echo "emulator_tests=${DEVICE:-skipped}"
+            echo "lint=${LINT:-skipped}"
+            echo "Details: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "$out/CI-STATUS.txt"
+          cat "$out/build-info.txt" "$out/CI-STATUS.txt"
           echo "DEBUG_DIR=$out" >> "$GITHUB_ENV"
           echo "DEBUG_ARTIFACT=$name" >> "$GITHUB_ENV"
-          {
-            echo "### Debug APK"
-            echo "- Artifact: \`$name\`"
-            echo "- Commit: \`$GITHUB_SHA\`"
-            echo "- versionName: \`$version\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          [ "$status" = "verified" ] || echo "::warning::Debug APK $name is UNVERIFIED ($status): diagnostic build, potentially unstable."
 
       - name: Upload debug APK
+        if: ${{ always() && steps.debug_apk.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.DEBUG_ARTIFACT }}
           path: ${{ env.DEBUG_DIR }}
           if-no-files-found: error
+
+      # One overview of the run in the job summary: APK, every check, failed tests and lint errors.
+      - name: CI summary
+        if: ${{ always() }}
+        shell: python3 {0}
+        env:
+          BUILD: ${{ steps.build_debug.outcome }}
+          APK_STEP: ${{ steps.debug_apk.outcome }}
+          APK_STATUS: ${{ steps.debug_apk.outputs.status }}
+          UNIT: ${{ steps.unit_tests.outcome }}
+          TEST_APK: ${{ steps.build_test_apk.outcome }}
+          DEVICE: ${{ steps.device_tests.outcome }}
+          LINT: ${{ steps.lint.outcome }}
+        run: |
+          import glob, os, re, xml.etree.ElementTree as ET
+          e = os.environ
+          def st(v): return {"success": "passed", "failure": "FAILED", "cancelled": "cancelled", "skipped": "not run", "": "not run"}.get(v or "", v)
+          out = ["## Smart Bubble CI summary", "", "| Item | Result |", "|---|---|"]
+          out.append(f"| Debug APK build | {st(e.get('BUILD'))} |")
+          if e.get("APK_STEP") == "success":
+              art = e.get("DEBUG_ARTIFACT", "")
+              out.append(f"| Debug APK artifact | `{art}` |")
+              if e.get("APK_STATUS") != "verified":
+                  out.append("| APK label | **UNVERIFIED, potentially unstable: diagnostic build for real-device testing** |")
+          else:
+              out.append("| Debug APK artifact | **No APK available** (the build failed; see debug-build-log artifact) |")
+          out += [f"| Unit tests | {st(e.get('UNIT'))} |", f"| Instrumented test APK | {st(e.get('TEST_APK'))} |",
+                  f"| Emulator tests | {st(e.get('DEVICE'))} |", f"| Lint | {st(e.get('LINT'))} |", ""]
+          fails = []
+          for path in glob.glob("app/build/test-results/testDebugUnitTest/*.xml"):
+              for case in ET.parse(path).getroot().iter("testcase"):
+                  for bad in ("failure", "error"):
+                      n = case.find(bad)
+                      if n is not None:
+                          fails.append(f"Unit: {case.get('classname')}.{case.get('name')}: {(n.get('message') or '').splitlines()[0][:200] if n.get('message') else ''}")
+          try:
+              lines = open("device-test-output/instrument.txt", encoding="utf-8", errors="replace").read().splitlines()
+              for i, l in enumerate(lines):
+                  m = re.match(r"Error in (\S+)\((\S+)\):", l)
+                  if m and i + 1 < len(lines):
+                      fails.append(f"Emulator: {m.group(2)}.{m.group(1)}: {lines[i + 1][:200]}")
+          except FileNotFoundError:
+              pass
+          for path in glob.glob("app/build/reports/lint-results-debug.xml"):
+              for i in ET.parse(path).getroot().findall("issue"):
+                  if i.get("severity") in ("Error", "Fatal"):
+                      loc = i.find("location")
+                      where = f"{os.path.relpath(loc.get('file'))}:{loc.get('line')}" if loc is not None else "?"
+                      fails.append(f"Lint {i.get('id')}: {where}: {i.get('message')[:200]}")
+          if fails:
+              out += ["### Failures", ""] + [f"- {f}" for f in fails[:80]]
+          text = "\n".join(out) + "\n"
+          print(text)
+          with open(e["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write(text)
 
       # Room writes the database schema during the build. Commit it to app/schemas.
       - name: Upload Room schema
