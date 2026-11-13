@@ -48,8 +48,54 @@ data class TemplateProfile(
      * Generation setting: keep the content that is already in the template (text, slides,
      * sheets) and add the generated content after it. When false that content is replaced.
      */
-    val keepTemplateContent: Boolean = false
+    val keepTemplateContent: Boolean = false,
+    // ---- Formatting extracted from a PDF template (layoutSource == "PDF"). Defaults keep the
+    // behaviour of every other template unchanged.
+    /** "PDF" when the values below were measured on a PDF template; "" otherwise. */
+    val layoutSource: String = "",
+    /** Page size in points (0 = the engine's default page). */
+    val pageWidthPt: Int = 0,
+    val pageHeightPt: Int = 0,
+    /** Heading text color ("" = [primaryColorHex]). */
+    val headingColorHex: String = "",
+    val headingBold: Boolean = true,
+    /** "start", "center", "end" or "justify" (logical: "start" is the right edge in RTL text). */
+    val bodyAlignment: String = "start",
+    val headingAlignment: String = "start",
+    /** Line height as a multiple of the font size (0 = engine default). */
+    val lineSpacing: Float = 0f,
+    /** Extra space between paragraphs in points (-1 = engine default). */
+    val paragraphSpacingPt: Int = -1,
+    val headerFontSizePt: Int = 0,
+    val footerFontSizePt: Int = 0,
+    val headerAlignment: String = "start",
+    val footerAlignment: String = "start",
+    /** Distance from the top edge to the header baseline / from the bottom edge to the footer baseline. */
+    val headerOffsetPt: Int = 0,
+    val footerOffsetPt: Int = 0,
+    /** Where page numbers are printed: "header-start", "footer-center", ... ("" = not detected). */
+    val pageNumberPosition: String = "",
+    val tableDetected: Boolean = false,
+    val tableCellAlignment: String = "start",
+    /** List marker used by the template ("•", "-", "1.") and its indent in points. */
+    val listMarker: String = "",
+    val listIndentPt: Int = 0,
+    /** Colored shapes as "left,top,width,height,#RRGGBB;..." in fractions of the page (top-left origin). */
+    val decorations: String = "",
+    /** "TEXT", "PARTIAL" (some content could not be decoded) or "NO_TEXT" (image-only/scanned). */
+    val pdfTextStatus: String = "",
+    val pdfPageCount: Int = 0,
+    /** The template's text runs right to left (Arabic). */
+    val rtl: Boolean = false,
+    /** File name the user imported (for display). */
+    val sourceFileName: String = ""
 ) {
+    /** True for profiles measured on a PDF template. */
+    val isPdfLayout: Boolean get() = layoutSource == "PDF"
+
+    /** A scanned / image-only PDF: only the page size is known. */
+    val isImageOnlyPdf: Boolean get() = isPdfLayout && pdfTextStatus == "NO_TEXT"
+
     fun toJson(): String {
         val map = linkedMapOf<String, String>()
         map["templateId"] = templateId
@@ -84,6 +130,33 @@ data class TemplateProfile(
         map["version"] = version.toString()
         map["useTemplateLayout"] = useTemplateLayout.toString()
         map["keepTemplateContent"] = keepTemplateContent.toString()
+        if (layoutSource.isNotEmpty() || sourceFileName.isNotEmpty()) {
+            map["layoutSource"] = layoutSource
+            map["pageWidthPt"] = pageWidthPt.toString()
+            map["pageHeightPt"] = pageHeightPt.toString()
+            map["headingColorHex"] = headingColorHex
+            map["headingBold"] = headingBold.toString()
+            map["bodyAlignment"] = bodyAlignment
+            map["headingAlignment"] = headingAlignment
+            map["lineSpacing"] = lineSpacing.toString()
+            map["paragraphSpacingPt"] = paragraphSpacingPt.toString()
+            map["headerFontSizePt"] = headerFontSizePt.toString()
+            map["footerFontSizePt"] = footerFontSizePt.toString()
+            map["headerAlignment"] = headerAlignment
+            map["footerAlignment"] = footerAlignment
+            map["headerOffsetPt"] = headerOffsetPt.toString()
+            map["footerOffsetPt"] = footerOffsetPt.toString()
+            map["pageNumberPosition"] = pageNumberPosition
+            map["tableDetected"] = tableDetected.toString()
+            map["tableCellAlignment"] = tableCellAlignment
+            map["listMarker"] = listMarker
+            map["listIndentPt"] = listIndentPt.toString()
+            map["decorations"] = decorations
+            map["pdfTextStatus"] = pdfTextStatus
+            map["pdfPageCount"] = pdfPageCount.toString()
+            map["rtl"] = rtl.toString()
+            map["sourceFileName"] = sourceFileName
+        }
 
         return map.entries.joinToString(prefix = "{", postfix = "}", separator = ",") { (k, v) ->
             "\"$k\":\"${v.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")}\""
@@ -133,7 +206,32 @@ data class TemplateProfile(
                     extractedPropertiesSummary = map["extractedPropertiesSummary"] ?: "Corporate Identity Extracted",
                     version = map["version"]?.toIntOrNull() ?: 1,
                     useTemplateLayout = map["useTemplateLayout"]?.toBooleanStrictOrNull() ?: true,
-                    keepTemplateContent = map["keepTemplateContent"]?.toBooleanStrictOrNull() ?: false
+                    keepTemplateContent = map["keepTemplateContent"]?.toBooleanStrictOrNull() ?: false,
+                    layoutSource = map["layoutSource"] ?: "",
+                    pageWidthPt = map["pageWidthPt"]?.toIntOrNull() ?: 0,
+                    pageHeightPt = map["pageHeightPt"]?.toIntOrNull() ?: 0,
+                    headingColorHex = map["headingColorHex"] ?: "",
+                    headingBold = map["headingBold"]?.toBooleanStrictOrNull() ?: true,
+                    bodyAlignment = map["bodyAlignment"] ?: "start",
+                    headingAlignment = map["headingAlignment"] ?: "start",
+                    lineSpacing = map["lineSpacing"]?.toFloatOrNull() ?: 0f,
+                    paragraphSpacingPt = map["paragraphSpacingPt"]?.toIntOrNull() ?: -1,
+                    headerFontSizePt = map["headerFontSizePt"]?.toIntOrNull() ?: 0,
+                    footerFontSizePt = map["footerFontSizePt"]?.toIntOrNull() ?: 0,
+                    headerAlignment = map["headerAlignment"] ?: "start",
+                    footerAlignment = map["footerAlignment"] ?: "start",
+                    headerOffsetPt = map["headerOffsetPt"]?.toIntOrNull() ?: 0,
+                    footerOffsetPt = map["footerOffsetPt"]?.toIntOrNull() ?: 0,
+                    pageNumberPosition = map["pageNumberPosition"] ?: "",
+                    tableDetected = map["tableDetected"]?.toBooleanStrictOrNull() ?: false,
+                    tableCellAlignment = map["tableCellAlignment"] ?: "start",
+                    listMarker = map["listMarker"] ?: "",
+                    listIndentPt = map["listIndentPt"]?.toIntOrNull() ?: 0,
+                    decorations = map["decorations"] ?: "",
+                    pdfTextStatus = map["pdfTextStatus"] ?: "",
+                    pdfPageCount = map["pdfPageCount"]?.toIntOrNull() ?: 0,
+                    rtl = map["rtl"]?.toBooleanStrictOrNull() ?: false,
+                    sourceFileName = map["sourceFileName"] ?: ""
                 )
             } catch (e: Exception) {
                 defaultProfile()

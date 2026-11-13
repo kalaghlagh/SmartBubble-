@@ -42,6 +42,12 @@ class DocxEngine {
             outputFile.parentFile?.mkdirs()
         }
 
+        // 0. A PDF template: its measured style is reproduced (the PDF file itself is not used).
+        if (template.isPdfLayout) {
+            PdfProfileDocxWriter.write(model, outputFile, template)
+            return EngineResult(outputFile, templateApplied = false)
+        }
+
         // 1. Use the uploaded template file when one is provided
         if (template.useTemplateLayout && originalTemplateFile != null && originalTemplateFile.exists() && originalTemplateFile.length() > 0) {
             val reason = try {

@@ -69,6 +69,15 @@ interface TemplateDao {
     @Query("SELECT * FROM templates WHERE isDefaultExcel = 1 LIMIT 1")
     suspend fun getDefaultExcelTemplate(): TemplateEntity?
 
+    @Query("SELECT * FROM templates WHERE isDefaultPdf = 1 LIMIT 1")
+    suspend fun getDefaultPdfTemplate(): TemplateEntity?
+
+    @Query("UPDATE templates SET isDefaultPdf = 0 WHERE isDefaultPdf = 1")
+    suspend fun clearDefaultPdf()
+
+    @Query("UPDATE templates SET isDefaultPdf = :isDefault WHERE id = :id")
+    suspend fun setDefaultPdfFlag(id: String, isDefault: Boolean)
+
     @Query("UPDATE templates SET isDefaultWord = 0 WHERE isDefaultWord = 1")
     suspend fun clearDefaultWord()
 

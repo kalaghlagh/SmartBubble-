@@ -104,6 +104,9 @@ fun ChatScreen(
     val inputMessage = inputField.text
     val clearDialogVisible by viewModel.clearDialogVisible.collectAsState()
     val offlineState by viewModel.offlineFormatting.state.collectAsState()
+    val thesisState by viewModel.thesis.state.collectAsState()
+    val thesisProjects by viewModel.thesis.projects.collectAsState()
+    val thesisChatProject = thesisState.chatProjectId?.let { id -> thesisProjects.firstOrNull { it.id == id } }
     var showTemplatePicker by remember { mutableStateOf(false) }
     var showAttachmentMenu by remember { mutableStateOf(false) }
 
@@ -150,7 +153,13 @@ fun ChatScreen(
         contract = ActivityResultContracts.PickMultipleVisualMedia(25)
     ) { uris ->
         if (uris.isNotEmpty()) {
-            viewModel.processScannedPages(uris)
+            // Thesis mode: images become thesis figures (the composer text is the placement instruction).
+            if (viewModel.thesis.state.value.chatProjectId != null) {
+                viewModel.addThesisImages(uris, inputField.text.trim())
+                inputField = TextFieldValue("")
+            } else {
+                viewModel.processScannedPages(uris)
+            }
         }
     }
 
@@ -350,6 +359,18 @@ fun ChatScreen(
                         }
                     }
 
+                    // Thesis Builder (a workspace opened from Chat, not a navigation tab)
+                    IconButton(
+                        onClick = { viewModel.thesis.openWorkspace() },
+                        modifier = Modifier.testTag("chat_thesis_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.School,
+                            contentDescription = stringResource(R.string.thesis_builder),
+                            tint = if (thesisChatProject != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
                     // Options / Template Filter button on top right
                     IconButton(
                         onClick = { showTemplatePicker = true },
@@ -429,7 +450,8 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 items(messages, key = { it.id }) { msg ->
-                    val attachedDoc = msg.attachedDocId?.let { docsById[it] }
+                    val isThesisProposal = msg.attachedDocType == com.example.thesis.THESIS_PROPOSAL_CARD
+                    val attachedDoc = if (isThesisProposal) null else msg.attachedDocId?.let { docsById[it] }
 
                     ChatBubbleItem(
                         message = msg,
@@ -450,6 +472,12 @@ fun ChatScreen(
                         onExportPdf = { attachedDoc?.let { viewModel.exportDocumentAsPdf(it) } },
                         onFollowUpAi = { action -> attachedDoc?.let { viewModel.executeFollowUpAiAction(action, it.id) } }
                     )
+                    if (isThesisProposal && msg.attachedDocId != null) {
+                        TextButton(
+                            onClick = { viewModel.thesis.openReview(msg.attachedDocId) },
+                            modifier = Modifier.testTag("thesis_review_${msg.attachedDocId}")
+                        ) { Text(stringResource(R.string.thesis_review_changes)) }
+                    }
                 }
 
                 if (generatingHere) {
@@ -482,6 +510,29 @@ fun ChatScreen(
                     highlightedIndex = highlightedSuggestion,
                     onSelect = insertCommand
                 )
+            }
+
+            // Thesis mode: messages and images go to this thesis (until "Exit").
+            thesisChatProject?.let { project ->
+                Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth().testTag("thesis_chat_banner")) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.School, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                stringResource(R.string.thesis_chat_banner, project.title),
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { viewModel.thesis.openProject(project.id) }) { Text(stringResource(R.string.thesis_workspace)) }
+                            TextButton(onClick = { viewModel.exitThesisChat() }, modifier = Modifier.testTag("thesis_exit_chat")) { Text(stringResource(R.string.thesis_exit)) }
+                        }
+                        Text(stringResource(R.string.thesis_chat_hint), style = MaterialTheme.typography.bodySmall)
+                        thesisState.busy?.let { com.example.thesis.ui.BusyBar(viewModel.thesis, it) }
+                    }
+                }
             }
 
             // Offline Formatting Agent: suggestion after a long paste (nothing runs until tapped).
@@ -527,7 +578,7 @@ fun ChatScreen(
                             viewModel.offlineFormatting.onComposerTextChanged(
                                 before = inputField.text,
                                 after = newValue.text,
-                                inputEnabled = !voiceActive
+                                inputEnabled = !voiceActive && thesisChatProject == null
                             )
                             inputField = newValue
                         },
@@ -917,6 +968,7 @@ fun ChatScreen(
                                         "DOCX" -> "W"
                                         "PPTX" -> "P"
                                         "XLSX" -> "X"
+                                        "PDF" -> "PDF"
                                         else -> "D"
                                     },
                                     color = Color.White,
@@ -979,6 +1031,10 @@ fun ChatScreen(
             }
         )
     }
+
+    // Thesis Builder workspace and change review
+    com.example.thesis.ui.ThesisWorkspaceDialog(viewModel)
+    if (!thesisState.workspaceOpen) thesisState.review?.let { com.example.thesis.ui.ThesisReviewDialog(viewModel.thesis, it) }
 
     // Offline formatting preview, confirmation and Save to Library
     if (offlineState.dialogVisible) {

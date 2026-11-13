@@ -58,6 +58,7 @@ import com.example.offline.PreviewItem
 import com.example.offline.document.OfflineFormat
 import com.example.offline.document.OfflineFormattingUiState
 import com.example.offline.document.OfflinePhase
+import com.example.offline.document.IncompatibleReason
 import com.example.offline.document.TemplateMatcher
 import com.example.offline.document.TemplateNote
 import com.example.offline.document.TemplateSource
@@ -189,7 +190,16 @@ private fun documentTypeLabel(type: DocumentType): String = stringResource(
 
 @Composable
 fun templateNoteText(note: TemplateNote): String = when (note) {
-    is TemplateNote.Incompatible -> stringResource(R.string.offline_note_incompatible, note.templateName, note.templateType, note.format.name)
+    is TemplateNote.Incompatible -> when {
+        note.reason == IncompatibleReason.PDF_NO_TABLE_FOR_XLSX -> stringResource(R.string.offline_note_pdf_no_table, note.templateName)
+        note.reason == IncompatibleReason.PDF_NOT_FOR_PPTX -> stringResource(R.string.offline_note_pdf_not_pptx, note.templateName)
+        note.isDefault -> stringResource(R.string.offline_note_default_incompatible, note.templateName, note.templateType, note.format.name)
+        else -> stringResource(R.string.offline_note_incompatible, note.templateName, note.templateType, note.format.name)
+    }
+    is TemplateNote.PdfProfileApplied -> listOfNotNull(
+        stringResource(if (note.imageOnly) R.string.offline_note_pdf_image_only else R.string.offline_note_pdf_profile, note.templateName),
+        if (note.shapesNotInWord) stringResource(R.string.offline_note_pdf_shapes_word) else null
+    ).joinToString(" ")
     TemplateNote.NotFound -> stringResource(R.string.offline_note_not_found)
     is TemplateNote.FileMissing -> stringResource(R.string.offline_note_file_missing, note.templateName)
     TemplateNote.PdfProfileOnly -> stringResource(R.string.offline_note_pdf)

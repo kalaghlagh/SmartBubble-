@@ -216,6 +216,29 @@ class SmartBubbleMigrationTest {
         assertEquals(2, db.chatDao().getMessagesForSession("conv-1").first().size)
     }
 
+    /** v3 -> v4: Thesis Builder tables are created; all existing data is kept and the new tables work. */
+    @Test
+    fun migrateFromVersion3_addsThesisTablesAndKeepsData() = runBlocking {
+        createRawDatabase(3, documentsDdl, templatesV2Ddl, providersDdl, chatMessagesDdl, conversationsDdl) { db ->
+            insertDocument(db, "doc-1", "Report.docx", "/data/generated_docs/a.docx")
+            insertTemplateV2(db, "tpl-1", "Deck", "PPTX", 10L, defaultPpt = true)
+            insertProvider(db, "p-1", "Mine", isDefault = true)
+            insertMessage(db, "m-1", "conv-1", true, "hello", 1_000L)
+        }
+        val db = openProduction() // Room validates the migrated schema against the entities
+        assertEquals("Report.docx", db.documentDao().getDocumentById("doc-1")?.title)
+        assertTrue(db.templateDao().getTemplateById("tpl-1")!!.isDefaultPpt)
+        assertEquals("Mine", db.providerDao().getDefaultProvider()?.name)
+        assertEquals(1, countRows(db, "chat_messages"))
+        assertEquals(0, countRows(db, "thesis_projects"))
+        db.thesisDao().insertProject(
+            com.example.data.model.ThesisProjectEntity(
+                "t-1", "Thesis", "MASTER", "ar", "", "", "", "", "", "", "", "", "", "", null, null, true, null, 0, 1L, 1L
+            )
+        )
+        assertEquals("Thesis", db.thesisDao().project("t-1")?.title)
+    }
+
     /** Data written through Room survives closing and reopening with the production config. */
     @Test
     fun roomCreatedDatabase_survivesReopen() = runBlocking {

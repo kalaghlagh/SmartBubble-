@@ -182,12 +182,17 @@ class CentralAiOrchestrator(
 
     private data class TemplateChoice(val profile: TemplateProfile, val file: File?, val entity: TemplateEntity?, val note: String?)
 
-    /** Picks the template for [format]: the chat-selected one if it matches, else the default. */
+    /**
+     * Picks the template for [format]: the chat-selected one if it matches, else the default.
+     * A PDF template applies to Word and PDF output through its measured style profile.
+     */
     private suspend fun chooseTemplate(format: DocumentFormat, selected: TemplateEntity?): TemplateChoice {
         val wantedType = if (format == DocumentFormat.PDF) "DOCX" else format.name
+        fun fits(t: TemplateEntity) = t.fileType.equals(wantedType, ignoreCase = true) ||
+            (t.fileType.equals("PDF", ignoreCase = true) && (format == DocumentFormat.DOCX || format == DocumentFormat.PDF))
         var note: String? = null
         val entity = when {
-            selected != null && selected.fileType.equals(wantedType, ignoreCase = true) -> selected
+            selected != null && fits(selected) -> selected
             else -> {
                 if (selected != null) {
                     note = "The selected template \"${selected.name}\" is a ${selected.fileType} template and cannot be applied to a ${format.name} file; your default ${format.name} template was used instead (if any)."
@@ -196,12 +201,18 @@ class CentralAiOrchestrator(
                 when (format) {
                     DocumentFormat.PPTX -> dao.getDefaultPptTemplate()
                     DocumentFormat.XLSX -> dao.getDefaultExcelTemplate()
-                    else -> dao.getDefaultWordTemplate()
+                    DocumentFormat.PDF -> dao.getDefaultPdfTemplate() ?: dao.getDefaultWordTemplate()
+                    else -> dao.getDefaultWordTemplate() ?: dao.getDefaultPdfTemplate()
                 }
             }
         }
         if (entity == null) return TemplateChoice(TemplateProfile.defaultProfile(), null, null, note)
         val profile = TemplateProfile.fromJson(entity.profileJson)
+        if (profile.isPdfLayout) {
+            // The PDF itself is never used as a file template: its measured style is applied.
+            note = listOfNotNull(note, "The formatting of the PDF template \"${entity.name}\" was reproduced from its measured layout; exact visual identity is not guaranteed.").joinToString(" ")
+            return TemplateChoice(profile, null, entity, note)
+        }
         val file = File(entity.originalFilePath).takeIf { it.isFile && it.length() > 0 }
         if (file == null) {
             note = listOfNotNull(note, "The template file \"${entity.name}\" is missing; only its saved colors and fonts were used.").joinToString(" ")
@@ -233,6 +244,9 @@ class CentralAiOrchestrator(
                 "Word template \"${entity.name}\" with sections: " + data.sections.take(12).joinToString("; ") { it.heading }
             is TemplatePreviewData.PptxPreview ->
                 "presentation template \"${entity.name}\" whose slides cover: " + data.slides.take(12).joinToString("; ") { it.title }
+            is TemplatePreviewData.PdfPreview ->
+                // Only measured styles, never the PDF's text.
+                "PDF template \"${entity.name}\" used as a style reference: ${data.profile.extractedPropertiesSummary}"
             is TemplatePreviewData.XlsxPreview ->
                 "workbook template \"${entity.name}\" with sheets: " + data.sheets.take(8).joinToString("; ") { "${it.name} (${it.headers.joinToString(", ")})" }
         }
@@ -381,6 +395,31 @@ class CentralAiOrchestrator(
         DocumentFormat.PPTX -> DeliveryManager.MIME_PPTX
         DocumentFormat.XLSX -> DeliveryManager.MIME_XLSX
         DocumentFormat.PDF -> DeliveryManager.MIME_PDF
+    }
+
+    // ------------------------------------------------------------------ Thesis Builder
+
+    /**
+     * Runs one Thesis Builder task (destination suggestion, academic edit, table from data, image
+     * placement) through the user's DEFAULT provider. The answer is streamed (cancellable with the
+     * calling coroutine) and returned raw; the Thesis Builder validates it locally and shows it as
+     * a proposal the user must accept. No other provider is used; there is no fallback.
+     */
+    suspend fun runThesisTask(
+        system: String,
+        user: String,
+        listener: AiProgressListener = AiProgressListener.NONE,
+        maxOutputTokens: Int = 8_000
+    ): Pair<ProviderEntity, String> = withContext(Dispatchers.IO) {
+        listener.onStage(AiProgressStage.CONNECTING)
+        val (provider, client) = providerManager.defaultClient()
+        currentCoroutineContext().ensureActive()
+        listener.onStage(AiProgressStage.GENERATING)
+        val response = client.stream(AiRequest(system, listOf(AiMessage(AiRole.USER, user)), expectJson = true, maxOutputTokens = maxOutputTokens)) {}
+        currentCoroutineContext().ensureActive()
+        if (response.truncated) throw AiException(AiErrorKind.TRUNCATED_RESPONSE)
+        listener.onStage(AiProgressStage.VALIDATING)
+        provider to response.text
     }
 
     // ------------------------------------------------------------------ content operations

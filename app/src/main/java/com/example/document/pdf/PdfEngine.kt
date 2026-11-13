@@ -28,6 +28,12 @@ class PdfEngine {
             outputFile.parentFile?.mkdirs()
         }
 
+        // A PDF template: follow its measured page layout and styles.
+        if (template.isPdfLayout) {
+            PdfProfileRenderer(template).render(model, outputFile)
+            return outputFile
+        }
+
         val pdfDocument = PdfDocument()
         val pageWidth = 595 // A4 standard pt at 72dpi
         val pageHeight = 842

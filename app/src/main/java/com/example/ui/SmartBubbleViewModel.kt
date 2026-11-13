@@ -35,6 +35,16 @@ import com.example.core.voice.VoiceText
 import com.example.data.db.ConversationCleaner
 import com.example.data.db.SmartBubbleDatabase
 import com.example.offline.RuleBasedFormattingEngine
+import com.example.thesis.THESIS_PROPOSAL_CARD
+import com.example.thesis.ThesisChatNote
+import com.example.thesis.ThesisController
+import com.example.thesis.ThesisMessage
+import com.example.thesis.ThesisNoteText
+import com.example.thesis.ai.OrchestratorThesisAi
+import com.example.thesis.data.ThesisRepository
+import com.example.thesis.export.ThesisExport
+import com.example.thesis.export.ThesisExporter
+import com.example.thesis.export.ThesisPdfRenderer
 import com.example.offline.document.OfflineDocumentGenerator
 import com.example.offline.document.OfflineFormattingController
 import com.example.offline.document.OfflineMessage
@@ -51,7 +61,9 @@ import com.example.data.model.DocumentEntity
 import com.example.data.model.ProviderEntity
 import com.example.data.model.TemplateEntity
 import com.example.template.analysis.TemplateAnalysisEngine
-import com.example.template.analysis.TemplateFileInspector
+import com.example.template.storage.TemplateImportException
+import com.example.template.storage.TemplateImporter
+import com.example.template.storage.TemplateThumbnails
 import com.example.template.domain.TemplateProfile
 import com.example.template.preview.TemplatePreviewEngine
 import com.example.template.preview.TemplatePreviewResult
@@ -97,14 +109,14 @@ enum class AppNavTab {
 
 class SmartBubbleViewModel(application: Application) : AndroidViewModel(application) {
 
-    /** A template import problem with a localized explanation for the user. */
-    private class TemplateImportException(val messageRes: Int) : Exception()
-
     private companion object {
         const val TAG = "SmartBubbleViewModel"
 
         /** DocumentEntity.providerUsed value of documents created by on-device OCR. */
         const val LOCAL_OCR_SOURCE = "OCR"
+
+        /** DocumentEntity.providerUsed of thesis exports (kept out of automatic AI context). */
+        const val THESIS_SOURCE = "Thesis Builder"
 
         /** Cache folder of offline documents waiting for "Save to Library". */
         const val OFFLINE_DRAFTS_DIR = "offline_drafts"
@@ -215,7 +227,13 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     private val voiceAssistant = VoiceAssistantManager(context, object : VoiceAssistantManager.Listener {
         override fun onTranscription(text: String) {
             // What the user said goes through the same orchestrator path as typed messages.
-            if (_voiceConversationActive.value) executePrompt(text, fromVoice = true)
+            if (_voiceConversationActive.value) {
+                if (thesis.state.value.chatProjectId != null) {
+                    // Thesis mode: the transcription is a thesis instruction (reviewed, not spoken back).
+                    endVoiceConversation()
+                    sendToThesis(text)
+                } else executePrompt(text, fromVoice = true)
+            }
         }
 
         override fun onSpeechCompleted(messageId: String) {
@@ -348,6 +366,12 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun selectConversation(id: String) {
+        // A thesis conversation reopens thesis mode, so its messages go to the thesis, not to normal chat.
+        if (id.startsWith("thesis-")) {
+            enterThesisChat(id.removePrefix("thesis-"))
+            return
+        }
+        if (thesis.state.value.chatProjectId != null) thesis.exitChatMode()
         launchSafely("selectConversation") {
             _currentSessionId.value = id
             preferences.setActiveConversationId(id)
@@ -546,6 +570,217 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         database.conversationDao().updateLastMessage(sessionId, note.take(60))
     }
 
+    // ------------------------------------------------------------------ Thesis Builder
+
+    private val thesisRepository = ThesisRepository(
+        db = database,
+        root = File(context.filesDir, "thesis"),
+        imageInspector = { file ->
+            val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeFile(file.path, o)
+            if (o.outWidth > 0 && o.outHeight > 0) o.outWidth to o.outHeight else null
+        }
+    )
+
+    /**
+     * Thesis Builder: structured thesis projects edited through Chat. AI tasks go through
+     * [orchestrator] with the default provider; formatting and documents are produced locally.
+     */
+    val thesis = ThesisController(
+        scope = viewModelScope,
+        repository = thesisRepository,
+        ai = OrchestratorThesisAi(
+            run = { system, user, listener -> orchestrator.runThesisTask(system, user, listener).second },
+            defaultProviderName = { database.providerDao().getDefaultProvider()?.name }
+        ),
+        exporter = ThesisExporter(
+            repository = thesisRepository,
+            templates = RoomTemplateRepository(database.templateDao()),
+            outputDir = File(context.cacheDir, "thesis_exports"),
+            pdfRenderer = { profile, snapshot, assets, file -> ThesisPdfRenderer(profile).render(snapshot, assets, file) }
+        ),
+        previewDir = File(context.cacheDir, "thesis_preview"),
+        onMessage = { _snackBarMessage.value = thesisMessageText(it) },
+        onChatNote = { addThesisChatNote(it) },
+        onSaveToLibrary = { export, projectId -> saveThesisExport(export, projectId) }
+    )
+
+    init {
+        // Declared after the thesis properties: they are initialized when this runs.
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    // Thesis exports never moved to the Library and revision files of interrupted saves.
+                    File(context.cacheDir, "thesis_exports").deleteRecursively()
+                    thesisRepository.cleanUpInterrupted()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Thesis clean-up failed", e)
+            }
+        }
+    }
+
+    /** Conversation that holds the Chat exchanges of one thesis project. */
+    private fun thesisConversationId(projectId: String) = "thesis-$projectId"
+
+    private var sessionBeforeThesis: String? = null
+
+    /** Chat sends the following messages and images to [projectId] (until [exitThesisChat]). */
+    fun enterThesisChat(projectId: String) {
+        launchSafely("enterThesisChat") {
+            val project = thesisRepository.project(projectId) ?: return@launchSafely
+            val conversationId = thesisConversationId(projectId)
+            if (database.conversationDao().getConversationById(conversationId) == null) {
+                database.conversationDao().insertConversation(ConversationEntity(id = conversationId, title = project.title))
+            }
+            if (!_currentSessionId.value.startsWith("thesis-")) sessionBeforeThesis = _currentSessionId.value
+            if (_voiceConversationActive.value) stopVoiceConversation()
+            _currentSessionId.value = conversationId
+            thesis.enterChatMode(projectId)
+            setNavTab(AppNavTab.CHAT)
+        }
+    }
+
+    fun exitThesisChat() {
+        thesis.exitChatMode()
+        val back = sessionBeforeThesis
+        sessionBeforeThesis = null
+        launchSafely("exitThesisChat") {
+            val target = back?.takeIf { database.conversationDao().getConversationById(it) != null }
+                ?: allConversations.value.firstOrNull { !it.id.startsWith("thesis-") }?.id
+                ?: UUID.randomUUID().toString().also { database.conversationDao().insertConversation(ConversationEntity(id = it, title = str(R.string.new_conversation))) }
+            _currentSessionId.value = target
+            preferences.setActiveConversationId(target)
+        }
+    }
+
+    /** Opens a thesis project from the Library. */
+    fun openThesisFromLibrary(projectId: String) {
+        setNavTab(AppNavTab.CHAT)
+        thesis.openProject(projectId)
+    }
+
+    private fun sendToThesis(text: String): SendResult {
+        val projectId = thesis.state.value.chatProjectId ?: return SendResult.BUSY
+        if (thesis.state.value.busy != null) return SendResult.BUSY
+        val conversationId = thesisConversationId(projectId)
+        launchSafely("sendToThesis") {
+            database.chatDao().insertMessage(ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = conversationId, isUser = true, content = text))
+            database.conversationDao().updateLastMessage(conversationId, text.take(60))
+        }
+        thesis.submitFromChat(text)
+        return SendResult.SENT
+    }
+
+    /** Images attached in Chat while a thesis is active become thesis figures (placement is reviewed). */
+    fun addThesisImages(uris: List<Uri>, instruction: String) {
+        val resolver = context.contentResolver
+        val images = uris.map { uri ->
+            val name = try {
+                resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            } catch (e: Exception) { null } ?: "image"
+            Triple<() -> java.io.InputStream?, String, String>({ resolver.openInputStream(uri) }, name, resolver.getType(uri) ?: "image/jpeg")
+        }
+        val projectId = thesis.state.value.chatProjectId ?: return
+        launchSafely("addThesisImages") {
+            val conversationId = thesisConversationId(projectId)
+            val shown = instruction.ifBlank { str(R.string.thesis_images_attached, uris.size) }
+            database.chatDao().insertMessage(ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = conversationId, isUser = true, content = shown))
+        }
+        thesis.addImagesFromChat(images, instruction)
+    }
+
+    private suspend fun addThesisChatNote(note: ThesisChatNote) {
+        val conversationId = thesisConversationId(note.projectId)
+        if (database.conversationDao().getConversationById(conversationId) == null) {
+            val title = thesisRepository.project(note.projectId)?.title ?: str(R.string.thesis_builder)
+            database.conversationDao().insertConversation(ConversationEntity(id = conversationId, title = title))
+        }
+        val text = thesisNoteText(note.text)
+        database.chatDao().insertMessage(
+            ChatMessageEntity(
+                id = UUID.randomUUID().toString(), sessionId = conversationId, isUser = false, content = text,
+                attachedDocId = note.proposalId, attachedDocType = if (note.proposalId != null) THESIS_PROPOSAL_CARD else null,
+                orchestratorNote = str(R.string.thesis_builder)
+            )
+        )
+        database.conversationDao().updateLastMessage(conversationId, text.take(60))
+    }
+
+    private val thesisNotes: Map<String, Int> = mapOf(
+        "thesis_note_applied" to R.string.thesis_note_applied,
+        "thesis_note_change" to R.string.thesis_note_change,
+        "thesis_note_choose_destination" to R.string.thesis_note_choose_destination,
+        "thesis_note_edit" to R.string.thesis_note_edit,
+        "thesis_note_heading_text" to R.string.thesis_note_heading_text,
+        "thesis_note_image" to R.string.thesis_note_image,
+        "thesis_note_no_changes" to R.string.thesis_note_no_changes,
+        "thesis_note_no_previous" to R.string.thesis_note_no_previous,
+        "thesis_note_paragraph_missing" to R.string.thesis_note_paragraph_missing,
+        "thesis_note_proposal" to R.string.thesis_note_proposal,
+        "thesis_note_rejected" to R.string.thesis_note_rejected,
+        "thesis_note_restore_review" to R.string.thesis_note_restore_review,
+        "thesis_note_restored" to R.string.thesis_note_restored,
+        "thesis_note_section_empty" to R.string.thesis_note_section_empty,
+        "thesis_note_sent_to_provider" to R.string.thesis_note_sent_to_provider,
+        "thesis_note_suggested" to R.string.thesis_note_suggested,
+        "thesis_note_table" to R.string.thesis_note_table,
+        "thesis_note_table_data" to R.string.thesis_note_table_data,
+        "thesis_note_unknown" to R.string.thesis_note_unknown,
+        "thesis_note_where" to R.string.thesis_note_where,
+        "thesis_note_which_section" to R.string.thesis_note_which_section
+    )
+
+    private fun thesisNoteText(t: ThesisNoteText): String {
+        val res = thesisNotes[t.code] ?: return t.code
+        return try { str(res, *t.args.toTypedArray()) } catch (e: Exception) { str(res) }
+    }
+
+    private fun thesisMessageText(m: ThesisMessage): String = when (m) {
+        is ThesisMessage.Created -> str(R.string.thesis_msg_created, m.title)
+        is ThesisMessage.Applied -> str(R.string.thesis_msg_applied, m.revision)
+        ThesisMessage.Rejected -> str(R.string.thesis_msg_rejected)
+        is ThesisMessage.Conflict -> str(R.string.thesis_msg_conflict)
+        is ThesisMessage.Restored -> str(R.string.thesis_msg_restored, m.revision)
+        is ThesisMessage.Exported -> str(R.string.thesis_msg_exported, m.title)
+        is ThesisMessage.AiFailed -> aiErrorMessage(m.error, defaultProvider.value)
+        ThesisMessage.AiInvalid -> str(R.string.thesis_msg_ai_invalid)
+        ThesisMessage.Cancelled -> str(R.string.chat_generation_stopped)
+        is ThesisMessage.ImageFailed -> str(R.string.thesis_msg_image_failed)
+        is ThesisMessage.Failed -> str(R.string.thesis_msg_failed)
+        ThesisMessage.Deleted -> str(R.string.thesis_msg_deleted)
+    }
+
+    /** Copies an export into the Library folder and registers it (linked to the project). */
+    private suspend fun saveThesisExport(export: ThesisExport, projectId: String): String = withContext(Dispatchers.IO) {
+        val dir = File(context.filesDir, "generated_docs").apply { mkdirs() }
+        val ext = export.file.extension
+        val target = DocumentFileNames.createUniqueFile(dir, export.file.nameWithoutExtension, ext)
+        if (!export.file.renameTo(target)) { export.file.copyTo(target, overwrite = false); export.file.delete() }
+        val snapshot = thesisRepository.snapshot(projectId)
+        val text = snapshot.orderedElements().joinToString("\n\n") { it.text }.take(200_000)
+        val entity = DocumentEntity(
+            id = UUID.randomUUID().toString(),
+            title = target.name,
+            fileType = if (ext == "pdf") "PDF" else "DOCX",
+            filePath = target.absolutePath,
+            fileSize = target.length(),
+            wordCount = text.split(Regex("\\s+")).count { it.isNotBlank() },
+            pageOrSlideCount = export.pages.coerceAtLeast(snapshot.outline(false).size),
+            templateId = export.template.entity?.id,
+            templateName = export.template.entity?.name,
+            providerUsed = THESIS_SOURCE,
+            projectId = projectId,
+            summary = "${snapshot.meta.title} • ${target.length() / 1024} KB",
+            textContent = text,
+            isOrchestratorVerified = false
+        )
+        database.documentDao().insertDocument(entity)
+        entity.title
+    }
+
     // ------------------------------------------------------------------ built-in slash commands
 
     private val conversationCleaner = ConversationCleaner(database)
@@ -562,6 +797,8 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     fun sendMessage(message: String): SendResult {
         val text = message.trim()
         if (text.isEmpty()) return SendResult.NEEDS_INPUT
+        // Thesis mode: the message goes to the active thesis project (never to normal chat).
+        if (thesis.state.value.chatProjectId != null) return sendToThesis(text)
         val parsed = SlashCommands.parse(text)
             ?: return if (executePrompt(text)) SendResult.SENT else SendResult.BUSY
         return when (val action = parsed.command.action) {
@@ -783,7 +1020,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 // Scanned and offline-formatted documents stay on the device: their text is only
                 // sent to the provider when the user explicitly runs an AI action on them.
                 database.documentDao().getDocumentById(docId)
-                    ?.takeIf { it.providerUsed != LOCAL_OCR_SOURCE && it.providerUsed != RoomOfflineLibrary.SOURCE }
+                    ?.takeIf { it.providerUsed != LOCAL_OCR_SOURCE && it.providerUsed != RoomOfflineLibrary.SOURCE && it.providerUsed != THESIS_SOURCE }
                     ?.textContent
             } else null
             out += ContextMessage(m.isUser, m.content, docText, m.attachedDocTitle)
@@ -918,73 +1155,80 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    fun importTemplateFromUri(uri: Uri, userDefinedName: String) {
-        viewModelScope.launch {
-            var persistentTemplateFile: File? = null
-            var saved = false
-            try {
-                // Copying and analysing the file is blocking I/O: keep it off the main thread.
-                val (file, profile) = withContext(Dispatchers.IO) {
-                    val templateDir = File(context.filesDir, "templates").apply { mkdirs() }
-                    val staging = File(templateDir, "import_${UUID.randomUUID()}.tmp")
-                    persistentTemplateFile = staging
+    private val templatesDir: File get() = File(context.filesDir, "templates")
 
-                    val input = context.contentResolver.openInputStream(uri)
-                        ?: throw TemplateImportException(R.string.template_import_unreadable)
-                    // Bounded copy: stop as soon as the size limit is exceeded.
-                    input.use { stream ->
-                        FileOutputStream(staging).use { output ->
-                            val buffer = ByteArray(64 * 1024)
-                            var total = 0L
-                            while (true) {
-                                val read = stream.read(buffer)
-                                if (read < 0) break
-                                total += read
-                                if (total > TemplateFileInspector.MAX_FILE_BYTES) {
-                                    throw TemplateImportException(R.string.template_import_too_large)
-                                }
-                                output.write(buffer, 0, read)
-                            }
-                        }
-                    }
-                    // The type comes from the file content, not from its name or MIME type.
-                    val type = when (val result = TemplateFileInspector.inspect(staging)) {
-                        is TemplateFileInspector.Result.Valid -> result.type
-                        TemplateFileInspector.Result.TooLarge ->
-                            throw TemplateImportException(R.string.template_import_too_large)
-                        TemplateFileInspector.Result.NotOfficeDocument ->
-                            throw TemplateImportException(R.string.template_import_unsupported)
-                    }
-                    val target = File(templateDir, "template_${UUID.randomUUID()}.${type.extension}")
-                    if (!staging.renameTo(target)) throw java.io.IOException("Could not store the template file.")
-                    persistentTemplateFile = target
-                    target to templateAnalysisEngine.analyzeFile(target, userDefinedName)
-                }
-                val templateEntity = TemplateEntity(
-                    id = profile.templateId,
-                    name = profile.name,
-                    fileType = profile.originalFileType,
-                    originalFilePath = file.absolutePath,
-                    fileSize = file.length(),
-                    profileJson = profile.toJson(),
-                    compatibilityStatus = "Compatible",
-                    thumbnailColorHex = profile.primaryColorHex
+    private val templateImporter by lazy {
+        TemplateImporter(
+            templatesDir = templatesDir,
+            dao = database.templateDao(),
+            analysis = templateAnalysisEngine,
+            pdfThumbnail = { pdf, id -> TemplateThumbnails.renderPdfFirstPage(pdf, TemplateThumbnails.fileFor(templatesDir, id)) }
+        )
+    }
+
+    /**
+     * Imports a DOCX, PPTX, XLSX or PDF template picked with the Storage Access Framework. Copy,
+     * type check and analysis run locally off the main thread; [sourceFileName] is the picked
+     * file's name (shown for the template).
+     */
+    fun importTemplateFromUri(uri: Uri, userDefinedName: String, sourceFileName: String? = null) {
+        viewModelScope.launch {
+            try {
+                val entity = templateImporter.import(
+                    open = { context.contentResolver.openInputStream(uri) },
+                    userName = userDefinedName,
+                    sourceFileName = sourceFileName
                 )
-                database.templateDao().insertTemplate(templateEntity)
-                saved = true
-                _snackBarMessage.value = str(R.string.msg_template_imported, profile.name)
+                _snackBarMessage.value = when {
+                    entity.compatibilityStatus == "Review" -> str(R.string.template_pdf_imported_no_text, entity.name)
+                    else -> str(R.string.msg_template_imported, entity.name)
+                }
             } catch (e: CancellationException) {
-                if (!saved) withContext(NonCancellable + Dispatchers.IO) { persistentTemplateFile?.delete() }
                 throw e
             } catch (e: TemplateImportException) {
-                if (!saved) withContext(Dispatchers.IO) { persistentTemplateFile?.delete() }
-                _snackBarMessage.value = str(e.messageRes)
+                _snackBarMessage.value = str(
+                    when (e.reason) {
+                        TemplateImportException.Reason.UNREADABLE -> R.string.template_import_unreadable
+                        TemplateImportException.Reason.TOO_LARGE -> R.string.template_import_too_large
+                        TemplateImportException.Reason.UNSUPPORTED -> R.string.template_import_unsupported
+                        TemplateImportException.Reason.PDF_ENCRYPTED -> R.string.template_import_pdf_encrypted
+                        TemplateImportException.Reason.PDF_DAMAGED -> R.string.template_import_pdf_damaged
+                    }
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "importTemplateFromUri failed", e)
-                // Do not leave an orphaned partial copy behind.
-                if (!saved) withContext(Dispatchers.IO) { persistentTemplateFile?.delete() }
                 _snackBarMessage.value = "Template import failed: ${e.message}"
             }
+        }
+    }
+
+    /** First-page image of a PDF template (rendered on the device and cached), or null. */
+    suspend fun templateThumbnail(template: TemplateEntity): android.graphics.Bitmap? {
+        if (!template.fileType.equals("PDF", ignoreCase = true)) return null
+        return withContext(Dispatchers.IO) {
+            TemplateThumbnails.load(templatesDir, template.id, File(template.originalFilePath))
+        }
+    }
+
+    /**
+     * Opens the original PDF of a template in a PDF viewer. A read-only copy in the app's export
+     * cache is shared (the template folder itself is never exposed); the original is unchanged.
+     */
+    fun openTemplateOriginal(template: TemplateEntity) {
+        launchSafely("openTemplateOriginal") {
+            val source = File(template.originalFilePath)
+            if (!source.isFile) {
+                _snackBarMessage.value = str(R.string.msg_file_not_found)
+                return@launchSafely
+            }
+            val copy = withContext(Dispatchers.IO) {
+                val dir = File(context.cacheDir, "pdf_exports").apply { mkdirs() }
+                val name = TemplateProfile.fromJson(template.profileJson).sourceFileName.ifBlank { template.name }
+                File(dir, DocumentFileNames.sanitizeBaseName(DocumentFileNames.stripDocumentExtension(name.removeSuffix(".pdf"))) + ".pdf").also {
+                    source.copyTo(it, overwrite = true)
+                }
+            }
+            deliveryManager.openFile(copy, DeliveryManager.MIME_PDF)
         }
     }
 
@@ -1000,6 +1244,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             if (template.originalFilePath.isNotBlank()) {
                 withContext(Dispatchers.IO) { File(template.originalFilePath).delete() }
             }
+            withContext(Dispatchers.IO) { TemplateThumbnails.fileFor(templatesDir, template.id).delete() }
             _snackBarMessage.value = str(R.string.msg_template_deleted)
         }
     }
@@ -1020,6 +1265,10 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                         "XLSX" -> {
                             dao.clearDefaultExcel()
                             dao.setDefaultExcelFlag(template.id, true)
+                        }
+                        "PDF" -> {
+                            dao.clearDefaultPdf()
+                            dao.setDefaultPdfFlag(template.id, true)
                         }
                         else -> { // "DOCX" and any other type (unchanged behaviour)
                             dao.clearDefaultWord()
@@ -1046,6 +1295,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 when (template.fileType.uppercase()) {
                     "PPTX" -> dao.setDefaultPptFlag(template.id, false)
                     "XLSX" -> dao.setDefaultExcelFlag(template.id, false)
+                    "PDF" -> dao.setDefaultPdfFlag(template.id, false)
                     else -> dao.setDefaultWordFlag(template.id, false)
                 }
                 _snackBarMessage.value = str(R.string.msg_template_removed_default, template.name)
@@ -1103,6 +1353,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     "DOCX" -> "docx"
                     "PPTX" -> "pptx"
                     "XLSX" -> "xlsx"
+                    "PDF" -> "pdf"
                     else -> "docx"
                 }
                 val newFile = File(templateDir, "template_${newId}.$ext")

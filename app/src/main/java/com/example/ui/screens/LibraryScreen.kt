@@ -160,7 +160,52 @@ fun LibraryScreen(
             selectedKey = selectedFilter,
             onSelect = { selectedFilter = it }
         )
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Thesis projects (opened in the Thesis Builder; their exports are listed below as documents).
+        val thesisProjects by viewModel.thesis.projects.collectAsState()
+        if (thesisProjects.isNotEmpty() && searchQuery.isBlank()) {
+            Text(
+                text = stringResource(R.string.thesis_projects),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+            androidx.compose.foundation.lazy.LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.testTag("library_thesis_row")
+            ) {
+                items(thesisProjects.size, key = { thesisProjects[it].id }) { i ->
+                    val p = thesisProjects[i]
+                    val exports = documents.count { it.projectId == p.id }
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        tonalElevation = 2.dp,
+                        modifier = Modifier
+                            .width(220.dp)
+                            .clickable { viewModel.openThesisFromLibrary(p.id) }
+                            .testTag("library_thesis_${p.id}")
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(
+                                p.title,
+                                style = MaterialTheme.typography.titleSmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Content),
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                stringResource(R.string.thesis_library_exports, exports),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
 
         // Document List
         if (filteredDocs.isEmpty()) {

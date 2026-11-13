@@ -29,6 +29,7 @@ class OfflineTemplateMatcherTest {
             when (templateType) {
                 "PPTX" -> it.isDefaultPpt
                 "XLSX" -> it.isDefaultExcel
+                "PDF" -> it.isDefaultPdf
                 else -> it.isDefaultWord
             }
         }
@@ -79,9 +80,9 @@ class OfflineTemplateMatcherTest {
     @Test
     fun unsupportedOrWrongTypeTemplate_isNeverUsedSilently() = runBlocking {
         val pptx = template("p", "PPTX", file("p.pptx").path)
-        val pdf = template("x", "PDF", file("x.pdf").path)
+        val odt = template("x", "ODT", file("x.odt").path)
         val default = template("d", "DOCX", file("d.docx").path, default = true)
-        val matcher = TemplateMatcher(FakeRepository(listOf(pptx, pdf, default)))
+        val matcher = TemplateMatcher(FakeRepository(listOf(pptx, odt, default)))
 
         val wrongType = matcher.match(OfflineFormat.DOCX, "p")
         assertEquals(TemplateSource.DEFAULT, wrongType.source)
@@ -94,7 +95,7 @@ class OfflineTemplateMatcherTest {
 
         // The picker only lists templates of the right type.
         assertEquals(listOf("d"), matcher.options(OfflineFormat.DOCX).map { it.id })
-        assertFalse(TemplateMatcher.isCompatible(pdf, OfflineFormat.PDF))
+        assertFalse(TemplateMatcher.isCompatible(odt, OfflineFormat.DOCX))
     }
 
     @Test
