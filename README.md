@@ -123,6 +123,69 @@ preview but not reproduced in the file); numbered list items keep their own numb
 nested lists are flattened; PowerPoint slides with long paragraphs may need resizing; the PDF
 footer is the app's standard footer; texts over 200,000 characters are not formatted offline.
 
+### Thesis Builder (Chat)
+
+Builds a Licence thesis, Master's thesis or doctoral dissertation step by step from Chat. Open it
+with the graduation-cap button in the Chat top bar (no extra navigation tab). A user who never
+opens it sees no change in Chat.
+
+- **Projects.** *Create New Thesis* asks for the title (required), level, thesis language
+  (Arabic, French or English — independent of the app language), student, university, faculty,
+  department, specialization, supervisor, co-supervisor, academic year, jury and other cover
+  lines (all optional), and a template. Projects are saved locally and can be reopened from the
+  workspace or from the Library at any time.
+- **Structure.** A suggested outline is created (cover, dedication, acknowledgements, table of
+  contents, lists of figures and tables, optional abbreviations, general introduction, two or
+  three chapters, conclusion, references, appendices). Sections can be added, renamed,
+  reordered, disabled or deleted; chapters contain sections and subsections. Content is stored as
+  sections and elements (headings, paragraphs, list items, images, tables, references) with
+  stable ids; pages are computed only when the document is laid out.
+- **Chat.** *Continue in Chat* puts Chat in thesis mode for that project (a banner shows it; *Exit*
+  returns to normal chat). Paste or type content, optionally after an instruction such as "Add
+  this to Chapter 1, Section 2", "Ajoute ceci à l'introduction" or "أضف هذا إلى الفصل الثاني".
+  The destination named in the message is resolved on the device. Pasted text is split into
+  headings, paragraphs, lists and tables by the Offline Formatting Agent, word for word, and
+  checked for duplicates of existing paragraphs. When no destination is named, an excerpt is sent
+  to your default AI provider to suggest one (Chat says so) — or, with *AI suggestions* off, you
+  choose it; content is never placed in an arbitrary section. Images attached in thesis mode
+  become figures; the composer text is the placement instruction. Other instructions: replace
+  paragraph N, correct / improve / shorten / expand / rewrite a section (sent to the default
+  provider), add a chapter, section or heading, rename or move a section, create a table from
+  data, show history, restore the previous version.
+- **Review and history.** Every change is a proposal shown with added, deleted, modified, moved
+  and formatting-only differences (word-level for edited paragraphs) and integrity warnings
+  (removed or added citations, changed or new numbers, "[to verify]" statements, duplicates).
+  Nothing changes until you accept. Accepting writes the new content and a revision (with a
+  compressed snapshot) in one database transaction; rejecting changes nothing. A proposal whose
+  sections were edited afterwards is marked as a conflict instead of overwriting newer work. The
+  history lists every revision with its date and source (you, AI, image, table, structure,
+  restoration); any revision can be compared with the current version and restored as a new
+  revision (later history is kept).
+- **AI.** Semantic tasks go through the Central AI Orchestrator with your default provider only:
+  destination and image-placement suggestions, edits, tables from free-form data. Only the outline
+  (titles, no content) and the texts concerned are sent, long sections in chunks. Answers are
+  checked locally: unknown ids are ignored, table values must come from your data, and the
+  prompts forbid inventing results, quotations, references or DOIs. Formatting, numbering and
+  documents never use a provider.
+- **Documents.** *Export DOCX* and *Export PDF* save a new file in the Library each time (never
+  overwriting). DOCX: cover page from your metadata only, numbered chapters and sections as
+  heading styles, images with SEQ-numbered captions, tables with captions, references, and real
+  Word fields for the table of contents and the lists of figures and tables plus a PAGE footer;
+  the file asks Word to update fields when opened, so page numbers in the indexes are filled in by
+  the word processor. PDF and the page preview use the same layout with the page numbers computed
+  by the app. Figure and table numbers and `[[fig:id]]` / `[[tab:id]]` cross-references follow
+  reordering and deletion.
+- **Templates.** The project's template, else the default Word template, else the default PDF
+  template, else a built-in academic profile (A4, 2.5 cm margins, Times New Roman 12 pt, 1.5
+  spacing). Word templates are used as files (styles, headers, footers and page setup kept; a
+  page-number footer is added only if the template has none). PDF templates apply their measured
+  profile. PowerPoint/Excel templates are reported as unsuitable. Notes about the template are
+  shown after each export.
+- **Limits.** Indexes in DOCX show their page numbers after the word processor updates the fields;
+  PDF fonts are mapped to the closest Android family; colored shapes of PDF templates are not
+  reproduced in Word; references are not verified online; deleting a project keeps its Library
+  exports and the Chat conversation.
+
 ### Voice conversation
 
 - Tap the microphone to start: the app listens, sends what you said to the default provider,
@@ -232,7 +295,9 @@ Android 7.x. The in-app logo (`smart_bubble_logo`) uses the same artwork.
   recent conversation context, the text of AI-generated documents in that conversation, and
   text you explicitly send with an AI action. Scanned page images never leave the device, and
   the text of scanned documents is sent only when you choose an AI action on it. The Offline
-  Formatting Agent sends nothing: it runs entirely on the device.
+  Formatting Agent sends nothing: it runs entirely on the device. Thesis Builder sends only
+  what an explicitly requested AI task needs (see above); thesis exports are kept out of the
+  automatic chat context.
 - All network traffic uses HTTPS. There are no analytics or advertising SDKs.
 - Generated text is also copied to the clipboard after a document is created.
 - Speech recognition and text-to-speech are performed by the device's own services under their

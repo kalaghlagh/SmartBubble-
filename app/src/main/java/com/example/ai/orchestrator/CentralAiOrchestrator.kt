@@ -397,6 +397,31 @@ class CentralAiOrchestrator(
         DocumentFormat.PDF -> DeliveryManager.MIME_PDF
     }
 
+    // ------------------------------------------------------------------ Thesis Builder
+
+    /**
+     * Runs one Thesis Builder task (destination suggestion, academic edit, table from data, image
+     * placement) through the user's DEFAULT provider. The answer is streamed (cancellable with the
+     * calling coroutine) and returned raw; the Thesis Builder validates it locally and shows it as
+     * a proposal the user must accept. No other provider is used; there is no fallback.
+     */
+    suspend fun runThesisTask(
+        system: String,
+        user: String,
+        listener: AiProgressListener = AiProgressListener.NONE,
+        maxOutputTokens: Int = 8_000
+    ): Pair<ProviderEntity, String> = withContext(Dispatchers.IO) {
+        listener.onStage(AiProgressStage.CONNECTING)
+        val (provider, client) = providerManager.defaultClient()
+        currentCoroutineContext().ensureActive()
+        listener.onStage(AiProgressStage.GENERATING)
+        val response = client.stream(AiRequest(system, listOf(AiMessage(AiRole.USER, user)), expectJson = true, maxOutputTokens = maxOutputTokens)) {}
+        currentCoroutineContext().ensureActive()
+        if (response.truncated) throw AiException(AiErrorKind.TRUNCATED_RESPONSE)
+        listener.onStage(AiProgressStage.VALIDATING)
+        provider to response.text
+    }
+
     // ------------------------------------------------------------------ content operations
 
     /**

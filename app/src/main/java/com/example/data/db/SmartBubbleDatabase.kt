@@ -9,6 +9,12 @@ import com.example.data.model.ConversationEntity
 import com.example.data.model.DocumentEntity
 import com.example.data.model.ProviderEntity
 import com.example.data.model.TemplateEntity
+import com.example.data.model.ThesisAssetEntity
+import com.example.data.model.ThesisElementEntity
+import com.example.data.model.ThesisProjectEntity
+import com.example.data.model.ThesisProposalEntity
+import com.example.data.model.ThesisRevisionEntity
+import com.example.data.model.ThesisSectionEntity
 
 @Database(
     entities = [
@@ -16,9 +22,15 @@ import com.example.data.model.TemplateEntity
         TemplateEntity::class,
         ProviderEntity::class,
         ChatMessageEntity::class,
-        ConversationEntity::class
+        ConversationEntity::class,
+        ThesisProjectEntity::class,
+        ThesisSectionEntity::class,
+        ThesisElementEntity::class,
+        ThesisAssetEntity::class,
+        ThesisRevisionEntity::class,
+        ThesisProposalEntity::class
     ],
-    version = 3,
+    version = 4,
     // Schema JSON is exported to app/schemas (see `ksp { room.schemaLocation }` in
     // app/build.gradle.kts) and must be committed so future migrations can be verified.
     exportSchema = true
@@ -29,6 +41,7 @@ abstract class SmartBubbleDatabase : RoomDatabase() {
     abstract fun providerDao(): ProviderDao
     abstract fun chatDao(): ChatDao
     abstract fun conversationDao(): ConversationDao
+    abstract fun thesisDao(): ThesisDao
 
     companion object {
         const val DATABASE_NAME = "smart_bubble_db"
