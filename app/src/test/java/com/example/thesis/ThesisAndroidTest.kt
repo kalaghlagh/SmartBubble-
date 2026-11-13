@@ -655,6 +655,7 @@ class ThesisAndroidTest {
     }
 
     /** Screen 4 toolbar: bold, alignment, undo/redo, heading, page break, table, section title and note. */
+    @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class) // performTextInputSelection
     @Test
     @Config(qualifiers = "en")
     fun sectionEditor_formattingTableHeadingPageBreakUndo_andSectionInfo_reachWord() {

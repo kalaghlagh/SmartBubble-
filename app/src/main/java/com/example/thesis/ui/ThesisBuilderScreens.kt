@@ -291,6 +291,9 @@ private fun ThesisHomeScreen(host: ThesisHost) {
                         Column {
                             Text(stringResource(R.string.thesis_builder), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
                             Text(stringResource(R.string.thesis_home_subtitle), style = MaterialTheme.typography.bodyMedium)
+                            // Build identity (version and source commit) to check which build is installed.
+                            Text("v" + com.example.BuildConfig.VERSION_NAME, style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f), modifier = Modifier.testTag("thesis_build_info"))
                         }
                     }
                 }

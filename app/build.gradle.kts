@@ -8,6 +8,11 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+// Source commit the app is built from: CI passes GITHUB_SHA ("local" for local builds). It is
+// shown in the debug versionName and in BuildConfig.SOURCE_COMMIT, so an installed build can be
+// traced to its commit.
+val sourceCommit: String = System.getenv("GITHUB_SHA")?.takeIf { it.isNotBlank() } ?: "local"
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -25,6 +30,7 @@ android {
     ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    buildConfigField("String", "SOURCE_COMMIT", "\"$sourceCommit\"")
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
@@ -58,6 +64,8 @@ android {
       signingConfig = signingConfigs.getByName("release")
     }
     debug {
+      // e.g. "1.0-debug+faea580": visible in Android's app info and in the Thesis Builder.
+      versionNameSuffix = "-debug+" + sourceCommit.take(7)
       // AI Studio provides `${rootDir}/debug.keystore` and must keep using the "debugConfig"
       // signing config. That keystore is git-ignored, so a fresh clone (or CI) does not have it;
       // in that case fall back to AGP's standard debug signing config, which uses the
