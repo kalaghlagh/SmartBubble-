@@ -103,6 +103,8 @@ data class ModelCatalogUiState(
 
 enum class AppNavTab {
     CHAT,
+    /** Thesis Builder: an independent destination with its own screens and back stack. */
+    THESIS,
     TEMPLATES,
     LIBRARY,
     SETTINGS
@@ -641,7 +643,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         database.providerDao().getDefaultProvider()?.let { it.name to it.modelName }
     }
     override suspend fun recentChatMessages(limit: Int): List<com.example.thesis.ui.ChatSnippet> = withContext(Dispatchers.IO) {
-        database.chatDao().getRecentChatMessages(limit)
+        database.chatDao().getRecentChatMessagesNow(limit)
             .filter { it.attachedDocType != THESIS_PROPOSAL_CARD && it.content.isNotBlank() }
             .map { com.example.thesis.ui.ChatSnippet(it.content, it.isUser, it.timestamp) }
     }
@@ -680,7 +682,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
     /** Opens a thesis project from the Library. */
     fun openThesisFromLibrary(projectId: String) {
-        setNavTab(AppNavTab.CHAT)
+        setNavTab(AppNavTab.THESIS)
         thesis.openProject(projectId)
     }
 

@@ -12,10 +12,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import com.example.ui.AppNavTab
 import com.example.ui.SmartBubbleViewModel
 import com.example.ui.components.SmartBubbleBottomNavBar
@@ -33,6 +34,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Before anything else: a crash from here on is kept and shown on the next launch.
+        com.example.diagnostics.CrashLog.install(this)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
@@ -76,11 +79,10 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
 
-            // While the Thesis Builder workspace (a full-screen dialog) is open, it shows the
-            // messages itself: a snackbar here would be hidden behind it.
-            val thesisWorkspaceOpen by remember { viewModel.thesis.state.map { it.workspaceOpen }.distinctUntilChanged() }.collectAsState(false)
-            LaunchedEffect(snackBarMessage, thesisWorkspaceOpen) {
-                if (thesisWorkspaceOpen) return@LaunchedEffect
+            // On the Thesis Builder destination, its own screens show the messages (with their
+            // own snackbar placed above their bottom actions).
+            LaunchedEffect(snackBarMessage, currentTab) {
+                if (currentTab == AppNavTab.THESIS) return@LaunchedEffect
                 snackBarMessage?.let { msg ->
                     snackbarHostState.showSnackbar(msg)
                     viewModel.clearSnackBar()
@@ -118,14 +120,50 @@ class MainActivity : ComponentActivity() {
                         ) {
                             when (currentTab) {
                                 AppNavTab.CHAT -> ChatScreen(viewModel = viewModel)
+                                AppNavTab.THESIS -> com.example.thesis.ui.ThesisBuilderDestination(viewModel, onExit = { viewModel.setNavTab(AppNavTab.CHAT) })
                                 AppNavTab.TEMPLATES -> TemplatesScreen(viewModel = viewModel)
                                 AppNavTab.LIBRARY -> LibraryScreen(viewModel = viewModel)
                                 AppNavTab.SETTINGS -> SettingsScreen(viewModel = viewModel)
                             }
                         }
                     }
+                    CrashReportDialog()
                 }
             }
         }
+    }
+
+    /** Stack trace of the last crash (kept by CrashLog), shown once so it can be copied without adb. */
+    @Composable
+    private fun CrashReportDialog() {
+        val context = androidx.compose.ui.platform.LocalContext.current
+        var report by remember { mutableStateOf(com.example.diagnostics.CrashLog.read(this)) }
+        val text = report ?: return
+        val close = { com.example.diagnostics.CrashLog.clear(this); report = null }
+        AlertDialog(
+            onDismissRequest = close,
+            modifier = Modifier.testTag("crash_report_dialog"),
+            title = { Text(androidx.compose.ui.res.stringResource(R.string.crash_report_title)) },
+            text = {
+                Column {
+                    Text(androidx.compose.ui.res.stringResource(R.string.crash_report_text), style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.foundation.text.selection.SelectionContainer {
+                        Text(
+                            text, style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            modifier = Modifier.heightIn(max = 320.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()).testTag("crash_report_text")
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager)
+                        ?.setPrimaryClip(android.content.ClipData.newPlainText("SmartBubble crash report", text))
+                    android.widget.Toast.makeText(context, context.getString(R.string.thesis_copied), android.widget.Toast.LENGTH_SHORT).show()
+                }) { Text(androidx.compose.ui.res.stringResource(R.string.crash_report_copy)) }
+            },
+            dismissButton = { TextButton(onClick = close) { Text(androidx.compose.ui.res.stringResource(R.string.action_close)) } }
+        )
     }
 }

@@ -157,8 +157,10 @@ class ThesisAndroidTest {
         override fun openExportedDocument(document: DocumentEntity) { opened.add(document) }
         override fun shareExportedDocument(document: DocumentEntity) { opened.add(document) }
         override suspend fun aiProviderInfo(): Pair<String, String>? = ai.provider?.let { it to "fake-model" }
-        override suspend fun recentChatMessages(limit: Int): List<ChatSnippet> =
-            db.chatDao().getRecentChatMessages(limit).map { ChatSnippet(it.content, it.isUser, it.timestamp) }
+        // Same path as the app (SmartBubbleViewModel): a blocking query on Dispatchers.IO.
+        override suspend fun recentChatMessages(limit: Int): List<ChatSnippet> = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            db.chatDao().getRecentChatMessagesNow(limit).map { ChatSnippet(it.content, it.isUser, it.timestamp) }
+        }
     }
 
     @Before
@@ -462,6 +464,14 @@ class ThesisAndroidTest {
         append("state: screen=${st.screen} busy=${st.busy} review=${st.review != null} assist=${st.assist != null} ")
         append("draft=${st.draft?.text?.replace("\n", "\\n")?.take(300)}\n")
         try { append(compose.onAllNodes(androidx.compose.ui.test.isRoot()).printToString(maxDepth = 60)) } catch (e: Throwable) { append("semantics tree unavailable: $e") }
+        // Threads waiting in the database or in coroutines, to show where a load is blocked.
+        append("\nthreads:\n")
+        for ((t, frames) in Thread.getAllStackTraces()) {
+            val text = frames.joinToString("\n") { "    at $it" }
+            if (frames.isNotEmpty() && (text.contains("room", true) || text.contains("sqlite", true) || text.contains("kotlinx.coroutines.BlockingCoroutine"))) {
+                append("  ${t.name} ${t.state}\n").append(frames.take(18).joinToString("\n") { "    at $it" }).append("\n")
+            }
+        }
     }
 
     private fun tap(tag: String) {

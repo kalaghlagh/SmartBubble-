@@ -9,10 +9,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -53,7 +55,7 @@ fun SmartBubbleBottomNavBar(
                 .windowInsetsPadding(WindowInsets.navigationBars)
                 .heightIn(min = 64.dp)
                 .padding(horizontal = 4.dp),
-            // Four equal columns: every label gets the same width in every language.
+            // Equal columns: every label gets the same width in every language.
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Chat
@@ -65,6 +67,17 @@ fun SmartBubbleBottomNavBar(
                 isSelected = currentTab == AppNavTab.CHAT,
                 onClick = { onTabSelected(AppNavTab.CHAT) },
                 testTag = "nav_chat"
+            )
+
+            // Thesis Builder (its own destination)
+            BottomNavItem(
+                modifier = Modifier.weight(1f),
+                label = stringResource(R.string.nav_thesis),
+                selectedIcon = Icons.Filled.School,
+                unselectedIcon = Icons.Outlined.School,
+                isSelected = currentTab == AppNavTab.THESIS,
+                onClick = { onTabSelected(AppNavTab.THESIS) },
+                testTag = "nav_thesis"
             )
 
             // My Templates
@@ -153,7 +166,7 @@ private fun BottomNavItem(
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (isSelected) activeColor else inactiveColor,
             style = MaterialTheme.typography.labelSmall,
-            // One line, never broken inside a word; the four columns are equally wide.
+            // One line, never broken inside a word; the columns are equally wide.
             maxLines = 1,
             softWrap = false,
             overflow = TextOverflow.Ellipsis,

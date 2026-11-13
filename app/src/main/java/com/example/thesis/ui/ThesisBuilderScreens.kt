@@ -163,26 +163,25 @@ import com.example.thesis.model.ThesisSnapshot
 // =================================================================== window
 
 /**
- * The Thesis Builder (opened by the Thesis Builder button at the top of Chat; no navigation tab).
- * Six screens: projects, new thesis, workspace, section editor, AI assistant and preview.
+ * Thesis Builder as a main destination of the app (bottom navigation). It has its own screens
+ * and back stack: Back goes one level up inside Thesis Builder ([ThesisController.back]); on its
+ * home screen Back leaves the destination ([onExit]). It does not depend on Chat.
  */
 @Composable
-fun ThesisWorkspaceDialog(host: ThesisHost) {
+fun ThesisBuilderDestination(host: ThesisHost, onExit: () -> Unit) {
     val controller = host.thesis
     val state by controller.state.collectAsState()
-    if (!state.workspaceOpen) return
-    Dialog(
-        onDismissRequest = { controller.back() }, // system back goes one level up
-        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, decorFitsSystemWindows = false)
-    ) {
-        ThesisWorkspaceContent(host)
-    }
+    androidx.activity.compose.BackHandler { if (state.screen == ThesisScreen.HOME) onExit() else controller.back() }
+    ThesisWorkspaceContent(host, embedded = true)
     state.review?.let { ThesisReviewDialog(controller, it) }
 }
 
-/** Current screen with its own snackbar (the app's snackbar is hidden behind this window). */
+/**
+ * Current screen with its own snackbar. [embedded]: shown inside the app's main layout (which
+ * already handles system bars), without a close button.
+ */
 @Composable
-fun ThesisWorkspaceContent(host: ThesisHost) {
+fun ThesisWorkspaceContent(host: ThesisHost, embedded: Boolean = false) {
     val controller = host.thesis
     val state by controller.state.collectAsState()
     val feedback by host.feedback.collectAsState()
@@ -194,9 +193,9 @@ fun ThesisWorkspaceContent(host: ThesisHost) {
         }
     }
     Surface(Modifier.fillMaxSize().testTag("thesis_workspace"), color = MaterialTheme.colorScheme.background) {
-        Box(Modifier.systemBarsPadding().imePadding()) {
+        Box(if (embedded) Modifier.imePadding() else Modifier.systemBarsPadding().imePadding()) {
             when (state.screen) {
-                ThesisScreen.HOME -> ThesisHomeScreen(host)
+                ThesisScreen.HOME -> ThesisHomeScreen(host, showClose = !embedded)
                 ThesisScreen.CREATE -> ThesisCreateScreen(host)
                 ThesisScreen.PROJECT -> ThesisProjectWorkspace(host)
                 ThesisScreen.SECTION -> ThesisSectionEditor(host)
@@ -269,7 +268,7 @@ private fun ProgressRow(percent: Int, modifier: Modifier = Modifier) {
 // =================================================================== 1. home
 
 @Composable
-private fun ThesisHomeScreen(host: ThesisHost) {
+private fun ThesisHomeScreen(host: ThesisHost, showClose: Boolean = true) {
     val controller = host.thesis
     val projects by controller.projects.collectAsState()
     val state by controller.state.collectAsState()
@@ -280,8 +279,8 @@ private fun ThesisHomeScreen(host: ThesisHost) {
         item {
             Surface(color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary, shape = RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)) {
                 Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 28.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        IconButton(onClick = { controller.closeWorkspace() }, modifier = Modifier.testTag("thesis_close")) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 16.dp), horizontalArrangement = Arrangement.End) {
+                        if (showClose) IconButton(onClick = { controller.closeWorkspace() }, modifier = Modifier.testTag("thesis_close")) {
                             Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
                         }
                     }
@@ -1144,7 +1143,9 @@ private fun MediaStrip(assets: List<com.example.thesis.model.ThesisAsset>, draft
 /** "Insert from Chat": recent Chat messages; the chosen one goes into the text at the cursor. */
 @Composable
 private fun ChatPickerDialog(host: ThesisHost, onDismiss: () -> Unit, onPick: (String) -> Unit) {
-    val messages by produceState<List<ChatSnippet>?>(null) { value = try { host.recentChatMessages(30) } catch (e: Exception) { emptyList() } }
+    val messages by produceState<List<ChatSnippet>?>(null) {
+        value = try { host.recentChatMessages(30) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { emptyList() }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.thesis_insert_from_chat)) },

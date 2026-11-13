@@ -132,6 +132,7 @@ import com.example.thesis.model.ThesisMeta
 import com.example.thesis.model.ThesisSection
 import com.example.thesis.model.ThesisSnapshot
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.DateFormat
@@ -303,6 +304,20 @@ internal fun ThesisMetaForm(
 /** Shown only after the file was written and saved to the Library. */
 @Composable
 internal fun ExportResultCard(host: ThesisHost, e: ThesisExportResult) {
+    val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val mime = if (e.format == "PDF") "application/pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    // Storage Access Framework: the user chooses where the copy goes (Downloads, Drive, ...).
+    val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(mime)) { uri: Uri? ->
+        if (uri != null) scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openOutputStream(uri)?.use { out -> File(e.document.filePath).inputStream().use { it.copyTo(out) } } != null
+                } catch (ex: Exception) { false }
+            }
+            android.widget.Toast.makeText(context, context.getString(if (ok) R.string.thesis_saved_to_device else R.string.thesis_save_device_failed), android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
     Card(Modifier.fillMaxWidth().testTag("thesis_export_result"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))) {
         Column(Modifier.padding(12.dp)) {
             Text(stringResource(R.string.thesis_export_saved, e.format, e.document.title), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
@@ -310,6 +325,7 @@ internal fun ExportResultCard(host: ThesisHost, e: ThesisExportResult) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = { host.openExportedDocument(e.document) }, modifier = Modifier.testTag("thesis_export_open")) { Text(stringResource(R.string.thesis_open_file)) }
                 TextButton(onClick = { host.shareExportedDocument(e.document) }, modifier = Modifier.testTag("thesis_export_share")) { Text(stringResource(R.string.thesis_share_file)) }
+                TextButton(onClick = { saver.launch(File(e.document.filePath).name) }, modifier = Modifier.testTag("thesis_export_save_device")) { Text(stringResource(R.string.thesis_save_to_device)) }
             }
         }
     }

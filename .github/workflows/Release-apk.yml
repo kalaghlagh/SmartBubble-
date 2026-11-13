@@ -56,7 +56,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Check out
@@ -132,6 +132,58 @@ jobs:
           name: unit-test-reports-${{ env.SHORT_SHA }}-run${{ github.run_number }}
           path: app/build/reports/tests/
           if-no-files-found: ignore
+
+      # Screenshots of the running app drawn by ThesisAppFlowTest (Robolectric, not a device).
+      - name: Upload Thesis Builder screenshots
+        if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: thesis-screenshots-${{ env.SHORT_SHA }}-run${{ github.run_number }}
+          path: app/build/thesis-screenshots/
+          if-no-files-found: warn
+
+      # Section editor on a real Android runtime (emulator, API 34): every formatting button and
+      # Paste Text with a real long-press selection. Keeps the logcat (with any FATAL EXCEPTION)
+      # and screenshots. Runs with the unit tests; a failure or crash publishes no APK.
+      - name: Enable KVM for the emulator
+        if: ${{ inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true' }}
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Build instrumented test APK
+        if: ${{ inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true' }}
+        run: ./gradlew assembleDebugAndroidTest --stacktrace
+
+      - name: Run section editor tests on an Android emulator
+        if: ${{ inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true' }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash .github/scripts/device-tests.sh
+
+      - name: Summarize device test results
+        if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
+        run: |
+          d=device-test-output
+          [ -d "$d" ] || { echo "No device test output."; exit 0; }
+          echo "== Android"; cat "$d/android-version.txt" || true
+          echo "== Results"; grep -E "^OK \(|^FAILURES|^Tests run|INSTRUMENTATION_STATUS: (test|stack)=|Process crashed" "$d/instrument.txt" | head -200 || true
+          echo "== FATAL EXCEPTIONS"; cat "$d/fatal-exceptions.txt" 2>/dev/null | head -300 || true
+
+      - name: Upload device test evidence (logcat, screenshots)
+        if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-tests-${{ env.SHORT_SHA }}-run${{ github.run_number }}
+          path: device-test-output/
+          if-no-files-found: warn
 
       # Only reached when the build (and the tests, when they ran) succeeded. The APK must have
       # been built in this run from this commit: its versionName carries the commit.

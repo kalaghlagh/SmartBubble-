@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Runs the section editor tests (ThesisEditorDeviceTest) on the running emulator and keeps the
+# evidence in device-test-output/: am instrument output, full logcat, every FATAL EXCEPTION with
+# its stack trace, and the screenshots the test wrote. Exits non-zero when a test failed or the
+# app process crashed.
+set -u
+out=device-test-output
+pkg=com.aistudio.smartbubble.prod
+mkdir -p "$out"
+apk=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+test_apk=$(ls app/build/outputs/apk/androidTest/debug/*.apk | head -1)
+adb shell getprop ro.build.version.release > "$out/android-version.txt"
+adb shell getprop ro.build.version.sdk >> "$out/android-version.txt"
+adb install -r -g "$apk"
+adb install -r -g "$test_apk"
+adb logcat -c
+adb shell am instrument -w -r -e class com.example.thesis.ThesisEditorDeviceTest \
+  "$pkg.test/androidx.test.runner.AndroidJUnitRunner" | tee "$out/instrument.txt"
+adb logcat -d -v threadtime > "$out/logcat.txt"
+adb pull "/sdcard/Android/data/$pkg/files/thesis-device" "$out/screenshots" || echo "no screenshots pulled"
+grep -n -A80 "FATAL EXCEPTION" "$out/logcat.txt" > "$out/fatal-exceptions.txt" || true
+grep -n "AndroidRuntime\|System.err" "$out/logcat.txt" | head -400 > "$out/androidruntime.txt" || true
+if [ -s "$out/fatal-exceptions.txt" ]; then echo "::error::The app crashed during the device tests (see fatal-exceptions.txt)."; cat "$out/fatal-exceptions.txt"; fi
+if grep -q "FAILURES!!!\|INSTRUMENTATION_FAILED\|Process crashed" "$out/instrument.txt" || ! grep -q "^OK (" "$out/instrument.txt"; then
+  echo "::error::Device tests failed."
+  exit 1
+fi
+[ -s "$out/fatal-exceptions.txt" ] && exit 1
+exit 0
