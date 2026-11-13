@@ -13,11 +13,7 @@ import java.io.File
  */
 class RegexPortabilityTest {
 
-    private val literal = Regex("(?:Regex\\(|Pattern\\.compile\\()\\s*(\"\"\"([\\s\\S]*?)\"\"\"|\"((?:[^\"\\\\]|\\\\.)*)\")|(\"\"\"([\\s\\S]*?)\"\"\"|\"((?:[^\"\\\\]|\\\\.)*)\")\\.toRegex\\(")
     private val quantifier = Regex("^\\{\\d+(,\\d*)?\\}")
-
-    /** Kotlin source text of a string literal to its runtime value (only "\\" and "\"" matter here). */
-    private fun unescapeKotlin(s: String) = s.replace("\\\\", "\u0000").replace("\\\"", "\"").replace("\u0000", "\\")
 
     /** Positions of braces that ICU would reject. */
     fun badBraces(rx: String): List<Int> {
@@ -46,27 +42,77 @@ class RegexPortabilityTest {
         assertTrue(badBraces("a{b").isNotEmpty())
     }
 
+    /**
+     * String literals that are compiled as regexes: the first argument of Regex( / Pattern.compile(,
+     * or the receiver of .toRegex(). A hand-written scanner: a JVM regex over whole source files
+     * recursed once per character and overflowed the stack (run #35).
+     */
+    fun regexLiterals(src: String): List<Pair<Int, String>> {
+        val out = mutableListOf<Pair<Int, String>>()
+        // Returns (value, endIndexExclusive) of the string literal starting at i, or null.
+        fun literalAt(i: Int): Pair<String, Int>? {
+            if (src.startsWith("\"\"\"", i)) {
+                val close = src.indexOf("\"\"\"", i + 3)
+                if (close < 0) return null
+                var e = close + 3
+                while (e < src.length && src[e] == '"') e++ // a raw string may end with extra quotes
+                return src.substring(i + 3, e - 3) to e
+            }
+            if (i >= src.length || src[i] != '"') return null
+            val sb = StringBuilder()
+            var j = i + 1
+            while (j < src.length && src[j] != '"' && src[j] != '\n') {
+                if (src[j] == '\\' && j + 1 < src.length) { sb.append(if (src[j + 1] == '\\' || src[j + 1] == '"') src[j + 1] else "\\" + src[j + 1]); j += 2 } else { sb.append(src[j]); j++ }
+            }
+            return if (j < src.length && src[j] == '"') sb.toString() to j + 1 else null
+        }
+        fun line(i: Int) = src.substring(0, i).count { it == '\n' } + 1
+        for (opener in listOf("Regex(", "Pattern.compile(")) {
+            var at = src.indexOf(opener)
+            while (at >= 0) {
+                var k = at + opener.length
+                while (k < src.length && src[k].isWhitespace()) k++
+                literalAt(k)?.let { (v, _) -> out += line(at) to v }
+                at = src.indexOf(opener, at + 1)
+            }
+        }
+        // "...".toRegex(): find the literal that ends right before ".toRegex(".
+        var at = src.indexOf(".toRegex(")
+        while (at >= 0) {
+            if (at > 0 && src[at - 1] == '"') {
+                val raw = src.lastIndexOf("\"\"\"", at - 4).takeIf { it >= 0 && src.startsWith("\"\"\"", at - 3) }
+                val startQuote = raw ?: run {
+                    var q = at - 2
+                    while (q >= 0 && !(src[q] == '"' && (q == 0 || src[q - 1] != '\\'))) q--
+                    q
+                }
+                if (startQuote >= 0) literalAt(startQuote)?.let { (v, e) -> if (e == at) out += line(at) to v }
+            }
+            at = src.indexOf(".toRegex(", at + 1)
+        }
+        return out
+    }
+
+    @Test
+    fun scannerReadsBothKindsOfLiteral() {
+        val src = "val a = Regex(\"\"\"^\\{x}\"\"\")\nval b = Regex(\"a\\\\s{2,}\\\"q\")\nval c = \"\\\\d+\".toRegex()\n"
+        val found = regexLiterals(src).map { it.second }
+        assertTrue(found.toString(), found == listOf("^\\{x}", "a\\s{2,}\"q", "\\d+"))
+    }
+
     @Test
     fun everyRegexInTheAppIsValidOnAndroid() {
         val root = listOf(File("src/main/java"), File("app/src/main/java")).first { it.isDirectory }
         val problems = mutableListOf<String>()
         var checked = 0
         root.walkTopDown().filter { it.extension == "kt" }.forEach { file ->
-            val src = file.readText()
-            literal.findAll(src).forEach { m ->
-                val g = m.groupValues
-                val raw = when {
-                    g[2].isNotEmpty() || g[1].startsWith("\"\"\"") -> g[2]
-                    g[1].isNotEmpty() -> unescapeKotlin(g[3])
-                    g[5].isNotEmpty() || g[4].startsWith("\"\"\"") -> g[5]
-                    else -> unescapeKotlin(g[6])
-                }
-                if ('$' in raw && Regex("\\$\\{?[A-Za-z_]").containsMatchIn(raw)) return@forEach // string template: not a constant pattern
+            for ((line, raw) in regexLiterals(file.readText())) {
+                if (Regex("\\$\\{?[A-Za-z_]").containsMatchIn(raw)) continue // string template: not a constant pattern
                 checked++
-                if (badBraces(raw).isNotEmpty()) problems += "${file.path}:${src.substring(0, m.range.first).count { it == '\n' } + 1}: $raw"
+                if (badBraces(raw).isNotEmpty()) problems += "${file.path}:$line: $raw"
             }
         }
-        assertTrue("no regex literals found", checked > 20)
+        assertTrue("only $checked regex literals found", checked > 100)
         assertTrue("Regex with a bare { or } (crashes on Android):\n" + problems.joinToString("\n"), problems.isEmpty())
     }
 }
