@@ -130,6 +130,7 @@ class ThesisAndroidTest {
 
     private val ai = FakeAi()
     private val messages = CopyOnWriteArrayList<ThesisMessage>()
+    private val chatLoads = java.util.Collections.synchronizedList(mutableListOf<String>())
     private val notes = CopyOnWriteArrayList<ThesisChatNote>()
     private val exports = CopyOnWriteArrayList<ThesisExport>()
     private val feedback = MutableStateFlow<String?>(null)
@@ -158,8 +159,24 @@ class ThesisAndroidTest {
         override fun shareExportedDocument(document: DocumentEntity) { opened.add(document) }
         override suspend fun aiProviderInfo(): Pair<String, String>? = ai.provider?.let { it to "fake-model" }
         // Same path as the app (SmartBubbleViewModel): a blocking query on Dispatchers.IO.
-        override suspend fun recentChatMessages(limit: Int): List<ChatSnippet> = kotlinx.coroutines.withContext(Dispatchers.IO) {
-            db.chatDao().getRecentChatMessagesNow(limit).map { ChatSnippet(it.content, it.isUser, it.timestamp) }
+        override suspend fun recentChatMessages(limit: Int): List<ChatSnippet> {
+            // Each call is recorded (start, query done on which thread, result size, return): when
+            // the Insert from Chat dialog stays on its spinner (runs #30, #41), the timeout message
+            // shows whether the load never started, never finished, or finished without reaching
+            // the dialog.
+            val call = chatLoads.size
+            chatLoads.add("#$call start ${System.currentTimeMillis()} on ${Thread.currentThread().name}")
+            try {
+                val list = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    db.chatDao().getRecentChatMessagesNow(limit).map { ChatSnippet(it.content, it.isUser, it.timestamp) }
+                        .also { chatLoads.add("#$call queried ${it.size} at ${System.currentTimeMillis()} on ${Thread.currentThread().name}") }
+                }
+                chatLoads.add("#$call returned at ${System.currentTimeMillis()} on ${Thread.currentThread().name}")
+                return list
+            } catch (e: Throwable) {
+                chatLoads.add("#$call ended with $e at ${System.currentTimeMillis()}")
+                throw e
+            }
         }
     }
 
@@ -482,6 +499,7 @@ class ThesisAndroidTest {
         append("draft=${st.draft?.text?.replace("\n", "\\n")?.take(300)}\n")
         try { append(compose.onAllNodes(androidx.compose.ui.test.isRoot()).printToString(maxDepth = 60)) } catch (e: Throwable) { append("semantics tree unavailable: $e") }
         // Threads waiting in the database or in coroutines, to show where a load is blocked.
+        append("\nInsert from Chat loads (now ${System.currentTimeMillis()}): ${chatLoads.toList()}\n")
         append("\nthreads:\n")
         for ((t, frames) in Thread.getAllStackTraces()) {
             val text = frames.joinToString("\n") { "    at $it" }
