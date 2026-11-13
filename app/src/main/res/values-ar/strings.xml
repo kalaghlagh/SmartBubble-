@@ -711,6 +711,7 @@
     <string name="thesis_chat_none">لا توجد رسائل في الدردشة بعد. انسخ نصًا من الدردشة واستخدم لصق النص.</string>
     <string name="thesis_chat_you">أنت</string>
     <string name="thesis_clipboard_empty">الحافظة لا تحتوي على نص.</string>
+    <string name="thesis_edit_failed">تعذّر تنفيذ التعديل. لم يتغيّر نصّك.</string>
     <string name="thesis_collapse">طي</string>
     <string name="thesis_continue_editing">متابعة التحرير</string>
     <string name="thesis_copied">تم النسخ</string>
@@ -809,6 +810,12 @@
     <string name="thesis_saved_to_device">تم الحفظ على الجهاز</string>
     <string name="thesis_save_device_failed">تعذّر حفظ الملف</string>
     <string name="crash_report_title">أُغلق التطبيق بشكل غير متوقع</string>
-    <string name="crash_report_text">تفاصيل الخطأ من الجلسة السابقة. انسخها وأرسلها إلى المطوّر. لا تحتوي على أي نص كتبته.</string>
+    <string name="crash_report_text">تفاصيل الخطأ من الجلسة السابقة. انسخها وأرسلها إلى المطوّر. تحتوي على الخطأ وإصدار التطبيق وطراز الهاتف؛ تُحذف المفاتيح، لكن رسالة الخطأ قد تقتبس بضع كلمات مما كان قيد المعالجة.</string>
     <string name="crash_report_copy">نسخ التقرير</string>
+    <string name="delivery_open_with">فتح باستخدام</string>
+    <string name="delivery_share_with">مشاركة عبر</string>
+    <string name="delivery_no_app">لا يوجد تطبيق على هذا الهاتف يمكنه فتح هذا الملف.</string>
+    <string name="delivery_open_failed">تعذّر فتح الملف.</string>
+    <string name="delivery_share_failed">تعذّرت مشاركة الملف.</string>
+    <string name="scan_docx_ready">تم مسح المستند وإنشاء مستند Word قابل للتحرير: **%1$s** (%2$d صفحات). تم نسخ النص إلى الحافظة وحفظ ملف DOCX في مكتبتك.</string>
 </resources>

@@ -8,9 +8,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasScrollAction
@@ -20,7 +18,6 @@ import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
@@ -92,7 +89,8 @@ class ThesisEditorDeviceTest {
     private fun shot(name: String) {
         compose.waitForIdle()
         val dir = File(context.getExternalFilesDir(null), "thesis-device").apply { mkdirs() }
-        val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
+        // Whole screen (selection handles and the text toolbar are separate windows, so not onRoot()).
+        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return
         FileOutputStream(File(dir, "$name.png")).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
@@ -135,7 +133,9 @@ class ThesisEditorDeviceTest {
         compose.waitForIdle()
     }
 
-    private fun words(t: String) = Regex("[\\p{L}\\p{N}]+").findAll(t).map { it.value }.toList()
+    // Heading, alignment and list markers at the start of a line are structure, not words.
+    private val prefix = Regex("""(?m)^(#{1,6}\s+)?(\{(center|end|justify)\}\s?)?([-•*]\s+|\d{1,3}[.)]\s+)?""")
+    private fun words(t: String) = Regex("[\\p{L}\\p{N}]+").findAll(prefix.replace(t, "")).map { it.value }.toList()
 
     /** Runs a toolbar button and checks that no word of the text was lost. */
     private fun press(tag: String, before: () -> Unit) {
@@ -144,6 +144,9 @@ class ThesisEditorDeviceTest {
         tap(tag)
         val after = text
         assertTrue("$tag lost text: before=$wordsBefore after=$after", words(after).containsAll(wordsBefore))
+        // Every marker is read as formatting: no stray "*" or "_" (the sample texts have none).
+        val plain = com.example.thesis.core.InlineFormat.plain(prefix.replace(after, ""))
+        assertTrue("$tag left stray markers: $after", !plain.contains('*') && !plain.contains('_'))
     }
 
     private val formatButtons = listOf(
@@ -164,7 +167,7 @@ class ThesisEditorDeviceTest {
         for (level in listOf(1, 2, 3, 0)) press("thesis_heading_$level") { longPressFirstWord(); tap("thesis_fmt_heading") }
         tap("thesis_undo"); tap("thesis_redo")
         shot("04-after-headings-undo-redo")
-        assertTrue(text.contains("Groundwater"))
+        assertTrue("text lost: $text", text.contains("Groundwater"))
     }
 
     @Test
@@ -202,8 +205,27 @@ class ThesisEditorDeviceTest {
         for (tag in listOf("thesis_fmt_bold", "thesis_fmt_italic", "thesis_fmt_underline", "thesis_align_end", "thesis_fmt_bullets")) press(tag) { longPressFirstWord() }
         setClip(ClipData.newPlainText("ar", "نص ملصوق بالعربية\nمع سطر ثانٍ و emoji 🌍 et français é"))
         press("thesis_paste_text") { longPressFirstWord() }
-        assertTrue(text.contains("نص ملصوق بالعربية\nمع سطر ثانٍ و emoji 🌍 et français é"))
+        assertTrue("Arabic paste missing: $text", text.contains("نص ملصوق بالعربية\nمع سطر ثانٍ و emoji 🌍 et français é"))
         shot("07-arabic")
+    }
+
+    @Test
+    fun leavingTheApp_savesUnsavedText() {
+        openEditor()
+        field().performTextInput("Typed before leaving the app.")
+        compose.waitForIdle()
+        assertTrue(vm.thesis.state.value.draft!!.dirty)
+        // Another app comes to the front (as when copying text for Paste Text): onStop runs.
+        compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+        // Plain polling: the activity is stopped, so the Compose test clock is not used here.
+        val thesis = vm.thesis
+        val deadline = System.currentTimeMillis() + 20_000
+        while (!(thesis.state.value.busy == null && thesis.state.value.draft?.dirty == false)) {
+            if (System.currentTimeMillis() > deadline) throw AssertionError("not saved in background: busy=${thesis.state.value.busy} dirty=${thesis.state.value.draft?.dirty}")
+            Thread.sleep(50)
+        }
+        compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+        assertTrue(text.contains("Typed before leaving the app."))
     }
 
     @Test
@@ -215,17 +237,17 @@ class ThesisEditorDeviceTest {
         // Plain, multiline, Unicode.
         setClip(ClipData.newPlainText("t", "Line one\nLine two — ünïcödé ✓"))
         press("thesis_paste_text") { }
-        assertTrue(text.contains("Line one\nLine two — ünïcödé ✓"))
+        assertTrue("multiline paste missing: $text", text.contains("Line one\nLine two — ünïcödé ✓"))
 
         // With a selection made by a long press (selected text is kept).
         setClip(ClipData.newPlainText("t", "After selection"))
         press("thesis_paste_text") { longPressFirstWord() }
-        assertTrue(text.contains("After selection"))
+        assertTrue("paste after selection missing: $text", text.contains("After selection"))
 
         // Rich text (HTML).
         setClip(ClipData.newHtmlText("h", "Rich bold text", "<b>Rich</b> bold text"))
         press("thesis_paste_text") { tapInText() }
-        assertTrue(text.contains("Rich bold text"))
+        assertTrue("HTML paste missing: $text", text.contains("Rich bold text"))
 
         // A link to content the app cannot read, and an Intent: nothing crashes, nothing is lost.
         setClip(ClipData.newRawUri("u", Uri.parse("content://com.example.nonexistent.provider/item/1")))

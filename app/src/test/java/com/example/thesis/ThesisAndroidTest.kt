@@ -405,6 +405,23 @@ class ThesisAndroidTest {
         Assume.assumeTrue("PDF rendering is not available in this test runtime", pdfOk)
     }
 
+    @Test
+    fun saveIfDirty_savesUnsavedSectionText_onlyWhenChanged(): Unit = runBlocking {
+        val id = repo.createProject(meta(), aiAssist = false)
+        controller.openProject(id)
+        withTimeout(10_000) { controller.state.first { it.snapshot != null } }
+        val introId = intro(controller.state.value.snapshot!!)
+        controller.selectSection(introId)
+        withTimeout(10_000) { controller.state.first { it.draft != null } }
+        controller.saveIfDirty() // nothing changed: nothing saved
+        assertEquals(null, controller.state.value.busy)
+        controller.updateDraft("Text typed before the app went to the background.")
+        controller.saveIfDirty()
+        idle()
+        assertEquals(false, controller.state.value.draft!!.dirty)
+        assertTrue(repo.snapshot(id).elements.any { it.text.contains("Text typed before the app went to the background.") })
+    }
+
     // ------------------------------------------------------------------ UI
 
     @Test

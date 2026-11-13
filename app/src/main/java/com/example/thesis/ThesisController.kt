@@ -729,6 +729,16 @@ class ThesisController(
      */
     fun saveDraft(thenShow: ThesisScreen? = null) = launch(ThesisBusy.SAVING) { persistDraft(thenShow) }
 
+    /**
+     * Saves the open section if it has unsaved changes (the app went to the background, where
+     * Android may end the process). Skipped while another operation runs: that one keeps the
+     * draft in memory and the editor still shows it as unsaved.
+     */
+    fun saveIfDirty() {
+        val st = _state.value
+        if (st.draft?.dirty == true && st.busy == null) saveDraft()
+    }
+
     private suspend fun persistDraft(thenShow: ThesisScreen? = null) {
         val projectId = _state.value.projectId ?: return
         val draft = _state.value.draft ?: return

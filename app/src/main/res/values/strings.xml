@@ -711,6 +711,7 @@
     <string name="thesis_chat_none">No Chat messages yet. Copy text from Chat and use Paste Text, or chat first.</string>
     <string name="thesis_chat_you">You</string>
     <string name="thesis_clipboard_empty">The clipboard has no text.</string>
+    <string name="thesis_edit_failed">The change could not be made. Your text was not changed.</string>
     <string name="thesis_collapse">Collapse</string>
     <string name="thesis_continue_editing">Continue Editing</string>
     <string name="thesis_copied">Copied</string>
@@ -809,6 +810,12 @@
     <string name="thesis_saved_to_device">Saved to device</string>
     <string name="thesis_save_device_failed">The file could not be saved</string>
     <string name="crash_report_title">The app closed unexpectedly</string>
-    <string name="crash_report_text">Error details from the last session. Copy them and send them to the developer. They contain no text you typed.</string>
+    <string name="crash_report_text">Error details from the last session. Copy them and send them to the developer. They contain the error, the app version and the phone model; keys are removed, but an error message can quote a few words of what was being processed.</string>
     <string name="crash_report_copy">Copy report</string>
+    <string name="delivery_open_with">Open with</string>
+    <string name="delivery_share_with">Share with</string>
+    <string name="delivery_no_app">No app on this phone can open this file.</string>
+    <string name="delivery_open_failed">The file could not be opened.</string>
+    <string name="delivery_share_failed">The file could not be shared.</string>
+    <string name="scan_docx_ready">I\'ve scanned your document and made an editable Word document: **%1$s** (%2$d pages). The text has been copied to your clipboard and the DOCX is saved in your Library.</string>
 </resources>

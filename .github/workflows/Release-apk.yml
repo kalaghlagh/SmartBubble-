@@ -142,8 +142,10 @@ jobs:
           path: app/build/thesis-screenshots/
           if-no-files-found: warn
 
-      # Section editor on a real Android runtime (emulator, API 34): every formatting button and
-      # Paste Text with a real long-press selection. Keeps the logcat (with any FATAL EXCEPTION)
+      # Every instrumented test (app/src/androidTest) on a real Android runtime (emulator, API 34):
+      # the section editor with real selections and clipboard content, every destination in
+      # EN/FR/AR, template import and preview, Thesis DOCX/PDF export (PDF rendered on the device),
+      # and initialization of every app class on ART. Keeps the logcat (with any FATAL EXCEPTION)
       # and screenshots. Runs with the unit tests; a failure or crash publishes no APK.
       - name: Enable KVM for the emulator
         if: ${{ inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true' }}
@@ -156,7 +158,7 @@ jobs:
         if: ${{ inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true' }}
         run: ./gradlew assembleDebugAndroidTest --stacktrace
 
-      - name: Run section editor tests on an Android emulator
+      - name: Run instrumented tests on an Android emulator
         if: ${{ inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true' }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -174,7 +176,10 @@ jobs:
           d=device-test-output
           [ -d "$d" ] || { echo "No device test output."; exit 0; }
           echo "== Android"; cat "$d/android-version.txt" || true
-          echo "== Results"; grep -E "^OK \(|^FAILURES|^Tests run|INSTRUMENTATION_STATUS: (test|stack)=|Process crashed" "$d/instrument.txt" | head -200 || true
+          echo "== Results"; grep -E "^OK \(|^FAILURES|^Tests run|INSTRUMENTATION_STATUS: (class|test)=|INSTRUMENTATION_STATUS_CODE: -|Process crashed" "$d/instrument.txt" | head -300 || true
+          # Full message and first frames of every failed test (the "stack=" block of am instrument).
+          echo "== Failures"; awk '/INSTRUMENTATION_STATUS: stack=/{p=1;n=0} /INSTRUMENTATION_STATUS: (current|id|numtests)=/{p=0} p&&n<60{print;n++}' "$d/instrument.txt" | head -600 || true
+          echo "== Clipboard / editor / file events"; cat "$d/app-events.txt" 2>/dev/null | head -150 || true
           echo "== FATAL EXCEPTIONS"; cat "$d/fatal-exceptions.txt" 2>/dev/null | head -300 || true
 
       - name: Upload device test evidence (logcat, screenshots)
@@ -184,6 +189,36 @@ jobs:
           name: device-tests-${{ env.SHORT_SHA }}-run${{ github.run_number }}
           path: device-test-output/
           if-no-files-found: warn
+
+      # Android lint: API calls above minSdk 24 (NewApi), wrong resources, missing translations and
+      # other Android-only errors the JVM tests cannot see. Errors fail the run.
+      - name: Android lint
+        # Runs even when an earlier test step failed, so every run reports its lint errors too.
+        if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
+        run: ./gradlew lintDebug --stacktrace
+
+      - name: Summarize lint results
+        if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
+        shell: python3 {0}
+        run: |
+          import glob, xml.etree.ElementTree as ET
+          from collections import Counter
+          for path in glob.glob("app/build/reports/lint-results-debug.xml") or glob.glob("app/build/**/lint-results*.xml", recursive=True):
+              issues = ET.parse(path).getroot().findall("issue")
+              print(path, Counter((i.get("severity"), i.get("id")) for i in issues).most_common())
+              for i in issues:
+                  if i.get("severity") in ("Error", "Fatal"):
+                      loc = i.find("location")
+                      where = f"{loc.get('file')}:{loc.get('line')}" if loc is not None else "?"
+                      print(f"ERROR {i.get('id')}: {where}: {i.get('message')}")
+
+      - name: Upload lint report
+        if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report-${{ env.SHORT_SHA }}-run${{ github.run_number }}
+          path: app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
 
       # Only reached when the build (and the tests, when they ran) succeeded. The APK must have
       # been built in this run from this commit: its versionName carries the commit.
