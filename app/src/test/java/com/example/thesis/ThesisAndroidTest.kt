@@ -466,6 +466,14 @@ class ThesisAndroidTest {
 
     private fun tap(tag: String) {
         try { compose.waitUntil(10_000) { tagExists(tag) } } catch (e: Throwable) { throw AssertionError("Timed out waiting for node '$tag' to tap\n" + diagnostics(), e) }
+        // performScrollTo() only scrolls the closest scrolling container. A node inside nested
+        // containers (e.g. a toolbar row inside the editor column) stays off screen when the outer
+        // one is scrolled away (run #28: thesis_fmt_heading at t=-125px). Bring it into view in
+        // every enclosing container, outermost first.
+        val containers = compose.onAllNodes(androidx.compose.ui.test.hasScrollAction() and androidx.compose.ui.test.hasAnyDescendant(androidx.compose.ui.test.hasTestTag(tag)))
+        repeat(containers.fetchSemanticsNodes().size) { i ->
+            try { containers[i].performScrollToNode(androidx.compose.ui.test.hasTestTag(tag)) } catch (e: Throwable) { /* checked below */ }
+        }
         val node = compose.onNodeWithTag(tag)
         try { node.performScrollTo() } catch (e: AssertionError) { /* not inside a scrolling container */ }
         // A click on a node outside the visible window is not delivered: fail with the evidence.
@@ -629,6 +637,7 @@ class ThesisAndroidTest {
 
         // Insert from Chat lists Chat messages.
         tap("thesis_insert_from_chat")
+        await("chat picker opened") { tagExists("thesis_chat_list") || tagExists("thesis_chat_none") }
         await("chat messages listed") { tagExists("thesis_chat_item") }
         compose.onNodeWithTag("thesis_chat_item").performClick()
         compose.waitForIdle()
