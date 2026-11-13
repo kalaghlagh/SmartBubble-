@@ -2,7 +2,8 @@ name: Release APK
 
 # Builds SmartBubble on demand. Nothing is published: all outputs are workflow artifacts.
 #
-#   Always ............ debug APK
+#   Always ............ debug APK (uploaded only when the whole build, and the unit tests when
+#                       they run, succeeded; the artifact name and build-info.txt carry the commit)
 #   When authorized ... unit tests (manual input `run_tests`, or repository variable
 #                       RUN_UNIT_TESTS = true)
 #   When signing secrets are configured ... signed release APK and AAB
@@ -80,16 +81,19 @@ jobs:
       - name: Set up Gradle (validates the wrapper)
         uses: gradle/actions/setup-gradle@v4
 
+      # Identity of this build: every artifact name and build-info.txt carry the source commit.
+      - name: Resolve build identity
+        run: |
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "Building commit $GITHUB_SHA ($GITHUB_REF_NAME), run $GITHUB_RUN_NUMBER."
+
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: |
+          # Never package or upload a leftover APK: start from an empty output folder.
+          rm -rf app/build/outputs/apk/debug
+          ./gradlew assembleDebug --stacktrace
 
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: SmartBubble-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-
+      # Tests run BEFORE the APK is uploaded: a red run publishes no APK.
       - name: Run unit tests
         if: ${{ inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true' }}
         run: ./gradlew testDebugUnitTest --stacktrace
@@ -112,7 +116,12 @@ jobs:
                       lines.append(f"  SKIPPED {name}: {(case.find('skipped').get('message') or '')[:200]}")
                   for bad in ("failure", "error"):
                       if case.find(bad) is not None:
-                          lines.append(f"  FAILED {name}: {(case.find(bad).get('message') or '')[:200]}")
+                          lines.append(f"  FAILED {name}: {(case.find(bad).get('message') or '')[:300]}")
+                          # The whole failure message (it may carry diagnostics) and the first stack frames.
+                          trace = [l for l in (case.find(bad).text or "").splitlines() if l.strip()]
+                          first_at = next((i for i, l in enumerate(trace) if l.lstrip().startswith("at ")), len(trace))
+                          shown = trace[:min(first_at, 400)] + trace[first_at:first_at + 6]
+                          lines.extend("      " + l.rstrip() for l in shown)
           print("\n".join(lines))
           print(f"TOTAL: {total} tests, {failed} failed, {skipped} skipped")
 
@@ -120,9 +129,55 @@ jobs:
         if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
         uses: actions/upload-artifact@v4
         with:
-          name: unit-test-reports
+          name: unit-test-reports-${{ env.SHORT_SHA }}-run${{ github.run_number }}
           path: app/build/reports/tests/
           if-no-files-found: ignore
+
+      # Only reached when the build (and the tests, when they ran) succeeded. The APK must have
+      # been built in this run from this commit: its versionName carries the commit.
+      - name: Verify debug APK
+        run: |
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/debug/*.apk)
+          [ "${#apks[@]}" -eq 1 ] || { echo "::error::Expected exactly one debug APK, found ${#apks[@]}."; exit 1; }
+          apk="${apks[0]}"
+          aapt2="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/aapt2"
+          badging="$("$aapt2" dump badging "$apk" | head -1)"
+          echo "$badging"
+          version="$(printf '%s' "$badging" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")"
+          case "$version" in
+            *"+$SHORT_SHA") ;;
+            *) echo "::error::The debug APK versionName '$version' does not carry commit $SHORT_SHA: not built from this commit."; exit 1;;
+          esac
+          out="$RUNNER_TEMP/debug"
+          mkdir -p "$out"
+          name="SmartBubble-debug-$SHORT_SHA-run$GITHUB_RUN_NUMBER"
+          cp "$apk" "$out/$name.apk"
+          {
+            echo "source_commit=$GITHUB_SHA"
+            echo "ref=$GITHUB_REF_NAME"
+            echo "workflow_run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "run_number=$GITHUB_RUN_NUMBER"
+            echo "built_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "version_name=$version"
+            echo "apk_sha256=$(sha256sum "$out/$name.apk" | cut -d' ' -f1)"
+          } > "$out/build-info.txt"
+          cat "$out/build-info.txt"
+          echo "DEBUG_DIR=$out" >> "$GITHUB_ENV"
+          echo "DEBUG_ARTIFACT=$name" >> "$GITHUB_ENV"
+          {
+            echo "### Debug APK"
+            echo "- Artifact: \`$name\`"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- versionName: \`$version\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DEBUG_ARTIFACT }}
+          path: ${{ env.DEBUG_DIR }}
+          if-no-files-found: error
 
       # Room writes the database schema during the build. Commit it to app/schemas.
       - name: Upload Room schema
@@ -234,16 +289,17 @@ jobs:
           echo "Release APK is signed with the '$KEY_ALIAS' key (certificate SHA-256 $actual)."
           out="$RUNNER_TEMP/release"
           mkdir -p "$out"
-          cp "$apk" "$out/SmartBubble-$VERSION_NAME-$VERSION_CODE.apk"
-          cp "$aab" "$out/SmartBubble-$VERSION_NAME-$VERSION_CODE.aab"
+          cp "$apk" "$out/SmartBubble-$VERSION_NAME-$VERSION_CODE-$SHORT_SHA.apk"
+          cp "$aab" "$out/SmartBubble-$VERSION_NAME-$VERSION_CODE-$SHORT_SHA.aab"
           ( cd "$out" && sha256sum SmartBubble-* > SHA256SUMS.txt )
+          printf 'source_commit=%s\nworkflow_run=%s\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$out/build-info.txt"
           echo "RELEASE_DIR=$out" >> "$GITHUB_ENV"
 
       - name: Upload signed release artifacts
         if: ${{ steps.signing.outputs.configured == 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: SmartBubble-release-signed
+          name: SmartBubble-release-signed-${{ env.SHORT_SHA }}-run${{ github.run_number }}
           path: ${{ env.RELEASE_DIR }}
           if-no-files-found: error
 

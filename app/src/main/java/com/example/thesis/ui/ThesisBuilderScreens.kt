@@ -291,6 +291,9 @@ private fun ThesisHomeScreen(host: ThesisHost) {
                         Column {
                             Text(stringResource(R.string.thesis_builder), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
                             Text(stringResource(R.string.thesis_home_subtitle), style = MaterialTheme.typography.bodyMedium)
+                            // Build identity (version and source commit) to check which build is installed.
+                            Text("v" + com.example.BuildConfig.VERSION_NAME, style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f), modifier = Modifier.testTag("thesis_build_info"))
                         }
                     }
                 }
@@ -931,7 +934,9 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                 )
             }
             state.sectionHistory?.let { SectionHistoryCard(controller, it, onClose = { controller.selectSection(section.id) }) }
-            // Formatting toolbar.
+            // Formatting toolbar. The heading menu is anchored to the toolbar itself (not to an icon
+            // inside the scrolling row), so it opens whatever the row's scroll position.
+            Box {
             Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), shape = RoundedCornerShape(14.dp)) {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                     ToolIcon(Icons.Filled.Undo, R.string.thesis_undo, "thesis_undo", undo.isNotEmpty()) {
@@ -945,14 +950,7 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                     ToolIcon(Icons.Filled.FormatItalic, R.string.thesis_fmt_italic, "thesis_fmt_italic") { applyOp { EditorOps.toggleWrap(it, "*") } }
                     ToolIcon(Icons.Filled.FormatUnderlined, R.string.thesis_fmt_underline, "thesis_fmt_underline") { applyOp { EditorOps.toggleWrap(it, "__") } }
                     ToolDivider()
-                    Box {
-                        ToolIcon(Icons.Filled.Title, R.string.thesis_add_heading, "thesis_fmt_heading") { headingMenu = true }
-                        DropdownMenu(expanded = headingMenu, onDismissRequest = { headingMenu = false }) {
-                            listOf(1 to R.string.thesis_heading_1, 2 to R.string.thesis_heading_2, 3 to R.string.thesis_heading_3, 0 to R.string.thesis_heading_normal).forEach { (lvl, label) ->
-                                MenuItem(label, "thesis_heading_$lvl") { headingMenu = false; heading(lvl) }
-                            }
-                        }
-                    }
+                    ToolIcon(Icons.Filled.Title, R.string.thesis_add_heading, "thesis_fmt_heading") { headingMenu = true }
                     ToolIcon(Icons.Filled.FormatListBulleted, R.string.thesis_fmt_bullets, "thesis_fmt_bullets") { applyOp { EditorOps.toggleBullets(it) } }
                     ToolIcon(Icons.Filled.FormatListNumbered, R.string.thesis_fmt_numbers, "thesis_fmt_numbers") { applyOp { EditorOps.toggleNumbers(it) } }
                     ToolDivider()
@@ -961,6 +959,12 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                     ToolIcon(Icons.Filled.FormatAlignRight, R.string.thesis_align_end, "thesis_align_end") { applyOp { EditorOps.setAlign(it, "end") } }
                     ToolIcon(Icons.Filled.FormatAlignJustify, R.string.thesis_align_justify, "thesis_align_justify") { applyOp { EditorOps.setAlign(it, "justify") } }
                 }
+            }
+            DropdownMenu(expanded = headingMenu, onDismissRequest = { headingMenu = false }) {
+                listOf(1 to R.string.thesis_heading_1, 2 to R.string.thesis_heading_2, 3 to R.string.thesis_heading_3, 0 to R.string.thesis_heading_normal).forEach { (lvl, label) ->
+                    MenuItem(label, "thesis_heading_$lvl") { headingMenu = false; heading(lvl) }
+                }
+            }
             }
             OutlinedTextField(
                 value = value,
