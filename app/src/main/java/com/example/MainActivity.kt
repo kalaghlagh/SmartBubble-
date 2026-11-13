@@ -14,8 +14,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import com.example.ui.AppNavTab
 import com.example.ui.SmartBubbleViewModel
 import com.example.ui.components.SmartBubbleBottomNavBar
@@ -76,11 +74,10 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
 
-            // While the Thesis Builder workspace (a full-screen dialog) is open, it shows the
-            // messages itself: a snackbar here would be hidden behind it.
-            val thesisWorkspaceOpen by remember { viewModel.thesis.state.map { it.workspaceOpen }.distinctUntilChanged() }.collectAsState(false)
-            LaunchedEffect(snackBarMessage, thesisWorkspaceOpen) {
-                if (thesisWorkspaceOpen) return@LaunchedEffect
+            // On the Thesis Builder destination, its own screens show the messages (with their
+            // own snackbar placed above their bottom actions).
+            LaunchedEffect(snackBarMessage, currentTab) {
+                if (currentTab == AppNavTab.THESIS) return@LaunchedEffect
                 snackBarMessage?.let { msg ->
                     snackbarHostState.showSnackbar(msg)
                     viewModel.clearSnackBar()
@@ -118,6 +115,7 @@ class MainActivity : ComponentActivity() {
                         ) {
                             when (currentTab) {
                                 AppNavTab.CHAT -> ChatScreen(viewModel = viewModel)
+                                AppNavTab.THESIS -> com.example.thesis.ui.ThesisBuilderDestination(viewModel, onExit = { viewModel.setNavTab(AppNavTab.CHAT) })
                                 AppNavTab.TEMPLATES -> TemplatesScreen(viewModel = viewModel)
                                 AppNavTab.LIBRARY -> LibraryScreen(viewModel = viewModel)
                                 AppNavTab.SETTINGS -> SettingsScreen(viewModel = viewModel)

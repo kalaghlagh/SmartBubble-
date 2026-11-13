@@ -359,18 +359,6 @@ fun ChatScreen(
                         }
                     }
 
-                    // Thesis Builder (a workspace opened from Chat, not a navigation tab)
-                    IconButton(
-                        onClick = { viewModel.thesis.openWorkspace() },
-                        modifier = Modifier.testTag("chat_thesis_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.School,
-                            contentDescription = stringResource(R.string.thesis_builder),
-                            tint = if (thesisChatProject != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
                     // Options / Template Filter button on top right
                     IconButton(
                         onClick = { showTemplatePicker = true },
@@ -527,9 +515,11 @@ fun ChatScreen(
                                 modifier = Modifier.weight(1f)
                             )
                             TextButton(onClick = {
+                                // Thesis Builder is its own destination: switch to it.
                                 val target = thesisState.chatSectionId
                                 viewModel.thesis.openProject(project.id)
                                 target?.let { viewModel.thesis.selectSection(it) }
+                                viewModel.setNavTab(com.example.ui.AppNavTab.THESIS)
                             }, modifier = Modifier.testTag("thesis_open_workspace")) { Text(stringResource(R.string.thesis_workspace)) }
                             TextButton(onClick = { viewModel.exitThesisChat() }, modifier = Modifier.testTag("thesis_exit_chat")) { Text(stringResource(R.string.thesis_exit)) }
                         }
@@ -1045,9 +1035,8 @@ fun ChatScreen(
         )
     }
 
-    // Thesis Builder workspace and change review
-    com.example.thesis.ui.ThesisWorkspaceDialog(viewModel)
-    if (!thesisState.workspaceOpen) thesisState.review?.let { com.example.thesis.ui.ThesisReviewDialog(viewModel.thesis, it) }
+    // Review of changes proposed from Chat (Thesis Builder itself is its own destination).
+    thesisState.review?.let { com.example.thesis.ui.ThesisReviewDialog(viewModel.thesis, it) }
 
     // Offline formatting preview, confirmation and Save to Library
     if (offlineState.dialogVisible) {

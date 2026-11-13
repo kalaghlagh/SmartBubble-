@@ -5,6 +5,7 @@
     <string name="nav_chat">Discussion</string>
     <string name="nav_templates">Mes Modèles</string>
     <string name="nav_library">Bibliothèque</string>
+    <string name="nav_thesis">Mémoire</string>
     <string name="nav_settings">Paramètres</string>
 
     <!-- Chat Screen & Drawer Menu -->
@@ -804,4 +805,7 @@
     <string name="thesis_table_rows">Lignes (sans l\'en-tête)</string>
     <string name="thesis_undo">Annuler</string>
     <string name="thesis_year_format">Utilisez la forme 2025-2026.</string>
+    <string name="thesis_save_to_device">Enregistrer sur l\'appareil</string>
+    <string name="thesis_saved_to_device">Enregistré sur l\'appareil</string>
+    <string name="thesis_save_device_failed">Le fichier n\'a pas pu être enregistré</string>
 </resources>

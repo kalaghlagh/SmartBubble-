@@ -133,6 +133,15 @@ jobs:
           path: app/build/reports/tests/
           if-no-files-found: ignore
 
+      # Screenshots of the running app drawn by ThesisAppFlowTest (Robolectric, not a device).
+      - name: Upload Thesis Builder screenshots
+        if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: thesis-screenshots-${{ env.SHORT_SHA }}-run${{ github.run_number }}
+          path: app/build/thesis-screenshots/
+          if-no-files-found: warn
+
       # Only reached when the build (and the tests, when they ran) succeeded. The APK must have
       # been built in this run from this commit: its versionName carries the commit.
       - name: Verify debug APK

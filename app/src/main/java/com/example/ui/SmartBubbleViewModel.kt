@@ -103,6 +103,8 @@ data class ModelCatalogUiState(
 
 enum class AppNavTab {
     CHAT,
+    /** Thesis Builder: an independent destination with its own screens and back stack. */
+    THESIS,
     TEMPLATES,
     LIBRARY,
     SETTINGS
@@ -680,7 +682,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
     /** Opens a thesis project from the Library. */
     fun openThesisFromLibrary(projectId: String) {
-        setNavTab(AppNavTab.CHAT)
+        setNavTab(AppNavTab.THESIS)
         thesis.openProject(projectId)
     }
 

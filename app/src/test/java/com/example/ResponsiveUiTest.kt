@@ -143,9 +143,10 @@ class ResponsiveUiTest {
 
     @Test
     @Config(qualifiers = "fr-w320dp-h640dp")
-    fun bottomNavigation_fourEqualColumnsInFrench() {
+    fun bottomNavigation_equalColumnsInFrench() {
         compose.setContent { SmartBubbleBottomNavBar(currentTab = AppNavTab.SETTINGS, onTabSelected = {}) }
-        val tags = listOf("nav_chat", "nav_templates", "nav_library", "nav_settings")
+        // Five destinations since Thesis Builder became its own one.
+        val tags = listOf("nav_chat", "nav_thesis", "nav_templates", "nav_library", "nav_settings")
         val items = tags.map { bounds(it) }
         items.forEach { assertEquals(items[0].width, it.width, 1f) }
         items.forEach { assertEquals(items[0].height, it.height, 1f) }
