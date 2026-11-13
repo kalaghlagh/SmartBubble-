@@ -456,7 +456,7 @@ class ThesisAndroidTest {
     private fun tagExists(tag: String) = compose.onAllNodes(androidx.compose.ui.test.hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
 
     private fun tap(tag: String) {
-        compose.waitUntil(10_000) { tagExists(tag) }
+        try { compose.waitUntil(10_000) { tagExists(tag) } } catch (e: Throwable) { throw AssertionError("Timed out waiting for node '$tag' to tap", e) }
         val node = compose.onNodeWithTag(tag)
         try { node.performScrollTo() } catch (e: AssertionError) { /* not inside a scrolling container */ }
         node.performClick()

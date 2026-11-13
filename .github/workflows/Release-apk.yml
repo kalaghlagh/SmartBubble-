@@ -116,7 +116,10 @@ jobs:
                       lines.append(f"  SKIPPED {name}: {(case.find('skipped').get('message') or '')[:200]}")
                   for bad in ("failure", "error"):
                       if case.find(bad) is not None:
-                          lines.append(f"  FAILED {name}: {(case.find(bad).get('message') or '')[:200]}")
+                          lines.append(f"  FAILED {name}: {(case.find(bad).get('message') or '')[:300]}")
+                          # First lines of the stack trace (cause chain), so the failing line is visible here.
+                          trace = [l for l in (case.find(bad).text or "").splitlines() if l.strip()]
+                          lines.extend("      " + l.strip() for l in trace[:25])
           print("\n".join(lines))
           print(f"TOTAL: {total} tests, {failed} failed, {skipped} skipped")
 
