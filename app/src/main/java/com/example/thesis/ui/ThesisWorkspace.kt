@@ -1,5 +1,7 @@
 package com.example.thesis.ui
 
+import com.example.ui.publishOnMain
+
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -166,7 +168,7 @@ internal fun formatDate(time: Long): String = DateFormat.getDateTimeInstance(Dat
 @Composable
 fun ThesisImageThumb(path: String?, modifier: Modifier = Modifier, maxPx: Int = 480) {
     val bitmap by produceState<ImageBitmap?>(null, path) {
-        value = path?.let { p ->
+        publishOnMain(path?.let { p ->
             withContext(Dispatchers.IO) {
                 try {
                     val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -176,7 +178,7 @@ fun ThesisImageThumb(path: String?, modifier: Modifier = Modifier, maxPx: Int = 
                     BitmapFactory.decodeFile(p, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
                 } catch (e: Throwable) { null }
             }
-        }
+        })
     }
     val b = bitmap
     if (b != null) Image(b, contentDescription = stringResource(R.string.thesis_image), modifier = modifier, contentScale = ContentScale.Fit)
@@ -758,7 +760,7 @@ internal fun pageCount(file: File): Int = try {
 internal fun PdfPage(file: File, index: Int, zoom: Float) {
     val widthPx = (700 * zoom).toInt()
     val bitmap by produceState<ImageBitmap?>(null, file, index, widthPx) {
-        value = withContext(Dispatchers.IO) { TemplateThumbnails.renderPage(file, index, widthPx)?.asImageBitmap() }
+        publishOnMain(withContext(Dispatchers.IO) { TemplateThumbnails.renderPage(file, index, widthPx)?.asImageBitmap() })
     }
     val b = bitmap
     if (b == null) Box(Modifier.width((300 * zoom).dp).height((420 * zoom).dp).background(Color.White), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp)) }

@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import com.example.ui.publishOnMain
+
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -266,7 +268,7 @@ fun TemplatesScreen(
                 items(filteredTemplates, key = { it.id }) { template ->
                     // First-page image of PDF templates (rendered on the device, cached).
                     val thumbnail by produceState<ImageBitmap?>(null, template.id, template.originalFilePath) {
-                        value = viewModel.templateThumbnail(template)?.asImageBitmap()
+                        publishOnMain(viewModel.templateThumbnail(template)?.asImageBitmap())
                     }
                     TemplateItemCard(
                         template = template,
@@ -355,7 +357,7 @@ fun TemplatesScreen(
     if (selectedPreviewTemplate != null) {
         val tmpl = selectedPreviewTemplate!!
         val previewThumbnail by produceState<ImageBitmap?>(null, tmpl.id) {
-            value = viewModel.templateThumbnail(tmpl)?.asImageBitmap()
+            publishOnMain(viewModel.templateThumbnail(tmpl)?.asImageBitmap())
         }
         TemplatePreviewDialog(
             template = tmpl,

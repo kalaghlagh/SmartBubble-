@@ -1,5 +1,7 @@
 package com.example.thesis.ui
 
+import com.example.ui.publishOnMain
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -1181,7 +1183,7 @@ private fun MediaStrip(assets: List<com.example.thesis.model.ThesisAsset>, draft
 @Composable
 private fun ChatPickerDialog(host: ThesisHost, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     val messages by produceState<List<ChatSnippet>?>(null) {
-        value = try { host.recentChatMessages(30) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { emptyList() }
+        publishOnMain(try { host.recentChatMessages(30) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { emptyList() })
     }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1220,7 +1222,7 @@ private fun ThesisAiAssistant(host: ThesisHost) {
     val assist: AiAssist? = state.assist
     val context = LocalContext.current
     // null while loading, empty when no default provider is set in Settings.
-    val providers by produceState<List<Pair<String, String>>?>(null) { value = try { listOfNotNull(host.aiProviderInfo()) } catch (e: Exception) { emptyList() } }
+    val providers by produceState<List<Pair<String, String>>?>(null) { publishOnMain(try { listOfNotNull(host.aiProviderInfo()) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { emptyList() }) }
     val provider = providers?.firstOrNull()
     val idle = state.busy == null
     var confirmReplace by remember { mutableStateOf(false) }
