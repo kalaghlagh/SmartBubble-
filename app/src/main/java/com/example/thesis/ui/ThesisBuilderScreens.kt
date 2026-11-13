@@ -1143,7 +1143,9 @@ private fun MediaStrip(assets: List<com.example.thesis.model.ThesisAsset>, draft
 /** "Insert from Chat": recent Chat messages; the chosen one goes into the text at the cursor. */
 @Composable
 private fun ChatPickerDialog(host: ThesisHost, onDismiss: () -> Unit, onPick: (String) -> Unit) {
-    val messages by produceState<List<ChatSnippet>?>(null) { value = try { host.recentChatMessages(30) } catch (e: Exception) { emptyList() } }
+    val messages by produceState<List<ChatSnippet>?>(null) {
+        value = try { host.recentChatMessages(30) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { emptyList() }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.thesis_insert_from_chat)) },

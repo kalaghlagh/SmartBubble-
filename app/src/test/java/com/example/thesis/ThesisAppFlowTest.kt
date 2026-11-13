@@ -1,9 +1,7 @@
 package com.example.thesis
 
 import android.graphics.Bitmap
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
@@ -82,11 +80,21 @@ class ThesisAppFlowTest {
         compose.waitForIdle()
     }
 
-    /** PNG of the app window as it is drawn now. */
+    /**
+     * PNG of the app window. The activity's view is drawn into a bitmap (software canvas):
+     * captureToImage() waits for a frame that Robolectric's paused main looper never draws
+     * (run #30: forceRedraw timed out after 2000 ms).
+     */
     private fun shot(name: String) {
         compose.waitForIdle()
-        val bitmap = compose.onAllNodes(isRoot())[0].captureToImage().asAndroidBitmap()
-        FileOutputStream(File(shots, "$name.png")).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        var bitmap: Bitmap? = null
+        compose.activityRule.scenario.onActivity { activity ->
+            val view = activity.window.decorView
+            val b = Bitmap.createBitmap(view.width.coerceAtLeast(1), view.height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+            view.draw(android.graphics.Canvas(b))
+            bitmap = b
+        }
+        FileOutputStream(File(shots, "$name.png")).use { bitmap!!.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
     private fun back() {
@@ -103,7 +111,7 @@ class ThesisAppFlowTest {
         tap("nav_thesis")
         assertEquals(AppNavTab.THESIS, vm.currentTab.value)
         await("thesis home") { exists("thesis_new") && exists("thesis_empty_state") }
-        assertTrue(textExists("Thesis Builder"))
+        await("thesis home title") { textExists("Thesis Builder") }
         shot("1-thesis-home")
 
         // New Thesis form: Create, Save Draft and Cancel are visible.
