@@ -25,4 +25,11 @@ interface ThesisHost {
     fun continueThesisInChat(projectId: String, sectionId: String?)
     fun openExportedDocument(document: DocumentEntity)
     fun shareExportedDocument(document: DocumentEntity)
+    /** Default AI provider and model from Settings (the ones the AI tools use), or null when none is set. */
+    suspend fun aiProviderInfo(): Pair<String, String>?
+    /** Recent Chat messages (newest first) for "Insert from Chat". */
+    suspend fun recentChatMessages(limit: Int = 30): List<ChatSnippet>
 }
+
+/** A Chat message offered by "Insert from Chat". */
+data class ChatSnippet(val text: String, val fromUser: Boolean, val time: Long)

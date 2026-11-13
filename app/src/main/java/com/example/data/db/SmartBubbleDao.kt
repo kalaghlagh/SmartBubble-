@@ -181,6 +181,10 @@ interface ChatDao {
     /** The latest [limit] messages of a conversation, oldest first. */
     @Query("SELECT * FROM (SELECT * FROM chat_messages WHERE sessionId = :sessionId ORDER BY timestamp DESC LIMIT :limit) ORDER BY timestamp ASC")
     suspend fun getRecentMessagesForSession(sessionId: String, limit: Int): List<ChatMessageEntity>
+
+    /** Latest messages of normal conversations (not Thesis Builder ones), newest first. */
+    @Query("SELECT * FROM chat_messages WHERE sessionId NOT LIKE 'thesis-%' AND content != '' ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun getRecentChatMessages(limit: Int): List<ChatMessageEntity>
 }
 
 @Dao

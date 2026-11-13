@@ -139,15 +139,15 @@ import java.util.Date
 
 /** Content of the thesis follows its own direction (Arabic right to left) whatever the app language. */
 @Composable
-private fun contentStyle() = LocalTextStyle.current.copy(textDirection = TextDirection.Content)
+internal fun contentStyle() = LocalTextStyle.current.copy(textDirection = TextDirection.Content)
 
 @Composable
-private fun levelLabel(level: String) = stringResource(
+internal fun levelLabel(level: String) = stringResource(
     when (level) { "LICENCE" -> R.string.thesis_level_licence; "DOCTORATE" -> R.string.thesis_level_doctorate; else -> R.string.thesis_level_master }
 )
 
 @Composable
-private fun sourceLabel(source: String) = stringResource(
+internal fun sourceLabel(source: String) = stringResource(
     when (ChangeSource.parse(source)) {
         ChangeSource.USER -> R.string.thesis_source_user
         ChangeSource.AI -> R.string.thesis_source_ai
@@ -159,7 +159,7 @@ private fun sourceLabel(source: String) = stringResource(
     }
 )
 
-private fun formatDate(time: Long): String = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(time))
+internal fun formatDate(time: Long): String = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(time))
 
 /** Small image preview decoded at reduced size (the stored original is untouched). */
 @Composable
@@ -182,116 +182,6 @@ fun ThesisImageThumb(path: String?, modifier: Modifier = Modifier, maxPx: Int = 
     else Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) { Text(stringResource(R.string.thesis_image), style = MaterialTheme.typography.labelSmall) }
 }
 
-/** Entry dialog of the Thesis Builder (opened from Chat; no extra navigation tab). */
-@Composable
-fun ThesisWorkspaceDialog(host: ThesisHost) {
-    val controller = host.thesis
-    val state by controller.state.collectAsState()
-    if (!state.workspaceOpen) return
-    Dialog(
-        // System back goes one level up (section -> structure -> theses) before closing.
-        onDismissRequest = { backTarget(state.screen)?.let { controller.show(it) } ?: controller.closeWorkspace() },
-        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)
-    ) {
-        ThesisWorkspaceContent(host)
-    }
-    state.review?.let { ThesisReviewDialog(controller, it) }
-}
-
-/** Tabs of an open thesis (the workspace itself; the metadata form is only in Project settings). */
-internal val projectTabs = listOf(ThesisScreen.PROJECT, ThesisScreen.STRUCTURE, ThesisScreen.CHANGES, ThesisScreen.HISTORY, ThesisScreen.PREVIEW)
-
-internal fun backTarget(screen: ThesisScreen): ThesisScreen? = when (screen) {
-    ThesisScreen.HOME -> null
-    ThesisScreen.SECTION -> ThesisScreen.STRUCTURE
-    ThesisScreen.SETTINGS -> ThesisScreen.PROJECT
-    else -> ThesisScreen.HOME
-}
-
-/** The workspace window: top bar, project tabs, the current screen and its own snackbar. */
-@Composable
-fun ThesisWorkspaceContent(host: ThesisHost) {
-    val controller = host.thesis
-    val state by controller.state.collectAsState()
-    val proposals by controller.openProposals.collectAsState()
-    val feedback by host.feedback.collectAsState()
-    val snackbar = remember { SnackbarHostState() }
-    LaunchedEffect(feedback) {
-        feedback?.let { message ->
-            host.consumeFeedback()
-            snackbar.showSnackbar(message)
-        }
-    }
-    Surface(Modifier.fillMaxSize().testTag("thesis_workspace"), color = MaterialTheme.colorScheme.background) {
-        Box(Modifier.statusBarsPadding().navigationBarsPadding()) {
-            Column(Modifier.fillMaxSize()) {
-                val back = backTarget(state.screen)
-                Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (back != null) {
-                        IconButton(onClick = { controller.show(back) }, modifier = Modifier.testTag("thesis_back")) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.thesis_back))
-                        }
-                    } else {
-                        Icon(Icons.Outlined.School, contentDescription = null, modifier = Modifier.padding(12.dp))
-                    }
-                    Text(
-                        if (state.screen == ThesisScreen.HOME || state.screen == ThesisScreen.CREATE) stringResource(R.string.thesis_builder)
-                        else state.snapshot?.meta?.title.orEmpty(),
-                        style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
-                        fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).semantics { heading() }.testTag("thesis_title_bar")
-                    )
-                    IconButton(onClick = { controller.closeWorkspace() }, modifier = Modifier.testTag("thesis_close")) {
-                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
-                    }
-                }
-                if (state.projectId != null && state.screen in projectTabs) {
-                    ScrollableTabRow(selectedTabIndex = projectTabs.indexOf(state.screen), edgePadding = 8.dp) {
-                        projectTabs.forEach { s ->
-                            Tab(
-                                selected = s == state.screen,
-                                onClick = { controller.show(s) },
-                                text = { Text(tabLabel(s, proposals.size), maxLines = 1) },
-                                modifier = Modifier.testTag("thesis_tab_${s.name.lowercase()}")
-                            )
-                        }
-                    }
-                }
-                state.busy?.let { busy -> BusyBar(controller, busy) }
-                HorizontalDivider()
-                Box(Modifier.weight(1f)) {
-                    when (state.screen) {
-                        ThesisScreen.HOME -> ThesisHome(controller)
-                        ThesisScreen.CREATE -> ThesisCreateScreen(host)
-                        ThesisScreen.PROJECT -> ThesisOverviewScreen(host)
-                        ThesisScreen.STRUCTURE -> ThesisStructureScreen(controller)
-                        ThesisScreen.SECTION -> ThesisSectionScreen(host)
-                        ThesisScreen.CHANGES -> ThesisChangesScreen(controller)
-                        ThesisScreen.HISTORY -> ThesisHistoryScreen(controller)
-                        ThesisScreen.PREVIEW -> ThesisPreviewScreen(controller)
-                        ThesisScreen.SETTINGS -> ThesisSettingsScreen(host)
-                    }
-                }
-            }
-            SnackbarHost(
-                snackbar,
-                Modifier.align(Alignment.BottomCenter)
-                    .padding(bottom = if (state.screen == ThesisScreen.CREATE || state.screen == ThesisScreen.SETTINGS) 72.dp else 8.dp)
-                    .testTag("thesis_snackbar")
-            )
-        }
-    }
-}
-
-@Composable
-private fun tabLabel(screen: ThesisScreen, pending: Int): String = when (screen) {
-    ThesisScreen.PROJECT -> stringResource(R.string.thesis_tab_overview)
-    ThesisScreen.STRUCTURE -> stringResource(R.string.thesis_tab_structure)
-    ThesisScreen.CHANGES -> if (pending > 0) stringResource(R.string.thesis_tab_changes_n, pending) else stringResource(R.string.thesis_tab_changes)
-    ThesisScreen.HISTORY -> stringResource(R.string.thesis_tab_history)
-    else -> stringResource(R.string.thesis_tab_preview)
-}
-
 @Composable
 fun BusyBar(controller: ThesisController, busy: ThesisBusy) {
     val label = stringResource(
@@ -311,58 +201,11 @@ fun BusyBar(controller: ThesisController, busy: ThesisBusy) {
     }
 }
 
-// ------------------------------------------------------------------ home
-
-@Composable
-internal fun ThesisHome(controller: ThesisController) {
-    val projects by controller.projects.collectAsState()
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item {
-            Text(stringResource(R.string.thesis_intro), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(12.dp))
-            Button(onClick = { controller.show(ThesisScreen.CREATE) }, modifier = Modifier.fillMaxWidth().testTag("thesis_new")) {
-                Icon(Icons.Default.Add, contentDescription = null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.thesis_create_new))
-            }
-            Spacer(Modifier.height(16.dp))
-            Text(stringResource(R.string.thesis_recent), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-        }
-        if (projects.isEmpty()) item { Text(stringResource(R.string.thesis_empty), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(projects, key = { it.id }) { p ->
-            Card(Modifier.fillMaxWidth().clickable { controller.openProject(p.id) }.testTag("thesis_project_${p.id}")) {
-                Column(Modifier.padding(14.dp)) {
-                    Text(p.title, style = MaterialTheme.typography.titleSmall.copy(textDirection = TextDirection.Content), fontWeight = FontWeight.SemiBold)
-                    Text("${levelLabel(p.level)} · ${p.language.uppercase()} · " + stringResource(R.string.thesis_revision_short, p.currentRevisionNumber),
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(stringResource(R.string.thesis_last_saved, formatDate(p.updatedAt)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-    }
-}
-
-// ------------------------------------------------------------------ create
-
-/** New thesis: metadata form with a fixed Cancel / Create bar (the button never scrolls away). */
-@Composable
-private fun ThesisCreateScreen(host: ThesisHost) {
-    val controller = host.thesis
-    val projects by controller.projects.collectAsState()
-    val state by controller.state.collectAsState()
-    ThesisMetaForm(
-        host = host,
-        initial = null,
-        busy = state.busy != null,
-        saveLabel = R.string.thesis_create,
-        onCancel = { if (projects.isEmpty()) controller.closeWorkspace() else controller.show(ThesisScreen.HOME) },
-        onOpenExisting = if (projects.isEmpty()) null else ({ controller.show(ThesisScreen.HOME) })
-    ) { meta, ai -> controller.createProject(meta, ai) }
-}
-
 // ------------------------------------------------------------------ metadata form (create / settings)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ThesisMetaForm(
+internal fun ThesisMetaForm(
     host: ThesisHost,
     initial: ThesisMeta?,
     initialAi: Boolean = true,
@@ -454,90 +297,9 @@ private fun ThesisMetaForm(
     }
 }
 
-// ------------------------------------------------------------------ overview (workspace home)
-
-@Composable
-private fun ThesisOverviewScreen(host: ThesisHost) {
-    val controller = host.thesis
-    val state by controller.state.collectAsState()
-    val proposals by controller.openProposals.collectAsState()
-    val projects by controller.projects.collectAsState()
-    val templates by host.templateList.collectAsState()
-    val snapshot = state.snapshot ?: return Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-    val project = projects.firstOrNull { it.id == state.projectId }
-    val projectId = state.projectId ?: return
-    val idle = state.busy == null
-    var deleting by remember { mutableStateOf(false) }
-    // "Edit selected section": the last opened section, else the first section that holds content.
-    val editable = snapshot.section(state.selectedSectionId)?.takeIf { it.kind.writable }
-        ?: snapshot.outline(includeDisabled = false).map { it.first }.firstOrNull { it.kind.writable }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Card(Modifier.fillMaxWidth().testTag("thesis_overview")) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(snapshot.meta.title, style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content), fontWeight = FontWeight.Bold)
-                Text(stringResource(R.string.thesis_level_label, levelLabel(snapshot.meta.level.name)), style = MaterialTheme.typography.bodySmall)
-                Text(stringResource(R.string.thesis_language_label, languageName(snapshot.meta.language)), style = MaterialTheme.typography.bodySmall)
-                val template = templates.firstOrNull { it.id == snapshot.meta.templateId }
-                Text(stringResource(R.string.thesis_template_label, template?.let { "${it.name} (${it.fileType})" } ?: stringResource(R.string.thesis_template_default)), style = MaterialTheme.typography.bodySmall)
-                project?.let {
-                    Text(stringResource(R.string.thesis_created_on, formatDate(it.createdAt)), style = MaterialTheme.typography.bodySmall)
-                    Text(stringResource(R.string.thesis_modified_on, formatDate(it.updatedAt)), style = MaterialTheme.typography.bodySmall)
-                    Text(stringResource(R.string.thesis_current_revision, it.currentRevisionNumber), style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("thesis_current_revision"))
-                }
-                val completion = ThesisStructure.completion(snapshot)
-                Text(stringResource(R.string.thesis_completion, completion), style = MaterialTheme.typography.bodySmall)
-                LinearProgressIndicator(progress = { completion / 100f }, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp))
-            }
-        }
-        state.lastExport?.let { e -> ExportResultCard(host, e) }
-        Text(stringResource(R.string.thesis_actions), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
-        ActionRow(
-            { ActionButton(R.string.thesis_continue_in_chat, "thesis_continue_chat", primary = true) { host.continueThesisInChat(projectId, state.selectedSectionId) } },
-            { ActionButton(R.string.thesis_edit_structure, "thesis_edit_structure") { controller.show(ThesisScreen.STRUCTURE) } }
-        )
-        ActionRow(
-            { ActionButton(R.string.thesis_edit_section, "thesis_edit_section", enabled = editable != null) { editable?.let { controller.selectSection(it.id) } } },
-            { ActionButton(R.string.thesis_preview, "thesis_preview", enabled = idle) { controller.buildPreview() } }
-        )
-        ActionRow(
-            { ActionButton(stringResource(R.string.thesis_review_pending, proposals.size), "thesis_review_pending") { controller.show(ThesisScreen.CHANGES) } },
-            { ActionButton(R.string.thesis_history, "thesis_history") { controller.show(ThesisScreen.HISTORY) } }
-        )
-        ActionRow(
-            { ActionButton(R.string.thesis_export_docx, "thesis_export_docx", enabled = idle) { controller.export("DOCX") } },
-            { ActionButton(R.string.thesis_export_pdf, "thesis_export_pdf", enabled = idle) { controller.export("PDF") } }
-        )
-        ActionRow(
-            { ActionButton(R.string.thesis_project_settings, "thesis_settings") { controller.show(ThesisScreen.SETTINGS) } },
-            { ActionButton(R.string.thesis_delete_project, "thesis_delete_project", enabled = idle, danger = true) { deleting = true } }
-        )
-        Text(stringResource(R.string.thesis_export_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-    if (deleting) DeleteProjectDialog(onDismiss = { deleting = false }) { deleting = false; controller.deleteProject(projectId) }
-}
-
-@Composable
-private fun ActionRow(first: @Composable RowScope.() -> Unit, second: @Composable RowScope.() -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { first(); second() }
-}
-
-@Composable
-private fun RowScope.ActionButton(label: Int, tag: String, enabled: Boolean = true, primary: Boolean = false, danger: Boolean = false, onClick: () -> Unit) =
-    ActionButton(stringResource(label), tag, enabled, primary, danger, onClick)
-
-@Composable
-private fun RowScope.ActionButton(label: String, tag: String, enabled: Boolean = true, primary: Boolean = false, danger: Boolean = false, onClick: () -> Unit) {
-    val modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag(tag)
-    if (primary) Button(onClick = onClick, enabled = enabled, modifier = modifier) { Text(label, textAlign = TextAlign.Center) }
-    else OutlinedButton(
-        onClick = onClick, enabled = enabled, modifier = modifier,
-        colors = if (danger) ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error) else ButtonDefaults.outlinedButtonColors()
-    ) { Text(label, textAlign = TextAlign.Center) }
-}
-
 /** Shown only after the file was written and saved to the Library. */
 @Composable
-private fun ExportResultCard(host: ThesisHost, e: ThesisExportResult) {
+internal fun ExportResultCard(host: ThesisHost, e: ThesisExportResult) {
     Card(Modifier.fillMaxWidth().testTag("thesis_export_result"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))) {
         Column(Modifier.padding(12.dp)) {
             Text(stringResource(R.string.thesis_export_saved, e.format, e.document.title), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
@@ -551,7 +313,7 @@ private fun ExportResultCard(host: ThesisHost, e: ThesisExportResult) {
 }
 
 @Composable
-private fun DeleteProjectDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
+internal fun DeleteProjectDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.thesis_delete_project_title)) },
@@ -561,53 +323,10 @@ private fun DeleteProjectDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
     )
 }
 
-private fun languageName(code: String) = when (code) { "ar" -> "العربية"; "fr" -> "Français"; else -> "English" }
-
-// ------------------------------------------------------------------ structure
-
-@Composable
-private fun ThesisStructureScreen(controller: ThesisController) {
-    val state by controller.state.collectAsState()
-    val snapshot = state.snapshot ?: return Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-    val numbering = remember(snapshot) { ThesisStructure.numbering(snapshot) }
-    var renaming by remember { mutableStateOf<ThesisSection?>(null) }
-    var deleting by remember { mutableStateOf<ThesisSection?>(null) }
-    LazyColumn(Modifier.fillMaxSize().testTag("thesis_structure"), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        item {
-            Text(stringResource(R.string.thesis_structure_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(6.dp))
-            Button(onClick = {
-                val last = snapshot.children(null).lastOrNull { it.kind == SectionKind.CHAPTER }
-                controller.direct(listOf(ThesisOp.AddSection(ThesisSection(ThesisStructure.newId("sec"), null, SectionKind.CHAPTER, "", 0), last?.id)), ChangeSource.STRUCTURE, "chapter")
-            }, enabled = state.busy == null, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("thesis_add_chapter")) {
-                Icon(Icons.Default.Add, contentDescription = null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.thesis_add_chapter))
-            }
-        }
-        items(snapshot.outline(includeDisabled = true), key = { it.first.id }) { (s, depth) ->
-            SectionRow(controller, snapshot, s, depth, ThesisStructure.displayTitle(s, numbering, snapshot.meta.language), onRename = { renaming = s }, onDelete = { deleting = s })
-        }
-    }
-    renaming?.let { s ->
-        TextInputDialog(stringResource(R.string.thesis_rename), s.title, onDismiss = { renaming = null }) { title ->
-            controller.direct(listOf(ThesisOp.UpdateSection(s.id, title = title)), ChangeSource.STRUCTURE, "rename"); renaming = null
-        }
-    }
-    deleting?.let { s ->
-        AlertDialog(
-            onDismissRequest = { deleting = null },
-            title = { Text(stringResource(R.string.thesis_delete_section_title)) },
-            text = { Text(stringResource(R.string.thesis_delete_section_text)) },
-            confirmButton = { Button(onClick = { controller.direct(listOf(ThesisOp.DeleteSection(s.id)), ChangeSource.STRUCTURE, "delete section"); deleting = null },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("thesis_delete_section_confirm")) { Text(stringResource(R.string.template_delete)) } },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.action_cancel)) } }
-        )
-    }
-}
-
 // ------------------------------------------------------------------ pending changes
 
 @Composable
-private fun ThesisChangesScreen(controller: ThesisController) {
+internal fun ThesisChangesScreen(controller: ThesisController) {
     val proposals by controller.openProposals.collectAsState()
     LazyColumn(Modifier.fillMaxSize().testTag("thesis_changes"), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { Text(stringResource(R.string.thesis_changes_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -626,9 +345,8 @@ private fun ThesisChangesScreen(controller: ThesisController) {
     }
 }
 
-
 @Composable
-private fun statusLabel(status: String) = stringResource(
+internal fun statusLabel(status: String) = stringResource(
     when (ProposalStatus.parse(status)) {
         ProposalStatus.NEEDS_DESTINATION -> R.string.thesis_status_needs_destination
         ProposalStatus.CONFLICT -> R.string.thesis_status_conflict
@@ -639,50 +357,7 @@ private fun statusLabel(status: String) = stringResource(
 )
 
 @Composable
-private fun SectionRow(controller: ThesisController, snapshot: ThesisSnapshot, s: ThesisSection, depth: Int, title: String, onRename: () -> Unit, onDelete: () -> Unit) {
-    var menu by remember { mutableStateOf(false) }
-    val siblings = snapshot.children(s.parentId)
-    val index = siblings.indexOfFirst { it.id == s.id }
-    Row(
-        Modifier.fillMaxWidth().clickable(enabled = s.kind.writable) { controller.selectSection(s.id) }
-            .padding(start = (depth * 16).dp, top = 2.dp, bottom = 2.dp).testTag("thesis_section_${s.id}"),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = contentStyle().copy(fontSize = 14.sp), fontWeight = if (depth == 0) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (s.enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                textDecoration = if (s.enabled) null else TextDecoration.LineThrough)
-            val count = snapshot.elementsOf(s.id).size
-            Text(if (s.kind.generated) stringResource(R.string.thesis_generated) else stringResource(R.string.thesis_elements_count, count),
-                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Box {
-            IconButton(onClick = { menu = true }, modifier = Modifier.testTag("thesis_section_menu_${s.id}")) { Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.library_more_options)) }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text(stringResource(R.string.thesis_rename)) }, onClick = { menu = false; onRename() })
-                DropdownMenuItem(text = { Text(stringResource(if (s.enabled) R.string.thesis_disable else R.string.thesis_enable)) },
-                    onClick = { menu = false; controller.direct(listOf(ThesisOp.UpdateSection(s.id, enabled = !s.enabled)), ChangeSource.STRUCTURE, "toggle") })
-                if (index > 0) DropdownMenuItem(text = { Text(stringResource(R.string.thesis_move_up)) }, onClick = {
-                    menu = false
-                    controller.direct(listOf(ThesisOp.MoveSection(s.id, s.parentId, siblings.getOrNull(index - 2)?.id ?: ThesisOperations.AFTER_START)), ChangeSource.STRUCTURE, "reorder")
-                })
-                if (index in 0 until siblings.lastIndex) DropdownMenuItem(text = { Text(stringResource(R.string.thesis_move_down)) }, onClick = {
-                    menu = false
-                    controller.direct(listOf(ThesisOp.MoveSection(s.id, s.parentId, siblings[index + 1].id)), ChangeSource.STRUCTURE, "reorder")
-                })
-                if (s.kind.container) DropdownMenuItem(text = { Text(stringResource(R.string.thesis_add_section)) }, onClick = {
-                    menu = false
-                    val kind = if (s.kind == SectionKind.SECTION) SectionKind.SUBSECTION else SectionKind.SECTION
-                    controller.direct(listOf(ThesisOp.AddSection(ThesisSection(ThesisStructure.newId("sec"), s.id, kind, "", 0), snapshot.children(s.id).lastOrNull()?.id)), ChangeSource.STRUCTURE, "section")
-                })
-                DropdownMenuItem(text = { Text(stringResource(R.string.template_delete), color = MaterialTheme.colorScheme.error) }, onClick = { menu = false; onDelete() })
-            }
-        }
-    }
-}
-
-@Composable
-private fun TextInputDialog(title: String, initial: String, lines: Int = 1, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+internal fun TextInputDialog(title: String, initial: String, lines: Int = 1, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var text by remember { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -691,22 +366,6 @@ private fun TextInputDialog(title: String, initial: String, lines: Int = 1, onDi
         confirmButton = { Button(onClick = { onConfirm(text) }, modifier = Modifier.testTag("thesis_text_confirm")) { Text(stringResource(R.string.action_save)) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } }
     )
-}
-
-
-@Composable
-private fun ElementCard(e: ThesisElement, snapshot: ThesisSnapshot, assets: List<ThesisAsset>, caption: String?, onEdit: () -> Unit, onDelete: () -> Unit, onUp: (() -> Unit)?, onDown: (() -> Unit)?) {
-    Card(Modifier.fillMaxWidth().testTag("thesis_element_${e.id}")) {
-        Column(Modifier.padding(10.dp)) {
-            ElementBody(e, assets, caption)
-            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                onUp?.let { IconButton(onClick = it) { Icon(Icons.Default.KeyboardArrowUp, contentDescription = stringResource(R.string.thesis_move_up)) } }
-                onDown?.let { IconButton(onClick = it) { Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.thesis_move_down)) } }
-                IconButton(onClick = onEdit, modifier = Modifier.testTag("thesis_edit_${e.id}")) { Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.thesis_edit)) }
-                IconButton(onClick = onDelete, modifier = Modifier.testTag("thesis_delete_${e.id}")) { Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.template_delete)) }
-            }
-        }
-    }
 }
 
 @Composable
@@ -767,7 +426,7 @@ fun MediaDataDialog(data: ElementData, isImage: Boolean, onDismiss: () -> Unit, 
 
 /** Table cells edited as lines of "cell | cell"; values are kept exactly as typed. */
 @Composable
-private fun TableEditDialog(e: ThesisElement, onDismiss: () -> Unit, onSave: (ElementData) -> Unit) {
+internal fun TableEditDialog(e: ThesisElement, onDismiss: () -> Unit, onSave: (ElementData) -> Unit) {
     var caption by remember { mutableStateOf(e.data.caption) }
     var text by remember { mutableStateOf((listOf(e.data.tableHeader) + e.data.tableRows).joinToString("\n") { it.joinToString(" | ") }) }
     AlertDialog(
@@ -793,7 +452,7 @@ private fun TableEditDialog(e: ThesisElement, onDismiss: () -> Unit, onSave: (El
 // ------------------------------------------------------------------ review
 
 @Composable
-private fun noteText(code: String): String {
+internal fun noteText(code: String): String {
     val parts = code.split(':')
     return when (parts[0]) {
         "pdf_profile" -> stringResource(R.string.thesis_tpl_pdf_profile, parts.getOrElse(1) { "" })
@@ -819,7 +478,7 @@ private fun noteText(code: String): String {
 }
 
 @Composable
-private fun explanationText(code: String): String = when {
+internal fun explanationText(code: String): String = when {
     code.startsWith("local:") -> stringResource(R.string.thesis_expl_local)
     code.startsWith("ai:") -> stringResource(R.string.thesis_expl_ai, code.removePrefix("ai:"))
     code.startsWith("ask:") -> code.removePrefix("ask:").ifBlank { stringResource(R.string.thesis_expl_ask) }
@@ -913,7 +572,7 @@ fun ThesisReviewDialog(controller: ThesisController, review: ProposalReview) {
     }
 }
 
-private fun captionFor(e: ThesisElement, snapshot: ThesisSnapshot): String? {
+internal fun captionFor(e: ThesisElement, snapshot: ThesisSnapshot): String? {
     val n = ThesisStructure.numbering(snapshot)
     return when (e.type) {
         ElementType.IMAGE -> ThesisStructure.figureCaption(e, n, snapshot.meta.language)
@@ -923,7 +582,7 @@ private fun captionFor(e: ThesisElement, snapshot: ThesisSnapshot): String? {
 }
 
 @Composable
-private fun DestinationPicker(snapshot: ThesisSnapshot, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+internal fun DestinationPicker(snapshot: ThesisSnapshot, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     val numbering = remember(snapshot) { ThesisStructure.numbering(snapshot) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -942,7 +601,7 @@ private fun DestinationPicker(snapshot: ThesisSnapshot, onDismiss: () -> Unit, o
 }
 
 @Composable
-private fun DiffSummary(diff: ThesisDiffResult) {
+internal fun DiffSummary(diff: ThesisDiffResult) {
     val c = diff.counts
     Text(
         stringResource(R.string.thesis_diff_summary, c[ChangeKind.ADDED] ?: 0, c[ChangeKind.DELETED] ?: 0, c[ChangeKind.MODIFIED] ?: 0, c[ChangeKind.MOVED] ?: 0, c[ChangeKind.FORMAT_ONLY] ?: 0) +
@@ -952,7 +611,7 @@ private fun DiffSummary(diff: ThesisDiffResult) {
 }
 
 @Composable
-private fun ChangeCard(c: ElementChange, assets: List<ThesisAsset>, caption: String?) {
+internal fun ChangeCard(c: ElementChange, assets: List<ThesisAsset>, caption: String?) {
     val added = Color(0x3334A853)
     val removed = Color(0x33EA4335)
     val label = stringResource(
@@ -986,116 +645,9 @@ private fun ChangeCard(c: ElementChange, assets: List<ThesisAsset>, caption: Str
     }
 }
 
-// ------------------------------------------------------------------ section content editor
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun ThesisSectionScreen(host: ThesisHost) {
-    val controller = host.thesis
-    val state by controller.state.collectAsState()
-    val snapshot = state.snapshot ?: return
-    val section = snapshot.section(state.selectedSectionId) ?: return
-    val numbering = remember(snapshot) { ThesisStructure.numbering(snapshot) }
-    val elements = snapshot.elementsOf(section.id)
-    val idle = state.busy == null
-    val context = LocalContext.current
-    var editing by remember { mutableStateOf<ThesisElement?>(null) }
-    var addingText by remember { mutableStateOf(false) }
-    var addingHeading by remember { mutableStateOf(false) }
-    var addingTable by remember { mutableStateOf(false) }
-    var aiMenu by remember { mutableStateOf(false) }
-    var pendingImage by remember { mutableStateOf<Uri?>(null) }
-    var deleting by remember { mutableStateOf<ThesisElement?>(null) }
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? -> pendingImage = uri }
-    LazyColumn(Modifier.fillMaxSize().testTag("thesis_section_editor"), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item {
-            Text(ThesisStructure.displayTitle(section, numbering, snapshot.meta.language), style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
-                fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() }.testTag("thesis_section_title"))
-            Text(stringResource(R.string.thesis_section_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(6.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Button(onClick = { addingText = true }, enabled = idle, modifier = Modifier.testTag("thesis_add_paragraph")) { Text(stringResource(R.string.thesis_add_text)) }
-                OutlinedButton(onClick = { addingHeading = true }, enabled = idle, modifier = Modifier.testTag("thesis_add_heading")) { Text(stringResource(R.string.thesis_add_heading)) }
-                OutlinedButton(onClick = { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = idle, modifier = Modifier.testTag("thesis_insert_image")) {
-                    Text(stringResource(R.string.thesis_insert_image))
-                }
-                OutlinedButton(onClick = { addingTable = true }, enabled = idle, modifier = Modifier.testTag("thesis_insert_table")) { Text(stringResource(R.string.thesis_insert_table)) }
-                Box {
-                    OutlinedButton(onClick = { aiMenu = true }, enabled = idle && elements.isNotEmpty(), modifier = Modifier.testTag("thesis_ai_review")) { Text(stringResource(R.string.thesis_ai_review)) }
-                    DropdownMenu(expanded = aiMenu, onDismissRequest = { aiMenu = false }) {
-                        listOf(EditMode.CORRECT to R.string.thesis_ai_correct, EditMode.IMPROVE to R.string.thesis_ai_improve, EditMode.SHORTEN to R.string.thesis_ai_shorten, EditMode.EXPAND to R.string.thesis_ai_expand)
-                            .forEach { (mode, label) ->
-                                DropdownMenuItem(text = { Text(stringResource(label)) }, onClick = { aiMenu = false; controller.requestEdit(mode, section.id) }, modifier = Modifier.testTag("thesis_ai_${mode.name}"))
-                            }
-                    }
-                }
-                OutlinedButton(onClick = { controller.formatSection(section.id) }, enabled = idle && elements.isNotEmpty(), modifier = Modifier.testTag("thesis_apply_formatting")) { Text(stringResource(R.string.thesis_apply_formatting)) }
-                OutlinedButton(onClick = { controller.loadSectionHistory(section.id) }, enabled = idle, modifier = Modifier.testTag("thesis_section_history")) { Text(stringResource(R.string.thesis_section_history)) }
-                OutlinedButton(onClick = { state.projectId?.let { host.continueThesisInChat(it, section.id) } }, modifier = Modifier.testTag("thesis_section_chat")) { Text(stringResource(R.string.thesis_section_chat)) }
-            }
-            state.sectionHistory?.let { history -> SectionHistoryCard(controller, history, onClose = { controller.selectSection(section.id) }) }
-            if (elements.isEmpty()) Text(stringResource(R.string.thesis_section_empty), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
-        }
-        items(elements, key = { it.id }) { e ->
-            ElementCard(e, snapshot, state.assets, when (e.type) {
-                ElementType.IMAGE -> ThesisStructure.figureCaption(e, numbering, snapshot.meta.language)
-                ElementType.TABLE -> ThesisStructure.tableCaption(e, numbering, snapshot.meta.language)
-                else -> null
-            }, onEdit = { editing = e }, onDelete = { deleting = e },
-                onUp = elements.indexOf(e).takeIf { it > 0 }?.let { i -> { controller.direct(listOf(ThesisOp.MoveElement(e.id, section.id, elements.getOrNull(i - 2)?.id ?: ThesisOperations.AFTER_START)), ChangeSource.STRUCTURE, "reorder") } },
-                onDown = elements.indexOf(e).takeIf { it < elements.lastIndex }?.let { i -> { controller.direct(listOf(ThesisOp.MoveElement(e.id, section.id, elements[i + 1].id)), ChangeSource.STRUCTURE, "reorder") } })
-        }
-    }
-    if (addingText) {
-        TextInputDialog(stringResource(R.string.thesis_add_text), "", lines = 6, onDismiss = { addingText = false }) { text ->
-            addingText = false
-            if (text.isNotBlank()) controller.addText(section.id, text)
-        }
-    }
-    if (addingHeading) {
-        TextInputDialog(stringResource(R.string.thesis_add_heading), "", onDismiss = { addingHeading = false }) { text ->
-            addingHeading = false
-            controller.addHeading(section.id, text)
-        }
-    }
-    if (addingTable) {
-        TableEditDialog(ThesisElement("", section.id, ElementType.TABLE, 0, "", ElementData()), onDismiss = { addingTable = false }) { data ->
-            addingTable = false
-            controller.addTable(section.id, data.tableHeader, data.tableRows, data.caption)
-        }
-    }
-    pendingImage?.let { uri ->
-        MediaDataDialog(ElementData(), isImage = true, onDismiss = { pendingImage = null }) { data ->
-            pendingImage = null
-            val resolver = context.contentResolver
-            controller.addImage(section.id, { resolver.openInputStream(uri) }, uri.lastPathSegment ?: "image", resolver.getType(uri) ?: "image/*", data)
-        }
-    }
-    editing?.let { e ->
-        when (e.type) {
-            ElementType.IMAGE -> MediaDataDialog(e.data, isImage = true, onDismiss = { editing = null }) { data -> controller.direct(listOf(ThesisOp.UpdateData(e.id, data)), ChangeSource.IMAGE, "image"); editing = null }
-            ElementType.TABLE -> TableEditDialog(e, onDismiss = { editing = null }) { data -> controller.direct(listOf(ThesisOp.UpdateData(e.id, data)), ChangeSource.TABLE, "table"); editing = null }
-            else -> TextInputDialog(stringResource(R.string.thesis_edit), e.text, lines = 4, onDismiss = { editing = null }) { text ->
-                if (text.isNotBlank()) controller.direct(listOf(ThesisOp.ReplaceText(e.id, text.trim())), ChangeSource.USER, "edit")
-                editing = null
-            }
-        }
-    }
-    deleting?.let { e ->
-        AlertDialog(
-            onDismissRequest = { deleting = null },
-            title = { Text(stringResource(R.string.thesis_delete_element_title)) },
-            text = { Text(stringResource(R.string.thesis_delete_element_text)) },
-            confirmButton = { Button(onClick = { controller.direct(listOf(ThesisOp.DeleteElement(e.id)), ChangeSource.USER, "delete"); deleting = null },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("thesis_delete_confirm")) { Text(stringResource(R.string.template_delete)) } },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.action_cancel)) } }
-        )
-    }
-}
-
 /** Revisions that changed the open section; each one can be compared with the revision before it. */
 @Composable
-private fun SectionHistoryCard(controller: ThesisController, history: List<ThesisRevisionEntity>, onClose: () -> Unit) {
+internal fun SectionHistoryCard(controller: ThesisController, history: List<ThesisRevisionEntity>, onClose: () -> Unit) {
     Card(Modifier.fillMaxWidth().padding(top = 8.dp).testTag("thesis_section_history_list")) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1119,7 +671,7 @@ private fun SectionHistoryCard(controller: ThesisController, history: List<Thesi
 // ------------------------------------------------------------------ history
 
 @Composable
-private fun ThesisHistoryScreen(controller: ThesisController) {
+internal fun ThesisHistoryScreen(controller: ThesisController) {
     val state by controller.state.collectAsState()
     val revisions by controller.revisions.collectAsState()
     var restoring by remember { mutableStateOf<ThesisRevisionEntity?>(null) }
@@ -1178,58 +730,13 @@ private fun ThesisHistoryScreen(controller: ThesisController) {
     }
 }
 
-// ------------------------------------------------------------------ preview
-
-@Composable
-private fun ThesisPreviewScreen(controller: ThesisController) {
-    val state by controller.state.collectAsState()
-    val file = state.previewFile
-    if (file == null) {
-        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(stringResource(R.string.thesis_preview_hint), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(12.dp))
-            Button(onClick = { controller.buildPreview() }, enabled = state.busy == null, modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_preview_build")) { Text(stringResource(R.string.thesis_preview_generate)) }
-        }
-        return
-    }
-    val pages = remember(file) { pageCount(file) }.takeIf { it > 0 } ?: state.previewPages
-    var page by remember(file) { mutableIntStateOf(0) }
-    var zoom by remember { mutableStateOf(1f) }
-    val zoomIn = stringResource(R.string.thesis_zoom_in)
-    val zoomOut = stringResource(R.string.thesis_zoom_out)
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { page-- }, enabled = page > 0, modifier = Modifier.testTag("thesis_page_prev")) {
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = stringResource(R.string.action_previous_page))
-            }
-            Text(stringResource(R.string.thesis_page_of, page + 1, pages), style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("thesis_page_indicator"))
-            IconButton(onClick = { page++ }, enabled = page < pages - 1, modifier = Modifier.testTag("thesis_page_next")) {
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = stringResource(R.string.action_next_page))
-            }
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = { zoom = (zoom - 0.25f).coerceAtLeast(0.5f) }, modifier = Modifier.semantics { contentDescription = zoomOut }.testTag("thesis_zoom_out")) { Text("−") }
-            Text("${(zoom * 100).toInt()}%", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("thesis_zoom_level"))
-            TextButton(onClick = { zoom = (zoom + 0.25f).coerceAtMost(3f) }, modifier = Modifier.semantics { contentDescription = zoomIn }.testTag("thesis_zoom_in")) { Text("+") }
-            IconButton(onClick = { controller.buildPreview() }, enabled = state.busy == null, modifier = Modifier.testTag("thesis_preview_refresh")) {
-                Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.thesis_preview_refresh))
-            }
-        }
-        Box(
-            Modifier.weight(1f).fillMaxWidth().background(Color(0xFF9E9E9E)).verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(12.dp),
-            contentAlignment = Alignment.TopCenter
-        ) {
-            if (pages > 0) PdfPage(file, page.coerceIn(0, pages - 1), zoom)
-        }
-    }
-}
-
-private fun pageCount(file: File): Int = try {
+internal fun pageCount(file: File): Int = try {
     android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { fd -> android.graphics.pdf.PdfRenderer(fd).use { it.pageCount } }
 } catch (e: Throwable) { 0 }
 
 /** One page rendered on demand. */
 @Composable
-private fun PdfPage(file: File, index: Int, zoom: Float) {
+internal fun PdfPage(file: File, index: Int, zoom: Float) {
     val widthPx = (700 * zoom).toInt()
     val bitmap by produceState<ImageBitmap?>(null, file, index, widthPx) {
         value = withContext(Dispatchers.IO) { TemplateThumbnails.renderPage(file, index, widthPx)?.asImageBitmap() }
@@ -1242,7 +749,7 @@ private fun PdfPage(file: File, index: Int, zoom: Float) {
 // ------------------------------------------------------------------ settings
 
 @Composable
-private fun ThesisSettingsScreen(host: ThesisHost) {
+internal fun ThesisSettingsScreen(host: ThesisHost) {
     val controller = host.thesis
     val state by controller.state.collectAsState()
     val projects by controller.projects.collectAsState()

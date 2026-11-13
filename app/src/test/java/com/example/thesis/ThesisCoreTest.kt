@@ -292,4 +292,92 @@ class ThesisCoreTest {
         assertEquals(0, ThesisStructure.completion(newThesis()))
         assertTrue(ThesisStructure.completion(s) > 0)
     }
+
+    // ------------------------------------------------------------------ section editor text
+
+    private val splitter = ThesisContentSplitter()
+
+    private fun applyDraft(s: ThesisSnapshot, draft: com.example.thesis.core.SectionDraft) = runBlocking {
+        val ops = com.example.thesis.core.SectionText.plan(s, draft) { splitter.split(it) }
+        ThesisOperations.apply(s, ops) to ops
+    }
+
+    @Test
+    fun sectionText_roundTripKeepsElementsAndFigurePlaces() {
+        var s = newThesis()
+        val intro = s.kind(SectionKind.INTRODUCTION).id
+        val p1 = para("Groundwater is the main source of drinking water in the basin (Smith, 2019).")
+        val h = NewElement("h1", ElementType.HEADING, "Study area", ElementData(headingLevel = 2))
+        val img = NewElement("img", ElementType.IMAGE, "", ElementData(assetId = "a1", caption = "Map"))
+        val p2 = para("Recharge occurs mainly in winter through limestone outcrops.")
+        s = ThesisOperations.apply(s, listOf(ThesisOp.AddElements(intro, null, listOf(p1, h, img, p2))))
+
+        val draft = com.example.thesis.core.SectionText.load(s, intro)
+        assertTrue(draft.text.contains("## Study area"))
+        assertTrue(draft.text.lines().contains("[Figure 1]"))
+        assertFalse(draft.dirty)
+        // Saving unchanged text changes nothing.
+        assertTrue(applyDraft(s, draft).second.isEmpty())
+
+        // Edit one paragraph and add one: the other elements keep their ids, the figure its place.
+        val edited = draft.copy(text = draft.text.replace("mainly in winter", "mostly in winter") + "\n\nA new closing paragraph about nitrate monitoring in wells.")
+        val (after, ops) = applyDraft(s, edited)
+        val ids = after.elementsOf(intro).map { it.id }
+        assertEquals(listOf(p1.id, "h1", "img"), ids.take(3))
+        assertEquals(ElementType.HEADING, after.element("h1")!!.type)
+        assertEquals(5, ids.size)
+        assertTrue(after.elementsOf(intro)[3].text.contains("mostly in winter"))
+        assertTrue(ops.none { it is ThesisOp.DeleteElement && it.elementId == p1.id })
+
+        // Moving the placeholder line moves the figure; deleting it removes the figure.
+        val moved = draft.copy(text = "[Figure 1]\n\n" + draft.text.replace("[Figure 1]", ""))
+        assertEquals("img", applyDraft(s, moved).first.elementsOf(intro).first().id)
+        val removed = draft.copy(text = draft.text.replace("[Figure 1]", ""))
+        assertNull(applyDraft(s, removed).first.element("img"))
+    }
+
+    @Test
+    fun sectionText_newFigureInsertedAtPlaceholder_arabicToken() {
+        var s = newThesis("ar")
+        val intro = s.kind(SectionKind.INTRODUCTION).id
+        s = ThesisOperations.apply(s, listOf(ThesisOp.AddElements(intro, null, listOf(para("فقرة أولى عن المياه الجوفية في الحوض.")))))
+        val draft = com.example.thesis.core.SectionText.load(s, intro)
+        val token = com.example.thesis.core.SectionText.nextToken(draft, "ar", ElementType.IMAGE)
+        assertEquals("[الشكل 1]", token)
+        val withImage = draft.copy(
+            text = token + "\n\n" + draft.text,
+            media = draft.media + (token to com.example.thesis.core.DraftMedia(null, ElementType.IMAGE, ElementData(assetId = "a9", caption = "خريطة"))),
+            mediaChanged = true
+        )
+        assertTrue(withImage.dirty)
+        val after = applyDraft(s, withImage).first.elementsOf(intro)
+        assertEquals(listOf(ElementType.IMAGE, ElementType.PARAGRAPH), after.map { it.type })
+        assertEquals("a9", after[0].data.assetId)
+        assertEquals("خريطة", after[0].data.caption)
+    }
+
+    @Test
+    fun sectionStatus_andProgress() {
+        var s = newThesis()
+        val intro = s.kind(SectionKind.INTRODUCTION)
+        assertEquals(ThesisStructure.Status.NOT_STARTED, ThesisStructure.status(s, intro))
+        assertEquals(ThesisStructure.Status.AUTOMATIC, ThesisStructure.status(s, s.kind(SectionKind.TABLE_OF_CONTENTS)))
+        val start = ThesisStructure.progress(s)
+        s = ThesisOperations.apply(s, listOf(ThesisOp.AddElements(intro.id, null, listOf(para("Some text.")))))
+        assertEquals(ThesisStructure.Status.IN_PROGRESS, ThesisStructure.status(s, s.section(intro.id)!!))
+        val mid = ThesisStructure.progress(s)
+        s = ThesisOperations.apply(s, listOf(ThesisOp.UpdateSection(intro.id, completed = true)))
+        assertEquals(ThesisStructure.Status.COMPLETED, ThesisStructure.status(s, s.section(intro.id)!!))
+        assertTrue(start < mid && mid < ThesisStructure.progress(s))
+        // A chapter is in progress when one of its sub-sections has content.
+        val ch = s.chapters().first()
+        val sub = ThesisSection("sub1", ch.id, SectionKind.SECTION, "Methods", 0)
+        s = ThesisOperations.apply(s, listOf(ThesisOp.AddSection(sub, null), ThesisOp.AddElements("sub1", null, listOf(para("Method text.")))))
+        assertEquals(ThesisStructure.Status.IN_PROGRESS, ThesisStructure.status(s, s.section(ch.id)!!))
+        // The flag survives encoding (snapshot and operation).
+        val decoded = ThesisCodec.decodeSnapshot(ThesisCodec.encodeSnapshot(s))
+        assertTrue(decoded.section(intro.id)!!.completed)
+        val op = ThesisOperations.decode(ThesisOperations.encode(listOf(ThesisOp.UpdateSection(intro.id, completed = true))))
+        assertEquals(ThesisOp.UpdateSection(intro.id, completed = true), op.single())
+    }
 }

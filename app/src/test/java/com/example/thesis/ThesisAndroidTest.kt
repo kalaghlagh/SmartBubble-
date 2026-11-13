@@ -5,12 +5,15 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
@@ -21,6 +24,7 @@ import com.example.ai.orchestrator.AiProgressListener
 import com.example.ai.providers.AiErrorKind
 import com.example.ai.providers.AiException
 import com.example.data.db.SmartBubbleDatabase
+import com.example.data.model.ChatMessageEntity
 import com.example.data.model.DocumentEntity
 import com.example.data.model.TemplateEntity
 import com.example.offline.document.RoomTemplateRepository
@@ -39,12 +43,13 @@ import com.example.thesis.export.ThesisExporter
 import com.example.thesis.export.ThesisPdfRenderer
 import com.example.thesis.model.AcademicLevel
 import com.example.thesis.model.ChangeSource
+import com.example.thesis.model.ElementData
 import com.example.thesis.model.ElementType
 import com.example.thesis.model.ProposalStatus
 import com.example.thesis.model.SectionKind
 import com.example.thesis.model.ThesisMeta
 import com.example.thesis.model.ThesisSnapshot
-import com.example.thesis.ui.ThesisHome
+import com.example.thesis.ui.ChatSnippet
 import com.example.thesis.ui.ThesisHost
 import com.example.thesis.ui.ThesisWorkspaceContent
 import com.example.thesis.ui.ThesisReviewDialog
@@ -148,6 +153,9 @@ class ThesisAndroidTest {
         override fun continueThesisInChat(projectId: String, sectionId: String?) { chatRequests.add(projectId to sectionId); controller.enterChatMode(projectId, sectionId) }
         override fun openExportedDocument(document: DocumentEntity) { opened.add(document) }
         override fun shareExportedDocument(document: DocumentEntity) { opened.add(document) }
+        override suspend fun aiProviderInfo(): Pair<String, String>? = ai.provider?.let { it to "fake-model" }
+        override suspend fun recentChatMessages(limit: Int): List<ChatSnippet> =
+            db.chatDao().getRecentChatMessages(limit).map { ChatSnippet(it.content, it.isUser, it.timestamp) }
     }
 
     @Before
@@ -397,11 +405,15 @@ class ThesisAndroidTest {
     @Test
     @Config(qualifiers = "en")
     fun home_listsProjects_english() {
-        runBlocking { repo.createProject(meta()) }
-        compose.setContent { ThesisHome(controller) }
+        val id = runBlocking { repo.createProject(meta()) }
+        controller.openWorkspace()
+        compose.setContent { ThesisWorkspaceContent(TestHost()) }
         compose.onNodeWithTag("thesis_new").assertIsEnabled()
-        compose.onNodeWithText("Create New Thesis").assertExists()
+        compose.onNodeWithText("New Thesis").assertExists()
+        compose.onNodeWithText("Build your academic thesis step by step.").assertExists()
         compose.waitUntil(10_000) { compose.onAllNodesWithTextExists("Groundwater quality") }
+        compose.onNodeWithTag("thesis_continue_$id").assertIsEnabled()
+        compose.onNodeWithText("Continue Editing").assertExists()
     }
 
     private fun androidx.compose.ui.test.junit4.ComposeContentTestRule.onAllNodesWithTextExists(text: String): Boolean =
@@ -456,100 +468,239 @@ class ThesisAndroidTest {
         compose.waitForIdle()
     }
 
-    /**
-     * The user journey of the bug report: create a thesis from the form, land in the workspace
-     * (not back on the form), write in the General Introduction, add a chapter, send content to
-     * it from Chat, accept the proposal, compare revisions and export to the Library.
-     */
-    @Test
-    @Config(qualifiers = "en")
-    fun workspace_fullFlow_createEditChatAcceptHistoryExport() {
-        val host = TestHost()
-        controller.openWorkspace()
+    private fun textExists(text: String) = compose.onAllNodes(androidx.compose.ui.test.hasText(text)).fetchSemanticsNodes().isNotEmpty()
+
+    /** The Thesis Builder window as the app shows it (with the review dialog of proposals). */
+    private fun showWorkspace(host: TestHost) {
         compose.setContent {
             val st by controller.state.collectAsState()
             if (st.workspaceOpen) ThesisWorkspaceContent(host)
             st.review?.let { ThesisReviewDialog(controller, it) }
         }
+    }
 
-        // 1. Create: the form validates the title and has Cancel / Create always visible.
+    /** Screen 2 -> screen 3: required fields, one project per request, automatic navigation. */
+    @Test
+    @Config(qualifiers = "en")
+    fun newThesis_validatesRequiredFields_createsOnce_andOpensWorkspace() {
+        val host = TestHost()
+        controller.openWorkspace()
+        showWorkspace(host)
+        compose.waitUntil(10_000) { tagExists("thesis_empty_state") }
         tap("thesis_new")
         compose.onNodeWithTag("thesis_cancel_meta").assertIsDisplayed()
         compose.onNodeWithTag("thesis_save_meta").assertIsDisplayed().performClick()
-        compose.onNodeWithTag("thesis_title_error", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("thesis_field_title_error", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("thesis_field_student_error", useUnmergedTree = true).assertExists()
         assertTrue(runBlocking { repo.observeProjects().first() }.isEmpty())
         compose.onNodeWithTag("thesis_field_title").performTextInput("Groundwater quality")
-        tap("thesis_level_MASTER")
-        tap("thesis_lang_en")
+        compose.onNodeWithTag("thesis_field_student").performTextInput("Amina")
+        compose.onNodeWithTag("thesis_field_university").performTextInput("University of Fès")
+        tap("thesis_level_DOCTORATE")
+        tap("thesis_language_picker")
+        tap("thesis_lang_fr")
         // Repeated taps create one project only.
         compose.onNodeWithTag("thesis_save_meta").performTouchInput { click(); click() }
 
-        // 2. Automatic navigation to the workspace with overview, tabs and actions.
-        compose.waitUntil(15_000) { tagExists("thesis_overview") }
+        compose.waitUntil(15_000) { tagExists("thesis_structure") }
         val id = controller.state.value.projectId!!
         assertEquals(1, runBlocking { repo.observeProjects().first() }.size)
-        compose.waitUntil(10_000) { compose.onAllNodesWithTextExists("Created") } // feedback shown inside the workspace
-        listOf("thesis_tab_project", "thesis_tab_structure", "thesis_tab_changes", "thesis_tab_history", "thesis_tab_preview",
-            "thesis_continue_chat", "thesis_edit_structure", "thesis_edit_section", "thesis_preview", "thesis_review_pending",
-            "thesis_history", "thesis_export_docx", "thesis_export_pdf", "thesis_settings", "thesis_delete_project").forEach { compose.onNodeWithTag(it).assertExists() }
-        compose.onNodeWithText("Current revision: 1").assertExists()
-        val created = runBlocking { repo.snapshot(id) }
-        assertEquals(AcademicLevel.MASTER, created.meta.level)
-        assertEquals("en", created.meta.language)
+        val s = runBlocking { repo.snapshot(id) }
+        assertEquals(AcademicLevel.DOCTORATE, s.meta.level)
+        assertEquals("fr", s.meta.language)
+        assertEquals("Amina", s.meta.studentName)
+        assertEquals("University of Fès", s.meta.university)
+        assertEquals("Introduction générale", s.sections.first { it.kind == SectionKind.INTRODUCTION }.title)
+        compose.waitUntil(10_000) { textExists("Created") } // feedback shown inside the workspace
+        compose.onNodeWithTag("thesis_add_chapter").assertIsEnabled()
+        val dedication = s.sections.first { it.kind == SectionKind.DEDICATION }.id
+        compose.onNodeWithTag("thesis_status_$dedication", useUnmergedTree = true).assertTextEquals("Not Started")
+        val cover = s.sections.first { it.kind == SectionKind.COVER }.id
+        compose.onNodeWithTag("thesis_status_$cover", useUnmergedTree = true).assertTextEquals("Completed")
 
-        // 3. General Introduction: add a paragraph and save it.
-        tap("thesis_tab_structure")
-        val introId = intro(created)
-        clickInList("thesis_structure", "thesis_section_$introId")
-        compose.onNodeWithTag("thesis_section_editor").assertExists()
-        tap("thesis_add_paragraph")
-        compose.onNodeWithTag("thesis_text_input").performTextInput("Groundwater is the main source of drinking water in the basin.")
-        tap("thesis_text_confirm")
-        waitFor { repo.snapshot(id).elementsOf(introId).any { it.text == "Groundwater is the main source of drinking water in the basin." } }
-
-        // 4. Add Chapter 1 (a new chapter; the count is not fixed) and open it.
+        // Back to the projects list: the new project is there.
         tap("thesis_back")
-        val chaptersBefore = created.sections.filter { it.kind == SectionKind.CHAPTER }.map { it.id }.toSet()
+        compose.waitUntil(10_000) { tagExists("thesis_project_$id") }
+    }
+
+    @Test
+    @Config(qualifiers = "en")
+    fun backNavigation_goesUpOneLevel_andCancelLeavesForm() {
+        val host = TestHost()
+        val id = runBlocking { repo.createProject(meta()) }
+        controller.openWorkspace()
+        showWorkspace(host)
+        tap("thesis_new")
+        tap("thesis_cancel_meta")
+        compose.waitUntil(10_000) { tagExists("thesis_new") }
+        assertEquals(ThesisScreen.HOME, controller.state.value.screen)
+        tap("thesis_continue_$id")
+        compose.waitUntil(10_000) { tagExists("thesis_structure") }
+        tap("thesis_back")
+        compose.waitUntil(10_000) { tagExists("thesis_new") }
+        assertEquals(1, runBlocking { repo.observeProjects().first() }.size)
+        controller.back()
+        assertFalse(controller.state.value.workspaceOpen)
+    }
+
+    /** Screen 4: paste, insert from Chat, image, save; Back saves what was typed. */
+    @Test
+    @Config(qualifiers = "en")
+    fun sectionEditor_pasteInsertFromChatImageSave_andBackAutosaves() {
+        val host = TestHost()
+        val id = runBlocking { repo.createProject(meta(), aiAssist = false) }
+        runBlocking { db.chatDao().insertMessage(ChatMessageEntity("m1", "chat-1", isUser = false, content = "Recharge occurs mainly in winter through limestone outcrops.")) }
+        controller.openProject(id)
+        showWorkspace(host)
+        compose.waitUntil(10_000) { tagExists("thesis_structure") && controller.state.value.snapshot != null }
+        val introId = intro(controller.state.value.snapshot!!)
+        clickInList("thesis_structure", "thesis_edit_$introId")
+        compose.waitUntil(10_000) { tagExists("thesis_editor_text") && controller.state.value.draft != null }
+        compose.onNodeWithTag("thesis_editor_text").performTextInput("Groundwater is the main source of drinking water in the basin.")
+        compose.waitUntil(5_000) { textExists("Unsaved changes") }
+        assertTrue(runBlocking { repo.snapshot(id) }.elementsOf(introId).isEmpty()) // nothing saved yet
+
+        // Paste Text uses the clipboard.
+        (context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+            .setPrimaryClip(android.content.ClipData.newPlainText("t", "Nitrate levels have increased in shallow wells."))
+        tap("thesis_paste_text")
+        assertTrue(controller.state.value.draft!!.text.contains("Nitrate levels have increased in shallow wells."))
+
+        // Insert from Chat lists Chat messages.
+        tap("thesis_insert_from_chat")
+        compose.waitUntil(10_000) { tagExists("thesis_chat_item") }
+        compose.onNodeWithTag("thesis_chat_item").performClick()
+        compose.waitForIdle()
+        assertTrue(controller.state.value.draft!!.text.contains("Recharge occurs mainly in winter"))
+
+        tap("thesis_save_changes")
+        waitFor {
+            repo.snapshot(id).elementsOf(introId).map { it.text } == listOf(
+                "Groundwater is the main source of drinking water in the basin.",
+                "Nitrate levels have increased in shallow wells.",
+                "Recharge occurs mainly in winter through limestone outcrops."
+            )
+        }
+        compose.waitUntil(10_000) { textExists("Saved") }
+
+        // An image goes where its placeholder is, with its caption, when the section is saved.
+        runBlocking { idle() }
+        controller.insertDraftImage({ ByteArrayInputStream(png) }, "map.png", "image/png", ElementData(caption = "Study area"), at = 0)
+        compose.waitUntil(10_000) { controller.state.value.draft?.text?.startsWith("[Figure 1]") == true }
+        assertTrue(tagExists("thesis_media_[Figure 1]"))
+        tap("thesis_save_changes")
+        waitFor { repo.snapshot(id).elementsOf(introId).firstOrNull()?.let { it.type == ElementType.IMAGE && it.data.caption == "Study area" } == true }
+        assertEquals(4, runBlocking { repo.snapshot(id) }.elementsOf(introId).size)
+
+        // Typed text is saved when leaving with Back (nothing is lost).
+        runBlocking { idle() }
+        compose.waitUntil(10_000) { controller.state.value.draft?.dirty == false }
+        compose.onNodeWithTag("thesis_editor_text").performTextInput(" Closing sentence typed before going back.")
+        tap("thesis_back")
+        waitFor { repo.snapshot(id).elementsOf(introId).any { it.text.contains("Closing sentence typed before going back.") } }
+        compose.waitUntil(10_000) { tagExists("thesis_structure") }
+        assertEquals(ThesisScreen.PROJECT, controller.state.value.screen)
+        assertEquals(ThesisStructure.Status.IN_PROGRESS, ThesisStructure.status(runBlocking { repo.snapshot(id) }, runBlocking { repo.snapshot(id) }.section(introId)!!))
+    }
+
+    /** Screen 5: provider shown, results reviewed before use, failures keep the user's text. */
+    @Test
+    @Config(qualifiers = "en")
+    fun aiAssistant_resultNeedsInsertAndSave_failureKeepsText() {
+        val host = TestHost()
+        val original = "Groundwater is important for the region."
+        val id = runBlocking { repo.createProject(meta(), aiAssist = false) }
+        runBlocking { repo.applyDirect(id, listOf(ThesisOp.AddElements(intro(repo.snapshot(id)), null, listOf(NewElement("p1", ElementType.PARAGRAPH, original)))), ChangeSource.USER, "x") }
+        controller.openProject(id)
+        showWorkspace(host)
+        compose.waitUntil(10_000) { controller.state.value.snapshot?.element("p1") != null }
+        val introId = intro(controller.state.value.snapshot!!)
+        controller.selectSection(introId)
+        compose.waitUntil(10_000) { tagExists("thesis_editor_text") && controller.state.value.draft != null }
+
+        tap("thesis_ai_IMPROVE")
+        compose.waitUntil(15_000) { tagExists("thesis_ai_result") }
+        compose.onNodeWithText("Provider: FakeProvider").assertExists()
+        compose.onNodeWithText("Model: fake-model").assertExists()
+        compose.onNodeWithText("$original (improved)").assertExists()
+        assertEquals(original, runBlocking { repo.snapshot(id) }.element("p1")!!.text) // only shown
+        tap("thesis_ai_replace")
+        compose.waitUntil(10_000) { tagExists("thesis_editor_text") }
+        assertEquals("$original (improved)", controller.state.value.draft!!.text)
+        assertEquals(original, runBlocking { repo.snapshot(id) }.element("p1")!!.text) // not saved yet
+        tap("thesis_save_changes")
+        waitFor { repo.snapshot(id).elementsOf(introId).single().text == "$original (improved)" }
+
+        // A failed request shows an error; the text is unchanged.
+        runBlocking { idle() }
+        ai.fail = AiException(AiErrorKind.NETWORK_UNAVAILABLE)
+        tap("thesis_ai_REWRITE")
+        compose.waitUntil(15_000) { tagExists("thesis_ai_failed") }
+        assertTrue(messages.any { it is ThesisMessage.AiFailed })
+        tap("thesis_back")
+        compose.waitUntil(10_000) { tagExists("thesis_editor_text") }
+        assertEquals("$original (improved)", controller.state.value.draft!!.text)
+        assertEquals("$original (improved)", runBlocking { repo.snapshot(id) }.elementsOf(introId).single().text)
+        ai.fail = null
+
+        // Generated content is inserted below, never replacing the user's text.
+        tap("thesis_open_assistant")
+        compose.onNodeWithTag("thesis_ai_instruction").performTextInput("Add a sentence about wells")
+        tap("thesis_ai_generate")
+        compose.waitUntil(15_000) { tagExists("thesis_ai_result") }
+        tap("thesis_ai_insert")
+        compose.waitUntil(10_000) { tagExists("thesis_editor_text") }
+        assertEquals("$original (improved)\n\n$original (improved) (improved)", controller.state.value.draft!!.text)
+        assertTrue(ai.requests.any { it.startsWith("edit:") })
+    }
+
+    /** Screens 3 and 6: chapters, order, status, preview and export of the saved content. */
+    @Test
+    @Config(qualifiers = "en")
+    fun workspace_addReorderCompleteChapters_andExportSavedContent() {
+        val host = TestHost()
+        val id = runBlocking { repo.createProject(meta(), aiAssist = false) }
+        val s0 = runBlocking { repo.snapshot(id) }
+        val introId = intro(s0)
+        runBlocking { repo.applyDirect(id, listOf(ThesisOp.AddElements(introId, null, listOf(NewElement("p1", ElementType.PARAGRAPH, "Introduction text about groundwater.")))), ChangeSource.USER, "x") }
+        controller.openProject(id)
+        showWorkspace(host)
+        compose.waitUntil(10_000) { tagExists("thesis_structure") && controller.state.value.snapshot?.element("p1") != null }
+        val chaptersBefore = s0.sections.filter { it.kind == SectionKind.CHAPTER }.map { it.id }
         tap("thesis_add_chapter")
         waitFor { repo.snapshot(id).sections.count { it.kind == SectionKind.CHAPTER } == chaptersBefore.size + 1 }
-        val chapterId = runBlocking { repo.snapshot(id) }.sections.first { it.kind == SectionKind.CHAPTER && it.id !in chaptersBefore }.id
-        compose.waitUntil(10_000) { controller.state.value.snapshot?.section(chapterId) != null }
-        clickInList("thesis_structure", "thesis_section_$chapterId")
+        val newId = runBlocking { repo.snapshot(id) }.sections.first { it.kind == SectionKind.CHAPTER && it.id !in chaptersBefore }.id
+        compose.waitUntil(10_000) { controller.state.value.snapshot?.section(newId) != null }
 
-        // 5. Continue in Chat for this chapter: the workspace closes and Chat targets the chapter.
-        tap("thesis_section_chat")
-        assertEquals(id to chapterId, host.chatRequests.single())
-        assertEquals(chapterId, controller.state.value.chatSectionId)
-        assertFalse(controller.state.value.workspaceOpen)
+        // Reorder: the new chapter moves before the previous last chapter.
+        clickInList("thesis_structure", "thesis_expand_$newId")
+        clickInList("thesis_structure", "thesis_up_$newId")
+        waitFor { repo.snapshot(id).children(null).map { it.id }.let { it.indexOf(newId) == it.indexOf(chaptersBefore.last()) - 1 } }
+        // Sub-section inside the chapter.
+        compose.waitUntil(10_000) { controller.state.value.busy == null }
+        clickInList("thesis_structure", "thesis_add_sub_$newId")
+        waitFor { repo.snapshot(id).children(newId).size == 1 }
 
-        // 6. Pasted text goes to the target chapter as a proposal; nothing changes before Accept.
-        val pasted = "Recharge occurs mainly in winter through limestone outcrops in the northern part of the basin."
-        controller.submitFromChat(pasted)
-        compose.waitUntil(15_000) { tagExists("thesis_accept") && controller.state.value.busy == null }
-        assertTrue(runBlocking { repo.snapshot(id) }.elementsOf(chapterId).isEmpty())
-        compose.onNodeWithTag("thesis_accept").assertIsEnabled().performClick()
-        waitFor { repo.snapshot(id).elementsOf(chapterId).any { it.text == pasted } }
+        // Mark the introduction completed.
+        compose.waitUntil(10_000) { controller.state.value.busy == null }
+        compose.onNodeWithTag("thesis_structure").performScrollToIndex(0)
+        clickInList("thesis_structure", "thesis_expand_$introId")
+        clickInList("thesis_structure", "thesis_complete_$introId")
+        waitFor { repo.snapshot(id).section(introId)!!.completed }
+        compose.waitUntil(10_000) { controller.state.value.snapshot?.section(introId)?.completed == true }
+        compose.onNodeWithTag("thesis_status_$introId", useUnmergedTree = true).assertTextEquals("Completed")
 
-        // 7. Back in the workspace: the content is there; history compares revisions.
-        controller.openProject(id)
-        compose.waitUntil(10_000) { tagExists("thesis_overview") }
-        tap("thesis_tab_history")
-        val latest = runBlocking { repo.revisions(id) }.first().number
-        compose.waitUntil(10_000) { controller.revisions.value.firstOrNull()?.number == latest }
-        clickInList("thesis_history_list", "thesis_revision_changes_$latest")
-        compose.waitUntil(10_000) { compose.onAllNodesWithTextExists("Changes made in revision $latest") }
-        compose.onNodeWithTag("thesis_diff_summary").assertExists()
-
-        // 8. Export DOCX: success only once the file is in the Library.
-        tap("thesis_tab_project")
+        // Preview screen, then export from it (approved content only, saved to the Library).
+        tap("thesis_workspace_menu")
+        tap("thesis_menu_preview")
+        compose.waitUntil(10_000) { tagExists("thesis_export_docx") }
+        runBlocking { idle() }
         tap("thesis_export_docx")
         compose.waitUntil(20_000) { tagExists("thesis_export_result") }
         val doc = runBlocking { db.documentDao().getAllDocuments().first() }.single { it.projectId == id }
         assertEquals("DOCX", doc.fileType)
         ZipFile(File(doc.filePath)).use { z ->
-            val xml = z.getInputStream(z.getEntry("word/document.xml")).bufferedReader().readText()
-            assertTrue(xml.contains("Recharge occurs mainly in winter"))
-            assertTrue(xml.contains("main source of drinking water"))
+            assertTrue(z.getInputStream(z.getEntry("word/document.xml")).bufferedReader().readText().contains("Introduction text about groundwater."))
         }
         tap("thesis_export_open")
         assertEquals(doc.id, host.opened.single().id)
@@ -557,19 +708,72 @@ class ThesisAndroidTest {
 
     @Test
     @Config(qualifiers = "en")
-    fun workspace_backGoesUpAndCancelLeavesForm() {
+    fun home_renameAndDeleteProject() {
         val host = TestHost()
-        runBlocking { repo.createProject(meta()) }
+        val id = runBlocking { repo.createProject(meta()) }
         controller.openWorkspace()
-        compose.setContent { ThesisWorkspaceContent(host) }
-        tap("thesis_new")
-        tap("thesis_open_existing") // projects exist: the list is one tap away
-        compose.waitUntil(10_000) { tagExists("thesis_new") }
-        tap("thesis_new")
-        tap("thesis_cancel_meta")
-        compose.waitUntil(10_000) { tagExists("thesis_new") }
-        assertEquals(1, runBlocking { repo.observeProjects().first() }.size)
-        assertEquals(ThesisScreen.HOME, controller.state.value.screen)
+        showWorkspace(host)
+        compose.waitUntil(10_000) { tagExists("thesis_project_$id") }
+        tap("thesis_project_menu_$id")
+        tap("thesis_project_rename")
+        compose.onNodeWithTag("thesis_text_input").performTextClearance()
+        compose.onNodeWithTag("thesis_text_input").performTextInput("Nitrates in groundwater")
+        tap("thesis_text_confirm")
+        waitFor { repo.snapshot(id).meta.title == "Nitrates in groundwater" }
+        compose.waitUntil(10_000) { textExists("Nitrates in groundwater") }
+        runBlocking { idle() }
+        tap("thesis_project_menu_$id")
+        tap("thesis_project_delete")
+        tap("thesis_delete_project_confirm")
+        waitFor { repo.observeProjects().first().isEmpty() }
+        compose.waitUntil(10_000) { tagExists("thesis_empty_state") }
+    }
+
+    /** Continue in Chat from the editor targets the section; Chat content is reviewed before it is added. */
+    @Test
+    @Config(qualifiers = "en")
+    fun sectionEditor_continueInChat_targetsSection_proposalAccepted() {
+        val host = TestHost()
+        val id = runBlocking { repo.createProject(meta(), aiAssist = true) }
+        controller.openProject(id)
+        showWorkspace(host)
+        compose.waitUntil(10_000) { controller.state.value.snapshot != null }
+        val chapterId = controller.state.value.snapshot!!.sections.first { it.kind == SectionKind.CHAPTER }.id
+        controller.selectSection(chapterId)
+        tap("thesis_editor_menu")
+        tap("thesis_menu_section_chat")
+        assertEquals(id to chapterId, host.chatRequests.single())
+        assertEquals(chapterId, controller.state.value.chatSectionId)
+        assertFalse(controller.state.value.workspaceOpen)
+
+        val pasted = "Recharge occurs mainly in winter through limestone outcrops in the northern part of the basin."
+        controller.submitFromChat(pasted)
+        compose.waitUntil(15_000) { tagExists("thesis_accept") && controller.state.value.busy == null }
+        assertTrue(runBlocking { repo.snapshot(id) }.elementsOf(chapterId).isEmpty())
+        compose.onNodeWithTag("thesis_accept").assertIsEnabled().performClick()
+        waitFor { repo.snapshot(id).elementsOf(chapterId).any { it.text == pasted } }
+        // Leaving thesis mode restores normal Chat.
+        controller.exitChatMode()
+        assertNull(controller.state.value.chatProjectId)
+    }
+
+    @Test
+    @Config(qualifiers = "ar")
+    fun home_arabicLabels() {
+        controller.openWorkspace()
+        compose.setContent { ThesisWorkspaceContent(TestHost()) }
+        compose.onNodeWithText("مذكرة جديدة").assertExists()
+        compose.onNodeWithText("مشاريعي").assertExists()
+        assertEquals("لم يبدأ", context.getString(R.string.thesis_status_not_started))
+    }
+
+    @Test
+    @Config(qualifiers = "fr")
+    fun home_frenchLabels() {
+        controller.openWorkspace()
+        compose.setContent { ThesisWorkspaceContent(TestHost()) }
+        compose.onNodeWithText("Nouveau mémoire").assertExists()
+        assertEquals("Enregistrer", context.getString(R.string.thesis_save_changes))
     }
 
     @Test
@@ -647,6 +851,7 @@ class ThesisAndroidTest {
         val intro = intro(s1)
         r1.applyDirect(id, listOf(ThesisOp.AddSection(com.example.thesis.model.ThesisSection("ch-new", null, SectionKind.CHAPTER, "Field study", 0), null)), ChangeSource.STRUCTURE, "chapter")
         r1.applyDirect(id, listOf(ThesisOp.AddElements(intro, null, listOf(NewElement("p1", ElementType.PARAGRAPH, "مقدمة عامة حول المياه الجوفية.")))), ChangeSource.USER, "text")
+        r1.applyDirect(id, listOf(ThesisOp.UpdateSection(intro, completed = true)), ChangeSource.STRUCTURE, "done")
         val pending = r1.propose(id, listOf(ThesisOp.AddElements("ch-new", null, listOf(NewElement("p2", ElementType.PARAGRAPH, "Pending text.")))),
             ChangeSource.AI, "ADD_CONTENT", "request", "ai:Fake", emptyList())
         val revisionsBefore = r1.revisions(id).map { it.number }
@@ -662,6 +867,7 @@ class ThesisAndroidTest {
         assertEquals("w", restored.meta.templateId)
         assertEquals("ar", restored.meta.language)
         assertEquals("Field study", restored.section("ch-new")!!.title)
+        assertTrue(restored.section(intro)!!.completed)
         assertEquals("مقدمة عامة حول المياه الجوفية.", restored.elementsOf(intro).single().text)
         assertTrue(restored.elementsOf("ch-new").isEmpty()) // pending proposal not applied
         assertEquals(revisionsBefore, r1.revisions(id).map { it.number })

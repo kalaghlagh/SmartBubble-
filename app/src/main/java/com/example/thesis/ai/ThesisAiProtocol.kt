@@ -53,10 +53,13 @@ $INTEGRITY"""
             EditMode.SHORTEN -> "Shorten each text while keeping its key points and every citation, number and name."
             EditMode.EXPAND -> "Develop each text with explanations that follow from what is written. Do not add facts, figures, results or references; mark any statement that needs a source with [to verify]."
             EditMode.REWRITE -> "Rephrase each text in your own academic words, keeping the meaning and every fact."
+            EditMode.ORGANIZE -> "Organize each text: group related sentences into coherent paragraphs, put enumerations into lists (one item per line starting with \"- \"), and order ideas logically. Keep the wording, every fact, citation and number."
+            EditMode.GENERATE -> "Write a draft for the thesis section following the user's instruction and the existing text (which may be empty). Do not invent results, measurements, quotations or references; mark any statement that needs a source with [to verify]."
         }
         return """You edit paragraphs of a ${languageName(language)} academic thesis. $task
 You receive items as {"id": "...", "text": "..."}. Return {"edits": [{"id": "<same id>", "text": "<new text>"}], "notes": "<one short sentence about what changed>"}.
 Return only items you changed, with exactly the ids you received. Keep the language of each text.
+Lines that contain only a placeholder in square brackets, such as [Figure 1] or [Table 2], stand for figures and tables: keep each of them unchanged on its own line.
 $INTEGRITY"""
     }
 

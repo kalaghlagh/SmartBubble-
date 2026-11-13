@@ -83,7 +83,9 @@ data class ThesisSection(
     val kind: SectionKind,
     val title: String,
     val position: Int,
-    val enabled: Boolean = true
+    val enabled: Boolean = true,
+    /** Marked as finished by the user (status "Completed" in the workspace). */
+    val completed: Boolean = false
 )
 
 /**
@@ -166,7 +168,7 @@ data class ThesisSnapshot(
     fun sectionHash(sectionId: String): String {
         val s = section(sectionId) ?: return "missing"
         val content = buildString {
-            append(s.title).append('|').append(s.enabled).append('|').append(s.parentId).append('\n')
+            append(s.title).append('|').append(s.enabled).append('|').append(s.parentId).append(if (s.completed) "|done" else "").append('\n')
             for (e in elementsOf(sectionId)) append(e.id).append('|').append(e.type).append('|').append(e.text).append('|').append(e.data).append('\n')
         }
         return sha1(content)

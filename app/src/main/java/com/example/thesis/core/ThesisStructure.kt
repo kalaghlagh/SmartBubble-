@@ -183,6 +183,36 @@ object ThesisStructure {
         return out to missing
     }
 
+    /** Workspace status of a section. */
+    enum class Status { NOT_STARTED, IN_PROGRESS, COMPLETED, AUTOMATIC }
+
+    /**
+     * Not started (no content), in progress (content, not marked finished) or completed (marked
+     * finished by the user). The cover is complete once title and student are filled; indexes
+     * are generated on export ([Status.AUTOMATIC]). A chapter counts its sub-sections.
+     */
+    fun status(snapshot: ThesisSnapshot, section: ThesisSection): Status {
+        when (section.kind) {
+            SectionKind.COVER -> return if (snapshot.meta.title.isNotBlank() && snapshot.meta.studentName.isNotBlank()) Status.COMPLETED else Status.IN_PROGRESS
+            SectionKind.TABLE_OF_CONTENTS, SectionKind.LIST_OF_FIGURES, SectionKind.LIST_OF_TABLES -> return Status.AUTOMATIC
+            else -> {}
+        }
+        if (section.completed) return Status.COMPLETED
+        fun hasContent(id: String): Boolean = snapshot.elementsOf(id).isNotEmpty() || snapshot.children(id).any { it.enabled && hasContent(it.id) }
+        return if (hasContent(section.id)) Status.IN_PROGRESS else Status.NOT_STARTED
+    }
+
+    /**
+     * Overall progress shown in the workspace (0..100): completed sections count fully, sections in
+     * progress half. Top-level enabled sections are counted; generated indexes are not.
+     */
+    fun progress(snapshot: ThesisSnapshot): Int {
+        val units = snapshot.children(null).filter { it.enabled }.map { status(snapshot, it) }.filter { it != Status.AUTOMATIC }
+        if (units.isEmpty()) return 0
+        val score = units.sumOf { when (it) { Status.COMPLETED -> 2; Status.IN_PROGRESS -> 1; else -> 0 }.toInt() }
+        return score * 100 / (units.size * 2)
+    }
+
     /** Share of writable, enabled sections that have content (0..100). */
     fun completion(snapshot: ThesisSnapshot): Int {
         val writable = snapshot.outline(includeDisabled = false).map { it.first }.filter { it.kind.writable && !it.kind.container }
