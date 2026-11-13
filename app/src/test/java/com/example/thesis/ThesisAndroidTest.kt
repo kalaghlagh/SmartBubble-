@@ -139,7 +139,7 @@ class ThesisAndroidTest {
     // ------------------------------------------------------------------ repository
 
     @Test
-    fun createProject_persistsStructureAndFirstRevision_andSurvivesReopen() = runBlocking {
+    fun createProject_persistsStructureAndFirstRevision_andSurvivesReopen(): Unit = runBlocking {
         val file = File(tmp.root, "thesis.db")
         val fileDb = SmartBubbleDatabase.build(context, file.path)
         val r = ThesisRepository(fileDb, tmp.newFolder("t2"), imageInspector = { null })
@@ -158,7 +158,7 @@ class ThesisAndroidTest {
     }
 
     @Test
-    fun proposals_acceptRejectConflictAndRestore() = runBlocking {
+    fun proposals_acceptRejectConflictAndRestore(): Unit = runBlocking {
         val id = repo.createProject(meta())
         val s0 = repo.snapshot(id)
         val add = repo.propose(id, listOf(ThesisOp.AddElements(intro(s0), null, listOf(NewElement("a", ElementType.PARAGRAPH, "First.")))), ChangeSource.AI, "CONTENT", "req", "ai:x", emptyList())
@@ -189,7 +189,7 @@ class ThesisAndroidTest {
     }
 
     @Test
-    fun images_areCopiedPrivately_andInvalidFilesRefused() = runBlocking {
+    fun images_areCopiedPrivately_andInvalidFilesRefused(): Unit = runBlocking {
         val id = repo.createProject(meta())
         val asset = repo.importImage(id, { ByteArrayInputStream(png) }, "map.png", "image/png")
         assertEquals(200, asset.width)
@@ -216,7 +216,7 @@ class ThesisAndroidTest {
     }
 
     @Test
-    fun chat_namedDestination_isLocal_andAcceptCreatesRevision() = runBlocking {
+    fun chat_namedDestination_isLocal_andAcceptCreatesRevision(): Unit = runBlocking {
         val id = projectInChat()
         controller.submitFromChat("Add this to the introduction\nGroundwater supplies 70% of the region's water (Smith, 2019).")
         val review = awaitReview()
@@ -231,7 +231,7 @@ class ThesisAndroidTest {
     }
 
     @Test
-    fun chat_ambiguousContent_isNeverInsertedArbitrarily() = runBlocking {
+    fun chat_ambiguousContent_isNeverInsertedArbitrarily(): Unit = runBlocking {
         val id = projectInChat(aiAssist = false)
         controller.submitFromChat("A paragraph without any destination that should not be placed automatically by the app.")
         val review = awaitReview()
@@ -249,7 +249,7 @@ class ThesisAndroidTest {
     }
 
     @Test
-    fun chat_aiSuggestsDestination_userReviews() = runBlocking {
+    fun chat_aiSuggestsDestination_userReviews(): Unit = runBlocking {
         val id = projectInChat()
         ai.destination = { s -> DestinationSuggestion(s.sections.first { it.kind == SectionKind.CONCLUSION }.id, 0.9, "summary of results", "") }
         controller.submitFromChat("In summary, the results show that nitrate levels exceed the limit in three wells.")
@@ -261,7 +261,7 @@ class ThesisAndroidTest {
     }
 
     @Test
-    fun chat_aiFailureAndCancellation_changeNothing() = runBlocking {
+    fun chat_aiFailureAndCancellation_changeNothing(): Unit = runBlocking {
         val id = projectInChat()
         ai.fail = AiException(AiErrorKind.NETWORK_UNAVAILABLE)
         controller.submitFromChat("Some content without destination long enough to be a paragraph.")
@@ -281,7 +281,7 @@ class ThesisAndroidTest {
     }
 
     @Test
-    fun chat_editRequest_proposesDiff_withoutOverwriting() = runBlocking {
+    fun chat_editRequest_proposesDiff_withoutOverwriting(): Unit = runBlocking {
         val id = projectInChat()
         val s = repo.snapshot(id)
         repo.applyDirect(id, listOf(ThesisOp.AddElements(intro(s), null, listOf(NewElement("p", ElementType.PARAGRAPH, "The water are good.")))), ChangeSource.USER, "x")
@@ -297,7 +297,7 @@ class ThesisAndroidTest {
     }
 
     @Test
-    fun chat_imageAndTable_withNumberingAndDuplicates() = runBlocking {
+    fun chat_imageAndTable_withNumberingAndDuplicates(): Unit = runBlocking {
         val id = projectInChat()
         controller.addImagesFromChat(listOf(Triple({ ByteArrayInputStream(png) }, "map.png", "image/png")), "Insert this image into chapter 1")
         val review = awaitReview()
@@ -330,7 +330,7 @@ class ThesisAndroidTest {
     }
 
     @Test
-    fun export_docxUsesBoundWordTemplate_pdfWhenSupported() = runBlocking {
+    fun export_docxUsesBoundWordTemplate_pdfWhenSupported(): Unit = runBlocking {
         val tpl = tmp.newFile("tpl.docx")
         com.example.document.docx.DocxEngine().generateDocx(com.example.document.model.WordDocumentModel(title = "T"), tpl)
         db.templateDao().insertTemplate(TemplateEntity(id = "w", name = "University", fileType = "DOCX", originalFilePath = tpl.path, profileJson = "{}", isDefaultWord = true))
@@ -379,7 +379,7 @@ class ThesisAndroidTest {
 
     @Test
     @Config(qualifiers = "en")
-    fun reviewDialog_acceptDisabledUntilDestinationChosen() = runBlocking {
+    fun reviewDialog_acceptDisabledUntilDestinationChosen(): Unit = runBlocking {
         val id = projectInChat(aiAssist = false)
         controller.submitFromChat("Content that needs a destination before it can be accepted by the user.")
         val review = awaitReview()
