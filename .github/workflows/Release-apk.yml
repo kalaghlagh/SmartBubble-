@@ -180,6 +180,8 @@ jobs:
           # Full message and first frames of every failed test (the "stack=" block of am instrument).
           echo "== Failures"; awk '/INSTRUMENTATION_STATUS: stack=/{p=1;n=0} /INSTRUMENTATION_STATUS: (current|id|numtests)=/{p=0} p&&n<60{print;n++}' "$d/instrument.txt" | head -600 || true
           echo "== Window focus at the end"; cat "$d/window-focus.txt" 2>/dev/null || true
+          # Focus changes around every editor test (full timeline in the artifact).
+          echo "== Focus timeline (editor tests)"; awk '/TestRunner: started: .*ThesisEditorDeviceTest/{p=1} p' "$d/focus-timeline.txt" 2>/dev/null | grep -v "Denying clipboard" | head -500 || true
           echo "== Clipboard / editor / file / ANR events"; cat "$d/app-events.txt" 2>/dev/null | head -150 || true
           echo "== FATAL EXCEPTIONS"; cat "$d/fatal-exceptions.txt" 2>/dev/null | head -300 || true
 
