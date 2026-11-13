@@ -191,6 +191,9 @@ class ThesisCoreTest {
         // No destination named: content only, the destination is left open (never guessed here).
         val plain = ThesisCommandParser.parse(content, s) as ThesisIntent.AddContent
         assertNull(plain.target)
+        // A command word inside a sentence is prose, not an instruction.
+        val prose = "In summary, the results show that nitrate levels exceed the limit in three wells."
+        assertEquals(prose, (ThesisCommandParser.parse(prose, s) as ThesisIntent.AddContent).content)
 
         val replace = ThesisCommandParser.parse("Replace the second paragraph in the introduction\nNew text for it.", s) as ThesisIntent.ReplaceParagraph
         assertEquals(2, replace.target.paragraph)

@@ -103,9 +103,17 @@ object ThesisCommandParser {
         "حسن", "اختصر", "وسع", "أعد"
     )
 
+    /**
+     * True when the text starts like a command ("Add this...", "I want to add...", "Please
+     * correct..."). A command word in the middle of a sentence ("the results show that...") is
+     * ordinary prose.
+     */
     fun looksLikeInstruction(text: String): Boolean {
         val l = lower(text)
-        return COMMAND_WORDS.any { w -> l.startsWith(w) || l.contains(" $w ") || l.contains("$w ") && l.indexOf(w) < 12 }
+        return COMMAND_WORDS.any { w ->
+            val i = l.indexOf(w)
+            i in 0..14 && (i == 0 || l[i - 1] == ' ') && (i + w.length >= l.length || !l[i + w.length].isLetter() || TextIsArabic.isArabic(w))
+        }
     }
 
     /** Resolves "chapter 2", "section 1.2", "the introduction" or a section title to a section. */
@@ -200,6 +208,12 @@ object ThesisCommandParser {
             if (words.any { l.contains(it) } && content.isBlank()) return ThesisIntent.Edit(mode, target)
         }
         if (content.isNotBlank()) return ThesisIntent.AddContent(target, content)
+        // A long text that matched no command is content, not an instruction.
+        if (message.trim().length > 100) return ThesisIntent.AddContent(null, message.trim())
         return ThesisIntent.Unknown
     }
+}
+
+private object TextIsArabic {
+    fun isArabic(text: String) = text.any { it in '\u0600'..'\u06FF' }
 }
