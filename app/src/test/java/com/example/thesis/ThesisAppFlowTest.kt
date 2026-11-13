@@ -97,6 +97,24 @@ class ThesisAppFlowTest {
         FileOutputStream(File(shots, "$name.png")).use { bitmap!!.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
+    /**
+     * The app language is a persisted preference (DataStore), and DataStore keeps its value in a
+     * process-wide cache that outlives a Robolectric test: a test must set the language it checks
+     * instead of assuming the default (run #31: the French set by the previous test leaked here).
+     */
+    private fun useLanguage(language: String, thesisTabLabel: String) {
+        vm.setAppLanguage(language)
+        await("language $language applied") {
+            compose.onAllNodes(hasTestTag("nav_thesis") and hasText(thesisTabLabel)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /** Project cards on the Thesis home screen (tag "thesis_project_<id>"). */
+    private fun projectCards(): Int = compose.onAllNodes(androidx.compose.ui.test.SemanticsMatcher("project card") { node ->
+        val tag = node.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.TestTag) ?: ""
+        tag.startsWith("thesis_project_") && !tag.startsWith("thesis_project_menu_") && tag != "thesis_project_rename" && tag != "thesis_project_delete"
+    }).fetchSemanticsNodes().size
+
     private fun back() {
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         compose.waitForIdle()
@@ -105,6 +123,9 @@ class ThesisAppFlowTest {
     @Test
     fun thesisBuilder_isItsOwnDestination_completeFlow_andOtherDestinationsStillWork() {
         await("app started") { exists("nav_chat") }
+        useLanguage("en", "Thesis")
+        // Left to right in English: Chat (first item) is to the left of Settings (last item).
+        assertTrue(compose.onNodeWithTag("nav_chat").fetchSemanticsNode().boundsInRoot.left < compose.onNodeWithTag("nav_settings").fetchSemanticsNode().boundsInRoot.left)
         // Chat no longer hosts Thesis Builder; it is a main destination.
         assertTrue(compose.onAllNodes(hasTestTag("chat_thesis_button")).fetchSemanticsNodes().isEmpty())
         assertTrue(exists("chat_input_field"))
@@ -134,13 +155,12 @@ class ThesisAppFlowTest {
         // Cancel keeps the draft and creates nothing; it is resumed from home.
         tap("thesis_cancel_meta")
         await("draft card") { exists("thesis_form_draft") }
-        assertTrue(vm.thesis.projects.value.isEmpty())
+        assertTrue("Cancel must not create a project", exists("thesis_empty_state") && projectCards() == 0)
         tap("thesis_form_draft_continue")
         await("form restored") { exists("thesis_form_draft_restored") }
         tap("thesis_save_meta")
         await("workspace") { exists("thesis_structure") && vm.thesis.state.value.snapshot != null }
         val projectId = vm.thesis.state.value.projectId!!
-        assertEquals(1, vm.thesis.projects.value.size)
         shot("3-workspace")
 
         // Section editor: write, format, save.
@@ -169,6 +189,7 @@ class ThesisAppFlowTest {
         await("app restarted") { exists("nav_thesis") }
         tap("nav_thesis")
         await("project listed") { exists("thesis_continue_$projectId") }
+        assertEquals("exactly one project (Save Draft and Create made one)", 1, projectCards())
         tap("thesis_continue_$projectId")
         await("workspace reopened") { exists("thesis_structure") && vm.thesis.state.value.snapshot?.elementsOf(intro)?.size == 2 }
 
@@ -198,8 +219,16 @@ class ThesisAppFlowTest {
     @Test
     fun thesisBuilder_inArabicAndFrench_isTranslated_andRightToLeftInArabic() {
         await("app started") { exists("nav_chat") }
-        vm.setAppLanguage("ar")
-        await("arabic") { textExists("المذكرة") }
+        try {
+            arabicAndFrench()
+        } finally {
+            // Leave the shared preference as the other tests expect it.
+            useLanguage("en", "Thesis")
+        }
+    }
+
+    private fun arabicAndFrench() {
+        useLanguage("ar", "المذكرة")
         tap("nav_thesis")
         await("arabic thesis home") { textExists("مذكرة جديدة") }
         // Right to left: the first navigation item (Chat) is laid out to the right of the last (Settings).
@@ -210,8 +239,8 @@ class ThesisAppFlowTest {
         tap("thesis_new")
         await("arabic form") { textExists("إنشاء المذكرة") }
         shot("6-new-thesis-form-arabic")
-        vm.setAppLanguage("fr")
-        await("french") { textExists("Mémoire") && textExists("Créer le mémoire") }
+        useLanguage("fr", "Mémoire")
+        await("french form") { textExists("Créer le mémoire") }
         shot("7-new-thesis-form-french")
     }
 }
