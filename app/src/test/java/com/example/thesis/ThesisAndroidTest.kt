@@ -441,7 +441,7 @@ class ThesisAndroidTest {
 
     private fun tagExists(tag: String) = compose.onAllNodes(androidx.compose.ui.test.hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
 
-    private fun click(tag: String) {
+    private fun tap(tag: String) {
         compose.waitUntil(10_000) { tagExists(tag) }
         val node = compose.onNodeWithTag(tag)
         try { node.performScrollTo() } catch (e: AssertionError) { /* not inside a scrolling container */ }
@@ -473,14 +473,14 @@ class ThesisAndroidTest {
         }
 
         // 1. Create: the form validates the title and has Cancel / Create always visible.
-        click("thesis_new")
+        tap("thesis_new")
         compose.onNodeWithTag("thesis_cancel_meta").assertIsDisplayed()
         compose.onNodeWithTag("thesis_save_meta").assertIsDisplayed().performClick()
         compose.onNodeWithTag("thesis_title_error", useUnmergedTree = true).assertExists()
         assertTrue(runBlocking { repo.observeProjects().first() }.isEmpty())
         compose.onNodeWithTag("thesis_field_title").performTextInput("Groundwater quality")
-        click("thesis_level_MASTER")
-        click("thesis_lang_en")
+        tap("thesis_level_MASTER")
+        tap("thesis_lang_en")
         // Repeated taps create one project only.
         compose.onNodeWithTag("thesis_save_meta").performTouchInput { click(); click() }
 
@@ -498,26 +498,26 @@ class ThesisAndroidTest {
         assertEquals("en", created.meta.language)
 
         // 3. General Introduction: add a paragraph and save it.
-        click("thesis_tab_structure")
+        tap("thesis_tab_structure")
         val introId = intro(created)
         clickInList("thesis_structure", "thesis_section_$introId")
         compose.onNodeWithTag("thesis_section_editor").assertExists()
-        click("thesis_add_paragraph")
+        tap("thesis_add_paragraph")
         compose.onNodeWithTag("thesis_text_input").performTextInput("Groundwater is the main source of drinking water in the basin.")
-        click("thesis_text_confirm")
+        tap("thesis_text_confirm")
         waitFor { repo.snapshot(id).elementsOf(introId).any { it.text == "Groundwater is the main source of drinking water in the basin." } }
 
         // 4. Add Chapter 1 (a new chapter; the count is not fixed) and open it.
-        click("thesis_back")
+        tap("thesis_back")
         val chaptersBefore = created.sections.filter { it.kind == SectionKind.CHAPTER }.map { it.id }.toSet()
-        click("thesis_add_chapter")
+        tap("thesis_add_chapter")
         waitFor { repo.snapshot(id).sections.count { it.kind == SectionKind.CHAPTER } == chaptersBefore.size + 1 }
         val chapterId = runBlocking { repo.snapshot(id) }.sections.first { it.kind == SectionKind.CHAPTER && it.id !in chaptersBefore }.id
         compose.waitUntil(10_000) { controller.state.value.snapshot?.section(chapterId) != null }
         clickInList("thesis_structure", "thesis_section_$chapterId")
 
         // 5. Continue in Chat for this chapter: the workspace closes and Chat targets the chapter.
-        click("thesis_section_chat")
+        tap("thesis_section_chat")
         assertEquals(id to chapterId, host.chatRequests.single())
         assertEquals(chapterId, controller.state.value.chatSectionId)
         assertFalse(controller.state.value.workspaceOpen)
@@ -533,7 +533,7 @@ class ThesisAndroidTest {
         // 7. Back in the workspace: the content is there; history compares revisions.
         controller.openProject(id)
         compose.waitUntil(10_000) { tagExists("thesis_overview") }
-        click("thesis_tab_history")
+        tap("thesis_tab_history")
         val latest = runBlocking { repo.revisions(id) }.first().number
         compose.waitUntil(10_000) { controller.revisions.value.firstOrNull()?.number == latest }
         clickInList("thesis_history_list", "thesis_revision_changes_$latest")
@@ -541,8 +541,8 @@ class ThesisAndroidTest {
         compose.onNodeWithTag("thesis_diff_summary").assertExists()
 
         // 8. Export DOCX: success only once the file is in the Library.
-        click("thesis_tab_project")
-        click("thesis_export_docx")
+        tap("thesis_tab_project")
+        tap("thesis_export_docx")
         compose.waitUntil(20_000) { tagExists("thesis_export_result") }
         val doc = runBlocking { db.documentDao().getAllDocuments().first() }.single { it.projectId == id }
         assertEquals("DOCX", doc.fileType)
@@ -551,7 +551,7 @@ class ThesisAndroidTest {
             assertTrue(xml.contains("Recharge occurs mainly in winter"))
             assertTrue(xml.contains("main source of drinking water"))
         }
-        click("thesis_export_open")
+        tap("thesis_export_open")
         assertEquals(doc.id, host.opened.single().id)
     }
 
@@ -562,11 +562,11 @@ class ThesisAndroidTest {
         runBlocking { repo.createProject(meta()) }
         controller.openWorkspace()
         compose.setContent { ThesisWorkspaceContent(host) }
-        click("thesis_new")
-        click("thesis_open_existing") // projects exist: the list is one tap away
+        tap("thesis_new")
+        tap("thesis_open_existing") // projects exist: the list is one tap away
         compose.waitUntil(10_000) { tagExists("thesis_new") }
-        click("thesis_new")
-        click("thesis_cancel_meta")
+        tap("thesis_new")
+        tap("thesis_cancel_meta")
         compose.waitUntil(10_000) { tagExists("thesis_new") }
         assertEquals(1, runBlocking { repo.observeProjects().first() }.size)
         assertEquals(ThesisScreen.HOME, controller.state.value.screen)
