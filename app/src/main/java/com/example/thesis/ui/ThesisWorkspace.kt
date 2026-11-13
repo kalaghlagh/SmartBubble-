@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,6 +33,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -39,6 +42,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -57,11 +61,16 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -85,6 +94,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -99,6 +109,7 @@ import com.example.template.storage.TemplateThumbnails
 import com.example.thesis.ProposalReview
 import com.example.thesis.ThesisBusy
 import com.example.thesis.ThesisController
+import com.example.thesis.ThesisExportResult
 import com.example.thesis.ThesisScreen
 import com.example.thesis.core.ChangeKind
 import com.example.thesis.core.EditMode
@@ -120,7 +131,6 @@ import com.example.thesis.model.ThesisElement
 import com.example.thesis.model.ThesisMeta
 import com.example.thesis.model.ThesisSection
 import com.example.thesis.model.ThesisSnapshot
-import com.example.ui.SmartBubbleViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -174,22 +184,48 @@ fun ThesisImageThumb(path: String?, modifier: Modifier = Modifier, maxPx: Int = 
 
 /** Entry dialog of the Thesis Builder (opened from Chat; no extra navigation tab). */
 @Composable
-fun ThesisWorkspaceDialog(viewModel: SmartBubbleViewModel) {
-    val controller = viewModel.thesis
+fun ThesisWorkspaceDialog(host: ThesisHost) {
+    val controller = host.thesis
     val state by controller.state.collectAsState()
     if (!state.workspaceOpen) return
     Dialog(
-        onDismissRequest = { controller.closeWorkspace() },
+        // System back goes one level up (section -> structure -> theses) before closing.
+        onDismissRequest = { backTarget(state.screen)?.let { controller.show(it) } ?: controller.closeWorkspace() },
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)
     ) {
-        Surface(Modifier.fillMaxSize().testTag("thesis_workspace"), color = MaterialTheme.colorScheme.background) {
-            Column(Modifier.statusBarsPadding().navigationBarsPadding()) {
-                val back = when (state.screen) {
-                    ThesisScreen.HOME -> null
-                    ThesisScreen.CREATE -> ThesisScreen.HOME
-                    ThesisScreen.PROJECT -> ThesisScreen.HOME
-                    else -> ThesisScreen.PROJECT
-                }
+        ThesisWorkspaceContent(host)
+    }
+    state.review?.let { ThesisReviewDialog(controller, it) }
+}
+
+/** Tabs of an open thesis (the workspace itself; the metadata form is only in Project settings). */
+internal val projectTabs = listOf(ThesisScreen.PROJECT, ThesisScreen.STRUCTURE, ThesisScreen.CHANGES, ThesisScreen.HISTORY, ThesisScreen.PREVIEW)
+
+internal fun backTarget(screen: ThesisScreen): ThesisScreen? = when (screen) {
+    ThesisScreen.HOME -> null
+    ThesisScreen.SECTION -> ThesisScreen.STRUCTURE
+    ThesisScreen.SETTINGS -> ThesisScreen.PROJECT
+    else -> ThesisScreen.HOME
+}
+
+/** The workspace window: top bar, project tabs, the current screen and its own snackbar. */
+@Composable
+fun ThesisWorkspaceContent(host: ThesisHost) {
+    val controller = host.thesis
+    val state by controller.state.collectAsState()
+    val proposals by controller.openProposals.collectAsState()
+    val feedback by host.feedback.collectAsState()
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(feedback) {
+        feedback?.let { message ->
+            host.consumeFeedback()
+            snackbar.showSnackbar(message)
+        }
+    }
+    Surface(Modifier.fillMaxSize().testTag("thesis_workspace"), color = MaterialTheme.colorScheme.background) {
+        Box(Modifier.statusBarsPadding().navigationBarsPadding()) {
+            Column(Modifier.fillMaxSize()) {
+                val back = backTarget(state.screen)
                 Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (back != null) {
                         IconButton(onClick = { controller.show(back) }, modifier = Modifier.testTag("thesis_back")) {
@@ -203,10 +239,22 @@ fun ThesisWorkspaceDialog(viewModel: SmartBubbleViewModel) {
                         else state.snapshot?.meta?.title.orEmpty(),
                         style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
                         fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).semantics { heading() }
+                        modifier = Modifier.weight(1f).semantics { heading() }.testTag("thesis_title_bar")
                     )
                     IconButton(onClick = { controller.closeWorkspace() }, modifier = Modifier.testTag("thesis_close")) {
                         Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
+                    }
+                }
+                if (state.projectId != null && state.screen in projectTabs) {
+                    ScrollableTabRow(selectedTabIndex = projectTabs.indexOf(state.screen), edgePadding = 8.dp) {
+                        projectTabs.forEach { s ->
+                            Tab(
+                                selected = s == state.screen,
+                                onClick = { controller.show(s) },
+                                text = { Text(tabLabel(s, proposals.size), maxLines = 1) },
+                                modifier = Modifier.testTag("thesis_tab_${s.name.lowercase()}")
+                            )
+                        }
                     }
                 }
                 state.busy?.let { busy -> BusyBar(controller, busy) }
@@ -214,18 +262,34 @@ fun ThesisWorkspaceDialog(viewModel: SmartBubbleViewModel) {
                 Box(Modifier.weight(1f)) {
                     when (state.screen) {
                         ThesisScreen.HOME -> ThesisHome(controller)
-                        ThesisScreen.CREATE -> ThesisMetaForm(viewModel, null) { meta, ai -> controller.createProject(meta, ai) }
-                        ThesisScreen.PROJECT -> ThesisProjectScreen(viewModel)
-                        ThesisScreen.SECTION -> ThesisSectionScreen(controller)
+                        ThesisScreen.CREATE -> ThesisCreateScreen(host)
+                        ThesisScreen.PROJECT -> ThesisOverviewScreen(host)
+                        ThesisScreen.STRUCTURE -> ThesisStructureScreen(controller)
+                        ThesisScreen.SECTION -> ThesisSectionScreen(host)
+                        ThesisScreen.CHANGES -> ThesisChangesScreen(controller)
                         ThesisScreen.HISTORY -> ThesisHistoryScreen(controller)
                         ThesisScreen.PREVIEW -> ThesisPreviewScreen(controller)
-                        ThesisScreen.SETTINGS -> ThesisSettingsScreen(viewModel)
+                        ThesisScreen.SETTINGS -> ThesisSettingsScreen(host)
                     }
                 }
             }
+            SnackbarHost(
+                snackbar,
+                Modifier.align(Alignment.BottomCenter)
+                    .padding(bottom = if (state.screen == ThesisScreen.CREATE || state.screen == ThesisScreen.SETTINGS) 72.dp else 8.dp)
+                    .testTag("thesis_snackbar")
+            )
         }
     }
-    state.review?.let { ThesisReviewDialog(controller, it) }
+}
+
+@Composable
+private fun tabLabel(screen: ThesisScreen, pending: Int): String = when (screen) {
+    ThesisScreen.PROJECT -> stringResource(R.string.thesis_tab_overview)
+    ThesisScreen.STRUCTURE -> stringResource(R.string.thesis_tab_structure)
+    ThesisScreen.CHANGES -> if (pending > 0) stringResource(R.string.thesis_tab_changes_n, pending) else stringResource(R.string.thesis_tab_changes)
+    ThesisScreen.HISTORY -> stringResource(R.string.thesis_tab_history)
+    else -> stringResource(R.string.thesis_tab_preview)
 }
 
 @Composable
@@ -276,137 +340,251 @@ internal fun ThesisHome(controller: ThesisController) {
     }
 }
 
+// ------------------------------------------------------------------ create
+
+/** New thesis: metadata form with a fixed Cancel / Create bar (the button never scrolls away). */
+@Composable
+private fun ThesisCreateScreen(host: ThesisHost) {
+    val controller = host.thesis
+    val projects by controller.projects.collectAsState()
+    val state by controller.state.collectAsState()
+    ThesisMetaForm(
+        host = host,
+        initial = null,
+        busy = state.busy != null,
+        saveLabel = R.string.thesis_create,
+        onCancel = { if (projects.isEmpty()) controller.closeWorkspace() else controller.show(ThesisScreen.HOME) },
+        onOpenExisting = if (projects.isEmpty()) null else ({ controller.show(ThesisScreen.HOME) })
+    ) { meta, ai -> controller.createProject(meta, ai) }
+}
+
 // ------------------------------------------------------------------ metadata form (create / settings)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ThesisMetaForm(viewModel: SmartBubbleViewModel, initial: ThesisMeta?, initialAi: Boolean = true, onSave: (ThesisMeta, Boolean) -> Unit) {
-    val templates by viewModel.allTemplates.collectAsState()
-    var meta by remember(initial) { mutableStateOf(initial ?: ThesisMeta("", language = viewModel.appLanguage.value.takeIf { it in listOf("ar", "fr", "en") } ?: "en")) }
+private fun ThesisMetaForm(
+    host: ThesisHost,
+    initial: ThesisMeta?,
+    initialAi: Boolean = true,
+    busy: Boolean,
+    saveLabel: Int,
+    onCancel: () -> Unit,
+    onOpenExisting: (() -> Unit)? = null,
+    header: @Composable () -> Unit = {},
+    onSave: (ThesisMeta, Boolean) -> Unit
+) {
+    val templates by host.templateList.collectAsState()
+    var meta by remember(initial) { mutableStateOf(initial ?: ThesisMeta("", language = host.defaultContentLanguage.takeIf { it in listOf("ar", "fr", "en") } ?: "en")) }
     var ai by remember(initial) { mutableStateOf(initialAi) }
+    var titleError by remember { mutableStateOf(false) }
     val usable = templates.filter { it.fileType.equals("DOCX", true) || it.fileType.equals("PDF", true) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        @Composable
-        fun field(label: Int, value: String, tag: String, lines: Int = 1, onChange: (String) -> Unit) = OutlinedTextField(
-            value = value, onValueChange = onChange, label = { Text(stringResource(label)) }, singleLine = lines == 1, minLines = lines,
-            textStyle = contentStyle(), modifier = Modifier.fillMaxWidth().testTag(tag)
-        )
-        field(R.string.thesis_field_title, meta.title, "thesis_field_title") { meta = meta.copy(title = it) }
-        Text(stringResource(R.string.thesis_field_level), style = MaterialTheme.typography.labelLarge)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            AcademicLevel.values().forEach { l ->
-                FilterChip(selected = meta.level == l, onClick = { meta = meta.copy(level = l) }, label = { Text(levelLabel(l.name)) }, modifier = Modifier.testTag("thesis_level_${l.name}"))
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            header()
+            onOpenExisting?.let {
+                OutlinedButton(onClick = it, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("thesis_open_existing")) { Text(stringResource(R.string.thesis_open_existing)) }
+            }
+            @Composable
+            fun field(label: Int, value: String, tag: String, lines: Int = 1, onChange: (String) -> Unit) = OutlinedTextField(
+                value = value, onValueChange = onChange, label = { Text(stringResource(label)) }, singleLine = lines == 1, minLines = lines,
+                textStyle = contentStyle(), modifier = Modifier.fillMaxWidth().testTag(tag)
+            )
+            OutlinedTextField(
+                value = meta.title, onValueChange = { meta = meta.copy(title = it); if (it.isNotBlank()) titleError = false },
+                label = { Text(stringResource(R.string.thesis_field_title) + " *") }, isError = titleError,
+                supportingText = { if (titleError) Text(stringResource(R.string.thesis_title_required), modifier = Modifier.testTag("thesis_title_error")) },
+                textStyle = contentStyle(), modifier = Modifier.fillMaxWidth().testTag("thesis_field_title")
+            )
+            Text(stringResource(R.string.thesis_field_level), style = MaterialTheme.typography.labelLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AcademicLevel.values().forEach { l ->
+                    FilterChip(selected = meta.level == l, onClick = { meta = meta.copy(level = l) }, label = { Text(levelLabel(l.name)) }, modifier = Modifier.testTag("thesis_level_${l.name}"))
+                }
+            }
+            Text(stringResource(R.string.thesis_field_language), style = MaterialTheme.typography.labelLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("ar" to "العربية", "fr" to "Français", "en" to "English").forEach { (code, name) ->
+                    FilterChip(selected = meta.language == code, onClick = { meta = meta.copy(language = code) }, label = { Text(name) }, modifier = Modifier.testTag("thesis_lang_$code"))
+                }
+            }
+            Text(stringResource(R.string.thesis_field_template), style = MaterialTheme.typography.labelLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = meta.templateId == null, onClick = { meta = meta.copy(templateId = null) }, label = { Text(stringResource(R.string.thesis_template_default)) })
+                usable.forEach { t: TemplateEntity ->
+                    FilterChip(selected = meta.templateId == t.id, onClick = { meta = meta.copy(templateId = t.id) },
+                        label = { Text("${t.name} (${t.fileType})", maxLines = 1, overflow = TextOverflow.Ellipsis) }, modifier = Modifier.testTag("thesis_template_${t.id}"))
+                }
+            }
+            Text(stringResource(R.string.thesis_template_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            field(R.string.thesis_field_student, meta.studentName, "thesis_field_student") { meta = meta.copy(studentName = it) }
+            field(R.string.thesis_field_university, meta.university, "thesis_field_university") { meta = meta.copy(university = it) }
+            field(R.string.thesis_field_faculty, meta.faculty, "thesis_field_faculty") { meta = meta.copy(faculty = it) }
+            field(R.string.thesis_field_department, meta.department, "thesis_field_department") { meta = meta.copy(department = it) }
+            field(R.string.thesis_field_specialization, meta.specialization, "thesis_field_specialization") { meta = meta.copy(specialization = it) }
+            field(R.string.thesis_field_supervisor, meta.supervisor, "thesis_field_supervisor") { meta = meta.copy(supervisor = it) }
+            field(R.string.thesis_field_cosupervisor, meta.coSupervisor, "thesis_field_cosupervisor") { meta = meta.copy(coSupervisor = it) }
+            field(R.string.thesis_field_year, meta.academicYear, "thesis_field_year") { meta = meta.copy(academicYear = it) }
+            field(R.string.thesis_field_jury, meta.juryMembers, "thesis_field_jury", 3) { meta = meta.copy(juryMembers = it) }
+            field(R.string.thesis_field_extra, meta.extraMetadata, "thesis_field_extra", 2) { meta = meta.copy(extraMetadata = it) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.thesis_ai_assist), style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.thesis_ai_assist_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = ai, onCheckedChange = { ai = it }, modifier = Modifier.testTag("thesis_ai_switch"))
             }
         }
-        Text(stringResource(R.string.thesis_field_language), style = MaterialTheme.typography.labelLarge)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("ar" to "العربية", "fr" to "Français", "en" to "English").forEach { (code, name) ->
-                FilterChip(selected = meta.language == code, onClick = { meta = meta.copy(language = code) }, label = { Text(name) }, modifier = Modifier.testTag("thesis_lang_$code"))
+        HorizontalDivider()
+        // Fixed action bar: Create stays visible however long the form is.
+        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onCancel, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_cancel_meta")) { Text(stringResource(R.string.action_cancel)) }
+            Button(
+                onClick = {
+                    if (meta.title.isBlank()) titleError = true
+                    else onSave(meta.copy(title = meta.title.trim()), ai)
+                },
+                // Disabled while saving: tapping again cannot create a second project.
+                enabled = !busy,
+                modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_save_meta")
+            ) {
+                if (busy) { CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
+                Text(stringResource(saveLabel))
             }
-        }
-        field(R.string.thesis_field_student, meta.studentName, "thesis_field_student") { meta = meta.copy(studentName = it) }
-        field(R.string.thesis_field_university, meta.university, "thesis_field_university") { meta = meta.copy(university = it) }
-        field(R.string.thesis_field_faculty, meta.faculty, "thesis_field_faculty") { meta = meta.copy(faculty = it) }
-        field(R.string.thesis_field_department, meta.department, "thesis_field_department") { meta = meta.copy(department = it) }
-        field(R.string.thesis_field_specialization, meta.specialization, "thesis_field_specialization") { meta = meta.copy(specialization = it) }
-        field(R.string.thesis_field_supervisor, meta.supervisor, "thesis_field_supervisor") { meta = meta.copy(supervisor = it) }
-        field(R.string.thesis_field_cosupervisor, meta.coSupervisor, "thesis_field_cosupervisor") { meta = meta.copy(coSupervisor = it) }
-        field(R.string.thesis_field_year, meta.academicYear, "thesis_field_year") { meta = meta.copy(academicYear = it) }
-        field(R.string.thesis_field_jury, meta.juryMembers, "thesis_field_jury", 3) { meta = meta.copy(juryMembers = it) }
-        field(R.string.thesis_field_extra, meta.extraMetadata, "thesis_field_extra", 2) { meta = meta.copy(extraMetadata = it) }
-        Text(stringResource(R.string.thesis_field_template), style = MaterialTheme.typography.labelLarge)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = meta.templateId == null, onClick = { meta = meta.copy(templateId = null) }, label = { Text(stringResource(R.string.thesis_template_default)) })
-            usable.forEach { t: TemplateEntity ->
-                FilterChip(selected = meta.templateId == t.id, onClick = { meta = meta.copy(templateId = t.id) },
-                    label = { Text("${t.name} (${t.fileType})", maxLines = 1, overflow = TextOverflow.Ellipsis) }, modifier = Modifier.testTag("thesis_template_${t.id}"))
-            }
-        }
-        Text(stringResource(R.string.thesis_template_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.thesis_ai_assist), style = MaterialTheme.typography.bodyMedium)
-                Text(stringResource(R.string.thesis_ai_assist_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Switch(checked = ai, onCheckedChange = { ai = it }, modifier = Modifier.testTag("thesis_ai_switch"))
-        }
-        Button(onClick = { onSave(meta.copy(title = meta.title.trim()), ai) }, enabled = meta.title.isNotBlank(), modifier = Modifier.fillMaxWidth().testTag("thesis_save_meta")) {
-            Text(stringResource(if (initial == null) R.string.thesis_create else R.string.action_save))
         }
     }
 }
 
-// ------------------------------------------------------------------ project overview and outline
+// ------------------------------------------------------------------ overview (workspace home)
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ThesisProjectScreen(viewModel: SmartBubbleViewModel) {
-    val controller = viewModel.thesis
+private fun ThesisOverviewScreen(host: ThesisHost) {
+    val controller = host.thesis
     val state by controller.state.collectAsState()
     val proposals by controller.openProposals.collectAsState()
     val projects by controller.projects.collectAsState()
-    val templates by viewModel.allTemplates.collectAsState()
+    val templates by host.templateList.collectAsState()
     val snapshot = state.snapshot ?: return Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
     val project = projects.firstOrNull { it.id == state.projectId }
+    val projectId = state.projectId ?: return
+    val idle = state.busy == null
+    var deleting by remember { mutableStateOf(false) }
+    // "Edit selected section": the last opened section, else the first section that holds content.
+    val editable = snapshot.section(state.selectedSectionId)?.takeIf { it.kind.writable }
+        ?: snapshot.outline(includeDisabled = false).map { it.first }.firstOrNull { it.kind.writable }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Card(Modifier.fillMaxWidth().testTag("thesis_overview")) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(snapshot.meta.title, style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content), fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.thesis_level_label, levelLabel(snapshot.meta.level.name)), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.thesis_language_label, languageName(snapshot.meta.language)), style = MaterialTheme.typography.bodySmall)
+                val template = templates.firstOrNull { it.id == snapshot.meta.templateId }
+                Text(stringResource(R.string.thesis_template_label, template?.let { "${it.name} (${it.fileType})" } ?: stringResource(R.string.thesis_template_default)), style = MaterialTheme.typography.bodySmall)
+                project?.let {
+                    Text(stringResource(R.string.thesis_created_on, formatDate(it.createdAt)), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.thesis_modified_on, formatDate(it.updatedAt)), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.thesis_current_revision, it.currentRevisionNumber), style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("thesis_current_revision"))
+                }
+                val completion = ThesisStructure.completion(snapshot)
+                Text(stringResource(R.string.thesis_completion, completion), style = MaterialTheme.typography.bodySmall)
+                LinearProgressIndicator(progress = { completion / 100f }, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp))
+            }
+        }
+        state.lastExport?.let { e -> ExportResultCard(host, e) }
+        Text(stringResource(R.string.thesis_actions), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+        ActionRow(
+            { ActionButton(R.string.thesis_continue_in_chat, "thesis_continue_chat", primary = true) { host.continueThesisInChat(projectId, state.selectedSectionId) } },
+            { ActionButton(R.string.thesis_edit_structure, "thesis_edit_structure") { controller.show(ThesisScreen.STRUCTURE) } }
+        )
+        ActionRow(
+            { ActionButton(R.string.thesis_edit_section, "thesis_edit_section", enabled = editable != null) { editable?.let { controller.selectSection(it.id) } } },
+            { ActionButton(R.string.thesis_preview, "thesis_preview", enabled = idle) { controller.buildPreview() } }
+        )
+        ActionRow(
+            { ActionButton(stringResource(R.string.thesis_review_pending, proposals.size), "thesis_review_pending") { controller.show(ThesisScreen.CHANGES) } },
+            { ActionButton(R.string.thesis_history, "thesis_history") { controller.show(ThesisScreen.HISTORY) } }
+        )
+        ActionRow(
+            { ActionButton(R.string.thesis_export_docx, "thesis_export_docx", enabled = idle) { controller.export("DOCX") } },
+            { ActionButton(R.string.thesis_export_pdf, "thesis_export_pdf", enabled = idle) { controller.export("PDF") } }
+        )
+        ActionRow(
+            { ActionButton(R.string.thesis_project_settings, "thesis_settings") { controller.show(ThesisScreen.SETTINGS) } },
+            { ActionButton(R.string.thesis_delete_project, "thesis_delete_project", enabled = idle, danger = true) { deleting = true } }
+        )
+        Text(stringResource(R.string.thesis_export_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (deleting) DeleteProjectDialog(onDismiss = { deleting = false }) { deleting = false; controller.deleteProject(projectId) }
+}
+
+@Composable
+private fun ActionRow(first: @Composable RowScope.() -> Unit, second: @Composable RowScope.() -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { first(); second() }
+}
+
+@Composable
+private fun RowScope.ActionButton(label: Int, tag: String, enabled: Boolean = true, primary: Boolean = false, danger: Boolean = false, onClick: () -> Unit) =
+    ActionButton(stringResource(label), tag, enabled, primary, danger, onClick)
+
+@Composable
+private fun RowScope.ActionButton(label: String, tag: String, enabled: Boolean = true, primary: Boolean = false, danger: Boolean = false, onClick: () -> Unit) {
+    val modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag(tag)
+    if (primary) Button(onClick = onClick, enabled = enabled, modifier = modifier) { Text(label, textAlign = TextAlign.Center) }
+    else OutlinedButton(
+        onClick = onClick, enabled = enabled, modifier = modifier,
+        colors = if (danger) ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error) else ButtonDefaults.outlinedButtonColors()
+    ) { Text(label, textAlign = TextAlign.Center) }
+}
+
+/** Shown only after the file was written and saved to the Library. */
+@Composable
+private fun ExportResultCard(host: ThesisHost, e: ThesisExportResult) {
+    Card(Modifier.fillMaxWidth().testTag("thesis_export_result"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))) {
+        Column(Modifier.padding(12.dp)) {
+            Text(stringResource(R.string.thesis_export_saved, e.format, e.document.title), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            e.notes.distinct().forEach { Text(noteText(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { host.openExportedDocument(e.document) }, modifier = Modifier.testTag("thesis_export_open")) { Text(stringResource(R.string.thesis_open_file)) }
+                TextButton(onClick = { host.shareExportedDocument(e.document) }, modifier = Modifier.testTag("thesis_export_share")) { Text(stringResource(R.string.thesis_share_file)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeleteProjectDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.thesis_delete_project_title)) },
+        text = { Text(stringResource(R.string.thesis_delete_project_text)) },
+        confirmButton = { Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("thesis_delete_project_confirm")) { Text(stringResource(R.string.template_delete)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } }
+    )
+}
+
+private fun languageName(code: String) = when (code) { "ar" -> "العربية"; "fr" -> "Français"; else -> "English" }
+
+// ------------------------------------------------------------------ structure
+
+@Composable
+private fun ThesisStructureScreen(controller: ThesisController) {
+    val state by controller.state.collectAsState()
+    val snapshot = state.snapshot ?: return Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
     val numbering = remember(snapshot) { ThesisStructure.numbering(snapshot) }
     var renaming by remember { mutableStateOf<ThesisSection?>(null) }
     var deleting by remember { mutableStateOf<ThesisSection?>(null) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    LazyColumn(Modifier.fillMaxSize().testTag("thesis_structure"), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item {
-            Card(Modifier.fillMaxWidth().testTag("thesis_overview")) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(snapshot.meta.title, style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content), fontWeight = FontWeight.Bold)
-                    Text("${levelLabel(snapshot.meta.level.name)} · ${snapshot.meta.language.uppercase()}", style = MaterialTheme.typography.bodySmall)
-                    val template = templates.firstOrNull { it.id == snapshot.meta.templateId }
-                    Text(stringResource(R.string.thesis_template_label, template?.let { "${it.name} (${it.fileType})" } ?: stringResource(R.string.thesis_template_default)), style = MaterialTheme.typography.bodySmall)
-                    val completion = ThesisStructure.completion(snapshot)
-                    Text(stringResource(R.string.thesis_completion, completion), style = MaterialTheme.typography.bodySmall)
-                    LinearProgressIndicator(progress = { completion / 100f }, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp))
-                    project?.let {
-                        Text(stringResource(R.string.thesis_last_saved, formatDate(it.updatedAt)) + " · " + stringResource(R.string.thesis_revision_short, it.currentRevisionNumber),
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Button(onClick = { state.projectId?.let { viewModel.enterThesisChat(it) } }, modifier = Modifier.testTag("thesis_continue_chat")) { Text(stringResource(R.string.thesis_continue_in_chat)) }
-                OutlinedButton(onClick = { controller.buildPreview() }, enabled = state.busy == null, modifier = Modifier.testTag("thesis_preview")) { Text(stringResource(R.string.thesis_preview)) }
-                OutlinedButton(onClick = { controller.export("DOCX") }, enabled = state.busy == null, modifier = Modifier.testTag("thesis_export_docx")) { Text(stringResource(R.string.thesis_export_docx)) }
-                OutlinedButton(onClick = { controller.export("PDF") }, enabled = state.busy == null, modifier = Modifier.testTag("thesis_export_pdf")) { Text(stringResource(R.string.thesis_export_pdf)) }
-                OutlinedButton(onClick = { controller.show(ThesisScreen.HISTORY) }, modifier = Modifier.testTag("thesis_history")) { Text(stringResource(R.string.thesis_history)) }
-                OutlinedButton(onClick = { controller.show(ThesisScreen.SETTINGS) }, modifier = Modifier.testTag("thesis_settings")) { Text(stringResource(R.string.thesis_settings)) }
-            }
-            state.lastExport?.let { e ->
-                Text(stringResource(R.string.thesis_last_export, e.file.name), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                e.template.notes.plus(e.warnings).forEach { Text(noteText(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            }
-            if (proposals.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                Text(stringResource(R.string.thesis_pending), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            }
-        }
-        items(proposals, key = { it.id }) { p ->
-            Card(Modifier.fillMaxWidth().clickable { controller.openReview(p.id) }.testTag("thesis_pending_${p.id}"),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f))) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(sourceLabel(p.source) + " · " + statusLabel(p.status), style = MaterialTheme.typography.labelMedium)
-                    Text(p.request.take(120), style = contentStyle().copy(fontSize = 13.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        }
-        item {
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.thesis_structure), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                TextButton(onClick = {
-                    val last = snapshot.children(null).lastOrNull { it.kind == SectionKind.CHAPTER }
-                    controller.direct(listOf(ThesisOp.AddSection(ThesisSection(ThesisStructure.newId("sec"), null, SectionKind.CHAPTER, "", 0), last?.id)), ChangeSource.STRUCTURE, "chapter")
-                }, modifier = Modifier.testTag("thesis_add_chapter")) { Text(stringResource(R.string.thesis_add_chapter)) }
+            Text(stringResource(R.string.thesis_structure_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(6.dp))
+            Button(onClick = {
+                val last = snapshot.children(null).lastOrNull { it.kind == SectionKind.CHAPTER }
+                controller.direct(listOf(ThesisOp.AddSection(ThesisSection(ThesisStructure.newId("sec"), null, SectionKind.CHAPTER, "", 0), last?.id)), ChangeSource.STRUCTURE, "chapter")
+            }, enabled = state.busy == null, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("thesis_add_chapter")) {
+                Icon(Icons.Default.Add, contentDescription = null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.thesis_add_chapter))
             }
         }
         items(snapshot.outline(includeDisabled = true), key = { it.first.id }) { (s, depth) ->
-            SectionRow(controller, snapshot, s, depth, numbering.let { ThesisStructure.displayTitle(s, it, snapshot.meta.language) }, onRename = { renaming = s }, onDelete = { deleting = s })
+            SectionRow(controller, snapshot, s, depth, ThesisStructure.displayTitle(s, numbering, snapshot.meta.language), onRename = { renaming = s }, onDelete = { deleting = s })
         }
     }
     renaming?.let { s ->
@@ -420,11 +598,34 @@ private fun ThesisProjectScreen(viewModel: SmartBubbleViewModel) {
             title = { Text(stringResource(R.string.thesis_delete_section_title)) },
             text = { Text(stringResource(R.string.thesis_delete_section_text)) },
             confirmButton = { Button(onClick = { controller.direct(listOf(ThesisOp.DeleteSection(s.id)), ChangeSource.STRUCTURE, "delete section"); deleting = null },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(stringResource(R.string.template_delete)) } },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("thesis_delete_section_confirm")) { Text(stringResource(R.string.template_delete)) } },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.action_cancel)) } }
         )
     }
 }
+
+// ------------------------------------------------------------------ pending changes
+
+@Composable
+private fun ThesisChangesScreen(controller: ThesisController) {
+    val proposals by controller.openProposals.collectAsState()
+    LazyColumn(Modifier.fillMaxSize().testTag("thesis_changes"), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { Text(stringResource(R.string.thesis_changes_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        if (proposals.isEmpty()) item { Text(stringResource(R.string.thesis_no_pending), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("thesis_no_pending")) }
+        items(proposals, key = { it.id }) { p ->
+            Card(Modifier.fillMaxWidth().clickable { controller.openReview(p.id) }.testTag("thesis_pending_${p.id}"),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f))) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(sourceLabel(p.source) + " · " + statusLabel(p.status), style = MaterialTheme.typography.labelMedium)
+                    Text(formatDate(p.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(p.request.take(160), style = contentStyle().copy(fontSize = 13.sp), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    TextButton(onClick = { controller.openReview(p.id) }, modifier = Modifier.testTag("thesis_open_review_${p.id}")) { Text(stringResource(R.string.thesis_review_open)) }
+                }
+            }
+        }
+    }
+}
+
 
 @Composable
 private fun statusLabel(status: String) = stringResource(
@@ -492,71 +693,6 @@ private fun TextInputDialog(title: String, initial: String, lines: Int = 1, onDi
     )
 }
 
-// ------------------------------------------------------------------ section content
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun ThesisSectionScreen(controller: ThesisController) {
-    val state by controller.state.collectAsState()
-    val snapshot = state.snapshot ?: return
-    val section = snapshot.section(state.selectedSectionId) ?: return
-    val numbering = remember(snapshot) { ThesisStructure.numbering(snapshot) }
-    val elements = snapshot.elementsOf(section.id)
-    var editing by remember { mutableStateOf<ThesisElement?>(null) }
-    var adding by remember { mutableStateOf(false) }
-    var deleting by remember { mutableStateOf<ThesisElement?>(null) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item {
-            Text(ThesisStructure.displayTitle(section, numbering, snapshot.meta.language), style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
-                fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
-            Text(stringResource(R.string.thesis_section_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { adding = true }, modifier = Modifier.testTag("thesis_add_paragraph")) { Text(stringResource(R.string.thesis_add_paragraph)) }
-                listOf(EditMode.CORRECT to R.string.thesis_ai_correct, EditMode.IMPROVE to R.string.thesis_ai_improve, EditMode.SHORTEN to R.string.thesis_ai_shorten, EditMode.EXPAND to R.string.thesis_ai_expand)
-                    .forEach { (mode, label) ->
-                        OutlinedButton(onClick = { controller.requestEdit(mode, section.id) }, enabled = state.busy == null && elements.isNotEmpty(), modifier = Modifier.testTag("thesis_ai_${mode.name}")) { Text(stringResource(label)) }
-                    }
-            }
-            if (elements.isEmpty()) Text(stringResource(R.string.thesis_section_empty), style = MaterialTheme.typography.bodySmall)
-        }
-        items(elements, key = { it.id }) { e ->
-            ElementCard(e, snapshot, state.assets, numbering.let { n ->
-                when (e.type) {
-                    ElementType.IMAGE -> ThesisStructure.figureCaption(e, n, snapshot.meta.language)
-                    ElementType.TABLE -> ThesisStructure.tableCaption(e, n, snapshot.meta.language)
-                    else -> null
-                }
-            }, onEdit = { editing = e }, onDelete = { deleting = e },
-                onUp = elements.indexOf(e).takeIf { it > 0 }?.let { i -> { controller.direct(listOf(ThesisOp.MoveElement(e.id, section.id, elements.getOrNull(i - 2)?.id ?: ThesisOperations.AFTER_START)), ChangeSource.STRUCTURE, "reorder") } },
-                onDown = elements.indexOf(e).takeIf { it < elements.lastIndex }?.let { i -> { controller.direct(listOf(ThesisOp.MoveElement(e.id, section.id, elements[i + 1].id)), ChangeSource.STRUCTURE, "reorder") } })
-        }
-    }
-    if (adding) {
-        TextInputDialog(stringResource(R.string.thesis_add_paragraph), "", lines = 6, onDismiss = { adding = false }) { text ->
-            if (text.isNotBlank()) controller.direct(listOf(ThesisOp.AddElements(section.id, null, listOf(NewElement(ThesisStructure.newId("el"), ElementType.PARAGRAPH, text.trim())))), ChangeSource.USER, "paragraph")
-            adding = false
-        }
-    }
-    editing?.let { e ->
-        when (e.type) {
-            ElementType.IMAGE -> MediaDataDialog(e.data, isImage = true, onDismiss = { editing = null }) { data -> controller.direct(listOf(ThesisOp.UpdateData(e.id, data)), ChangeSource.IMAGE, "image"); editing = null }
-            ElementType.TABLE -> TableEditDialog(e, onDismiss = { editing = null }) { data -> controller.direct(listOf(ThesisOp.UpdateData(e.id, data)), ChangeSource.TABLE, "table"); editing = null }
-            else -> TextInputDialog(stringResource(R.string.thesis_edit), e.text, lines = 4, onDismiss = { editing = null }) { text ->
-                controller.direct(listOf(ThesisOp.ReplaceText(e.id, text.trim())), ChangeSource.USER, "edit"); editing = null
-            }
-        }
-    }
-    deleting?.let { e ->
-        AlertDialog(
-            onDismissRequest = { deleting = null },
-            title = { Text(stringResource(R.string.thesis_delete_element_title)) },
-            text = { Text(stringResource(R.string.thesis_delete_element_text)) },
-            confirmButton = { Button(onClick = { controller.direct(listOf(ThesisOp.DeleteElement(e.id)), ChangeSource.USER, "delete"); deleting = null },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("thesis_delete_confirm")) { Text(stringResource(R.string.template_delete)) } },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.action_cancel)) } }
-        )
-    }
-}
 
 @Composable
 private fun ElementCard(e: ThesisElement, snapshot: ThesisSnapshot, assets: List<ThesisAsset>, caption: String?, onEdit: () -> Unit, onDelete: () -> Unit, onUp: (() -> Unit)?, onDown: (() -> Unit)?) {
@@ -850,6 +986,136 @@ private fun ChangeCard(c: ElementChange, assets: List<ThesisAsset>, caption: Str
     }
 }
 
+// ------------------------------------------------------------------ section content editor
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ThesisSectionScreen(host: ThesisHost) {
+    val controller = host.thesis
+    val state by controller.state.collectAsState()
+    val snapshot = state.snapshot ?: return
+    val section = snapshot.section(state.selectedSectionId) ?: return
+    val numbering = remember(snapshot) { ThesisStructure.numbering(snapshot) }
+    val elements = snapshot.elementsOf(section.id)
+    val idle = state.busy == null
+    val context = LocalContext.current
+    var editing by remember { mutableStateOf<ThesisElement?>(null) }
+    var addingText by remember { mutableStateOf(false) }
+    var addingHeading by remember { mutableStateOf(false) }
+    var addingTable by remember { mutableStateOf(false) }
+    var aiMenu by remember { mutableStateOf(false) }
+    var pendingImage by remember { mutableStateOf<Uri?>(null) }
+    var deleting by remember { mutableStateOf<ThesisElement?>(null) }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? -> pendingImage = uri }
+    LazyColumn(Modifier.fillMaxSize().testTag("thesis_section_editor"), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            Text(ThesisStructure.displayTitle(section, numbering, snapshot.meta.language), style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
+                fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() }.testTag("thesis_section_title"))
+            Text(stringResource(R.string.thesis_section_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(6.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Button(onClick = { addingText = true }, enabled = idle, modifier = Modifier.testTag("thesis_add_paragraph")) { Text(stringResource(R.string.thesis_add_text)) }
+                OutlinedButton(onClick = { addingHeading = true }, enabled = idle, modifier = Modifier.testTag("thesis_add_heading")) { Text(stringResource(R.string.thesis_add_heading)) }
+                OutlinedButton(onClick = { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = idle, modifier = Modifier.testTag("thesis_insert_image")) {
+                    Text(stringResource(R.string.thesis_insert_image))
+                }
+                OutlinedButton(onClick = { addingTable = true }, enabled = idle, modifier = Modifier.testTag("thesis_insert_table")) { Text(stringResource(R.string.thesis_insert_table)) }
+                Box {
+                    OutlinedButton(onClick = { aiMenu = true }, enabled = idle && elements.isNotEmpty(), modifier = Modifier.testTag("thesis_ai_review")) { Text(stringResource(R.string.thesis_ai_review)) }
+                    DropdownMenu(expanded = aiMenu, onDismissRequest = { aiMenu = false }) {
+                        listOf(EditMode.CORRECT to R.string.thesis_ai_correct, EditMode.IMPROVE to R.string.thesis_ai_improve, EditMode.SHORTEN to R.string.thesis_ai_shorten, EditMode.EXPAND to R.string.thesis_ai_expand)
+                            .forEach { (mode, label) ->
+                                DropdownMenuItem(text = { Text(stringResource(label)) }, onClick = { aiMenu = false; controller.requestEdit(mode, section.id) }, modifier = Modifier.testTag("thesis_ai_${mode.name}"))
+                            }
+                    }
+                }
+                OutlinedButton(onClick = { controller.formatSection(section.id) }, enabled = idle && elements.isNotEmpty(), modifier = Modifier.testTag("thesis_apply_formatting")) { Text(stringResource(R.string.thesis_apply_formatting)) }
+                OutlinedButton(onClick = { controller.loadSectionHistory(section.id) }, enabled = idle, modifier = Modifier.testTag("thesis_section_history")) { Text(stringResource(R.string.thesis_section_history)) }
+                OutlinedButton(onClick = { state.projectId?.let { host.continueThesisInChat(it, section.id) } }, modifier = Modifier.testTag("thesis_section_chat")) { Text(stringResource(R.string.thesis_section_chat)) }
+            }
+            state.sectionHistory?.let { history -> SectionHistoryCard(controller, history, onClose = { controller.selectSection(section.id) }) }
+            if (elements.isEmpty()) Text(stringResource(R.string.thesis_section_empty), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+        }
+        items(elements, key = { it.id }) { e ->
+            ElementCard(e, snapshot, state.assets, when (e.type) {
+                ElementType.IMAGE -> ThesisStructure.figureCaption(e, numbering, snapshot.meta.language)
+                ElementType.TABLE -> ThesisStructure.tableCaption(e, numbering, snapshot.meta.language)
+                else -> null
+            }, onEdit = { editing = e }, onDelete = { deleting = e },
+                onUp = elements.indexOf(e).takeIf { it > 0 }?.let { i -> { controller.direct(listOf(ThesisOp.MoveElement(e.id, section.id, elements.getOrNull(i - 2)?.id ?: ThesisOperations.AFTER_START)), ChangeSource.STRUCTURE, "reorder") } },
+                onDown = elements.indexOf(e).takeIf { it < elements.lastIndex }?.let { i -> { controller.direct(listOf(ThesisOp.MoveElement(e.id, section.id, elements[i + 1].id)), ChangeSource.STRUCTURE, "reorder") } })
+        }
+    }
+    if (addingText) {
+        TextInputDialog(stringResource(R.string.thesis_add_text), "", lines = 6, onDismiss = { addingText = false }) { text ->
+            addingText = false
+            if (text.isNotBlank()) controller.addText(section.id, text)
+        }
+    }
+    if (addingHeading) {
+        TextInputDialog(stringResource(R.string.thesis_add_heading), "", onDismiss = { addingHeading = false }) { text ->
+            addingHeading = false
+            controller.addHeading(section.id, text)
+        }
+    }
+    if (addingTable) {
+        TableEditDialog(ThesisElement("", section.id, ElementType.TABLE, 0, "", ElementData()), onDismiss = { addingTable = false }) { data ->
+            addingTable = false
+            controller.addTable(section.id, data.tableHeader, data.tableRows, data.caption)
+        }
+    }
+    pendingImage?.let { uri ->
+        MediaDataDialog(ElementData(), isImage = true, onDismiss = { pendingImage = null }) { data ->
+            pendingImage = null
+            val resolver = context.contentResolver
+            controller.addImage(section.id, { resolver.openInputStream(uri) }, uri.lastPathSegment ?: "image", resolver.getType(uri) ?: "image/*", data)
+        }
+    }
+    editing?.let { e ->
+        when (e.type) {
+            ElementType.IMAGE -> MediaDataDialog(e.data, isImage = true, onDismiss = { editing = null }) { data -> controller.direct(listOf(ThesisOp.UpdateData(e.id, data)), ChangeSource.IMAGE, "image"); editing = null }
+            ElementType.TABLE -> TableEditDialog(e, onDismiss = { editing = null }) { data -> controller.direct(listOf(ThesisOp.UpdateData(e.id, data)), ChangeSource.TABLE, "table"); editing = null }
+            else -> TextInputDialog(stringResource(R.string.thesis_edit), e.text, lines = 4, onDismiss = { editing = null }) { text ->
+                if (text.isNotBlank()) controller.direct(listOf(ThesisOp.ReplaceText(e.id, text.trim())), ChangeSource.USER, "edit")
+                editing = null
+            }
+        }
+    }
+    deleting?.let { e ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text(stringResource(R.string.thesis_delete_element_title)) },
+            text = { Text(stringResource(R.string.thesis_delete_element_text)) },
+            confirmButton = { Button(onClick = { controller.direct(listOf(ThesisOp.DeleteElement(e.id)), ChangeSource.USER, "delete"); deleting = null },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("thesis_delete_confirm")) { Text(stringResource(R.string.template_delete)) } },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.action_cancel)) } }
+        )
+    }
+}
+
+/** Revisions that changed the open section; each one can be compared with the revision before it. */
+@Composable
+private fun SectionHistoryCard(controller: ThesisController, history: List<ThesisRevisionEntity>, onClose: () -> Unit) {
+    Card(Modifier.fillMaxWidth().padding(top = 8.dp).testTag("thesis_section_history_list")) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.thesis_section_history), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close)) }
+            }
+            if (history.isEmpty()) Text(stringResource(R.string.thesis_section_history_empty), style = MaterialTheme.typography.bodySmall)
+            history.forEach { r ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text(stringResource(R.string.thesis_revision_short, r.number) + " · " + sourceLabel(r.source), style = MaterialTheme.typography.labelLarge)
+                        Text(formatDate(r.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (r.number > 1) TextButton(onClick = { controller.compareWithPrevious(r) }, modifier = Modifier.testTag("thesis_section_rev_${r.number}")) { Text(stringResource(R.string.thesis_changes_made)) }
+                }
+            }
+        }
+    }
+}
+
 // ------------------------------------------------------------------ history
 
 @Composable
@@ -858,29 +1124,45 @@ private fun ThesisHistoryScreen(controller: ThesisController) {
     val revisions by controller.revisions.collectAsState()
     var restoring by remember { mutableStateOf<ThesisRevisionEntity?>(null) }
     val compare = state.compare
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    val current = revisions.firstOrNull()?.number
+    LazyColumn(Modifier.fillMaxSize().testTag("thesis_history_list"), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (compare != null) {
             item {
-                Text(stringResource(R.string.thesis_compare_title, compare.revision.number), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                Text(stringResource(R.string.thesis_compare_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    if (compare.againstPrevious) stringResource(R.string.thesis_changes_in_revision, compare.revision.number)
+                    else stringResource(R.string.thesis_compare_title, compare.revision.number),
+                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.testTag("thesis_compare_header")
+                )
+                Text(stringResource(if (compare.againstPrevious) R.string.thesis_compare_previous_note else R.string.thesis_compare_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 DiffSummary(compare.diff)
+                if (compare.diff.elements.isEmpty() && compare.diff.sections.isEmpty()) Text(stringResource(R.string.thesis_compare_same), style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { restoring = compare.revision }, enabled = state.busy == null, modifier = Modifier.testTag("thesis_restore")) { Text(stringResource(R.string.thesis_restore)) }
-                    OutlinedButton(onClick = { controller.closeCompare() }) { Text(stringResource(R.string.action_close)) }
+                    if (compare.revision.number != current) {
+                        Button(onClick = { restoring = compare.revision }, enabled = state.busy == null, modifier = Modifier.testTag("thesis_restore")) { Text(stringResource(R.string.thesis_restore)) }
+                    }
+                    OutlinedButton(onClick = { controller.closeCompare() }, modifier = Modifier.testTag("thesis_compare_close")) { Text(stringResource(R.string.action_close)) }
                 }
             }
-            // Read from the old version toward the current one.
+            // Read from the old version toward the newer one.
             items(compare.diff.elements, key = { "c" + it.elementId }) { c -> ChangeCard(c, state.assets, null) }
             item { HorizontalDivider() }
         }
-        item { Text(stringResource(R.string.thesis_history), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold) }
+        item {
+            Text(stringResource(R.string.thesis_history), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.thesis_history_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         items(revisions, key = { it.id }) { r ->
-            Card(Modifier.fillMaxWidth().clickable { controller.compareRevision(r) }.testTag("thesis_revision_${r.number}")) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(stringResource(R.string.thesis_revision_short, r.number) + " · " + sourceLabel(r.source), style = MaterialTheme.typography.labelLarge)
+            Card(Modifier.fillMaxWidth().testTag("thesis_revision_${r.number}")) {
+                Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp)) {
+                    Text(stringResource(R.string.thesis_revision_short, r.number) + " · " + sourceLabel(r.source) + if (r.number == current) " · " + stringResource(R.string.thesis_current) else "",
+                        style = MaterialTheme.typography.labelLarge)
                     Text(formatDate(r.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     r.restoredFrom?.let { Text(stringResource(R.string.thesis_restored_from, it), style = MaterialTheme.typography.bodySmall) }
                     if (r.summary.isNotBlank()) Text(r.summary.take(160), style = contentStyle().copy(fontSize = 12.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Row {
+                        if (r.number > 1) TextButton(onClick = { controller.compareWithPrevious(r) }, modifier = Modifier.testTag("thesis_revision_changes_${r.number}")) { Text(stringResource(R.string.thesis_changes_made)) }
+                        if (r.number != current) TextButton(onClick = { controller.compareRevision(r) }, modifier = Modifier.testTag("thesis_revision_compare_${r.number}")) { Text(stringResource(R.string.thesis_compare_current)) }
+                    }
                 }
             }
         }
@@ -902,37 +1184,50 @@ private fun ThesisHistoryScreen(controller: ThesisController) {
 private fun ThesisPreviewScreen(controller: ThesisController) {
     val state by controller.state.collectAsState()
     val file = state.previewFile
-    var zoom by remember { mutableStateOf(1f) }
     if (file == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Button(onClick = { controller.buildPreview() }, enabled = state.busy == null) { Text(stringResource(R.string.thesis_preview)) }
+        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(stringResource(R.string.thesis_preview_hint), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = { controller.buildPreview() }, enabled = state.busy == null, modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_preview_build")) { Text(stringResource(R.string.thesis_preview_generate)) }
         }
         return
     }
-    val pages = remember(file) { pageCount(file) }
+    val pages = remember(file) { pageCount(file) }.takeIf { it > 0 } ?: state.previewPages
+    var page by remember(file) { mutableIntStateOf(0) }
+    var zoom by remember { mutableStateOf(1f) }
+    val zoomIn = stringResource(R.string.thesis_zoom_in)
+    val zoomOut = stringResource(R.string.thesis_zoom_out)
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.thesis_pages, pages), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f).testTag("thesis_page_count"))
-            TextButton(onClick = { zoom = (zoom - 0.25f).coerceAtLeast(0.5f) }) { Text("−") }
-            Text("${(zoom * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = { zoom = (zoom + 0.25f).coerceAtMost(3f) }) { Text("+") }
-        }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF9E9E9E)), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items((0 until pages).toList()) { index ->
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                    PdfPage(file, index, zoom)
-                    Text(stringResource(R.string.thesis_page_n, index + 1), color = Color.White, style = MaterialTheme.typography.labelSmall)
-                }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { page-- }, enabled = page > 0, modifier = Modifier.testTag("thesis_page_prev")) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = stringResource(R.string.action_previous_page))
             }
+            Text(stringResource(R.string.thesis_page_of, page + 1, pages), style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("thesis_page_indicator"))
+            IconButton(onClick = { page++ }, enabled = page < pages - 1, modifier = Modifier.testTag("thesis_page_next")) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = stringResource(R.string.action_next_page))
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = { zoom = (zoom - 0.25f).coerceAtLeast(0.5f) }, modifier = Modifier.semantics { contentDescription = zoomOut }.testTag("thesis_zoom_out")) { Text("−") }
+            Text("${(zoom * 100).toInt()}%", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("thesis_zoom_level"))
+            TextButton(onClick = { zoom = (zoom + 0.25f).coerceAtMost(3f) }, modifier = Modifier.semantics { contentDescription = zoomIn }.testTag("thesis_zoom_in")) { Text("+") }
+            IconButton(onClick = { controller.buildPreview() }, enabled = state.busy == null, modifier = Modifier.testTag("thesis_preview_refresh")) {
+                Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.thesis_preview_refresh))
+            }
+        }
+        Box(
+            Modifier.weight(1f).fillMaxWidth().background(Color(0xFF9E9E9E)).verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(12.dp),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            if (pages > 0) PdfPage(file, page.coerceIn(0, pages - 1), zoom)
         }
     }
 }
 
 private fun pageCount(file: File): Int = try {
     android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { fd -> android.graphics.pdf.PdfRenderer(fd).use { it.pageCount } }
-} catch (e: Exception) { 0 }
+} catch (e: Throwable) { 0 }
 
-/** One page rendered on demand (only visible pages are rendered). */
+/** One page rendered on demand. */
 @Composable
 private fun PdfPage(file: File, index: Int, zoom: Float) {
     val widthPx = (700 * zoom).toInt()
@@ -947,8 +1242,8 @@ private fun PdfPage(file: File, index: Int, zoom: Float) {
 // ------------------------------------------------------------------ settings
 
 @Composable
-private fun ThesisSettingsScreen(viewModel: SmartBubbleViewModel) {
-    val controller = viewModel.thesis
+private fun ThesisSettingsScreen(host: ThesisHost) {
+    val controller = host.thesis
     val state by controller.state.collectAsState()
     val projects by controller.projects.collectAsState()
     val snapshot = state.snapshot ?: return
@@ -958,30 +1253,29 @@ private fun ThesisSettingsScreen(viewModel: SmartBubbleViewModel) {
     val logoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
         if (uri != null) controller.importLogo({ context.contentResolver.openInputStream(uri) }, "logo", context.contentResolver.getType(uri) ?: "image/png")
     }
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { logoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
-                Text(stringResource(if (snapshot.meta.logoAssetId == null) R.string.thesis_add_logo else R.string.thesis_change_logo))
-            }
-            OutlinedButton(onClick = { deleting = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("thesis_delete_project")) {
-                Text(stringResource(R.string.thesis_delete_project))
+    ThesisMetaForm(
+        host = host,
+        initial = snapshot.meta,
+        initialAi = project.aiAssist,
+        busy = state.busy != null,
+        saveLabel = R.string.action_save,
+        onCancel = { controller.show(ThesisScreen.PROJECT) },
+        header = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { logoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
+                    Text(stringResource(if (snapshot.meta.logoAssetId == null) R.string.thesis_add_logo else R.string.thesis_change_logo))
+                }
+                OutlinedButton(onClick = { deleting = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("thesis_settings_delete")) {
+                    Text(stringResource(R.string.thesis_delete_project))
+                }
             }
         }
-        Box(Modifier.weight(1f)) {
-            ThesisMetaForm(viewModel, snapshot.meta, project.aiAssist) { meta, ai ->
-                if (ai != project.aiAssist) controller.setAiAssist(ai)
-                if (meta != snapshot.meta) controller.updateMeta(meta)
-                controller.show(ThesisScreen.PROJECT)
-            }
-        }
+    ) { meta, ai ->
+        if (ai != project.aiAssist) controller.setAiAssist(ai)
+        // The logo is changed by its own button; keep the stored one.
+        val updated = meta.copy(logoAssetId = snapshot.meta.logoAssetId)
+        if (updated != snapshot.meta) controller.updateMeta(updated)
+        controller.show(ThesisScreen.PROJECT)
     }
-    if (deleting) {
-        AlertDialog(
-            onDismissRequest = { deleting = false },
-            title = { Text(stringResource(R.string.thesis_delete_project_title)) },
-            text = { Text(stringResource(R.string.thesis_delete_project_text)) },
-            confirmButton = { Button(onClick = { deleting = false; controller.deleteProject(project.id) }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("thesis_delete_project_confirm")) { Text(stringResource(R.string.template_delete)) } },
-            dismissButton = { TextButton(onClick = { deleting = false }) { Text(stringResource(R.string.action_cancel)) } }
-        )
-    }
+    if (deleting) DeleteProjectDialog(onDismiss = { deleting = false }) { deleting = false; controller.deleteProject(project.id) }
 }

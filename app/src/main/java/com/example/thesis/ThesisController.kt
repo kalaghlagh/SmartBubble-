@@ -3,6 +3,7 @@ package com.example.thesis
 import com.example.ai.orchestrator.AiProgressListener
 import com.example.ai.orchestrator.AiProgressStage
 import com.example.ai.providers.AiException
+import com.example.data.model.DocumentEntity
 import com.example.data.model.ThesisProjectEntity
 import com.example.data.model.ThesisProposalEntity
 import com.example.data.model.ThesisRevisionEntity
@@ -53,7 +54,14 @@ import java.io.InputStream
 /** ChatMessageEntity.attachedDocType of a Thesis Builder proposal card in Chat. */
 const val THESIS_PROPOSAL_CARD = "THESIS_PROPOSAL"
 
-enum class ThesisScreen { HOME, CREATE, PROJECT, SECTION, HISTORY, PREVIEW, SETTINGS }
+/**
+ * Screens of the Thesis Builder. PROJECT (overview), STRUCTURE, CHANGES, HISTORY and PREVIEW are
+ * the tabs of an open project; SECTION is the content editor of one section.
+ */
+enum class ThesisScreen { HOME, CREATE, PROJECT, STRUCTURE, SECTION, CHANGES, HISTORY, PREVIEW, SETTINGS }
+
+/** A document exported and saved to the Library (opened or shared from the workspace). */
+data class ThesisExportResult(val format: String, val document: DocumentEntity, val notes: List<String>)
 
 enum class ThesisBusy { ANALYZING, ASKING_AI, EXPORTING, PREVIEWING, SAVING }
 
@@ -69,7 +77,14 @@ data class ProposalReview(
 )
 
 /** A past revision compared with the current content. */
-data class RevisionCompare(val revision: ThesisRevisionEntity, val old: ThesisSnapshot, val current: ThesisSnapshot, val diff: ThesisDiffResult)
+data class RevisionCompare(
+    val revision: ThesisRevisionEntity,
+    val old: ThesisSnapshot,
+    val current: ThesisSnapshot,
+    val diff: ThesisDiffResult,
+    /** true: the changes made by [revision]; false: [revision] compared with the current version. */
+    val againstPrevious: Boolean = false
+)
 
 data class ThesisUiState(
     val workspaceOpen: Boolean = false,
@@ -85,7 +100,11 @@ data class ThesisUiState(
     val compare: RevisionCompare? = null,
     val previewFile: File? = null,
     val previewPages: Int = 0,
-    val lastExport: ThesisExport? = null
+    val lastExport: ThesisExportResult? = null,
+    /** Section that Chat content goes to when a message names no destination (thesis mode). */
+    val chatSectionId: String? = null,
+    /** Revisions in which the open section changed (section history). */
+    val sectionHistory: List<ThesisRevisionEntity>? = null
 )
 
 /** Messages for the user (localized by the UI). */
@@ -102,6 +121,7 @@ sealed class ThesisMessage {
     data class ImageFailed(val reason: String) : ThesisMessage()
     data class Failed(val what: String) : ThesisMessage()
     object Deleted : ThesisMessage()
+    object NothingToFormat : ThesisMessage()
 }
 
 /**
@@ -132,7 +152,8 @@ class ThesisController(
     private val splitter: ThesisContentSplitter = ThesisContentSplitter(),
     private val onMessage: (ThesisMessage) -> Unit = {},
     private val onChatNote: suspend (ThesisChatNote) -> Unit = {},
-    private val onSaveToLibrary: suspend (ThesisExport, String) -> String = { e, _ -> e.file.name }
+    /** Moves an export into the Library and returns its Library entry. */
+    private val onSaveToLibrary: suspend (ThesisExport, String) -> DocumentEntity
 ) {
     private val _state = MutableStateFlow(ThesisUiState())
     val state: StateFlow<ThesisUiState> = _state.asStateFlow()
@@ -196,7 +217,9 @@ class ThesisController(
 
     fun openWorkspace() = update { it.copy(workspaceOpen = true, screen = if (it.projectId != null) ThesisScreen.PROJECT else ThesisScreen.HOME) }
     fun closeWorkspace() = update { it.copy(workspaceOpen = false, review = null, compare = null) }
-    fun show(screen: ThesisScreen) = update { it.copy(screen = screen, compare = if (screen == ThesisScreen.HISTORY) it.compare else null) }
+    fun show(screen: ThesisScreen) = update {
+        it.copy(screen = screen, compare = if (screen == ThesisScreen.HISTORY) it.compare else null, sectionHistory = if (screen == ThesisScreen.SECTION) it.sectionHistory else null)
+    }
 
     fun openProject(projectId: String, screen: ThesisScreen = ThesisScreen.PROJECT) {
         projectIdFlow.value = projectId
@@ -204,7 +227,7 @@ class ThesisController(
         scope.launch { reload() }
     }
 
-    fun selectSection(sectionId: String) = update { it.copy(selectedSectionId = sectionId, screen = ThesisScreen.SECTION) }
+    fun selectSection(sectionId: String) = update { it.copy(selectedSectionId = sectionId, screen = ThesisScreen.SECTION, sectionHistory = null) }
 
     private suspend fun reload() {
         val id = _state.value.projectId ?: return
@@ -213,13 +236,16 @@ class ThesisController(
         update { it.copy(snapshot = snapshot, assets = assets) }
     }
 
-    /** Chat sends messages to this project until [exitChatMode]. */
-    fun enterChatMode(projectId: String) {
+    /**
+     * Chat sends messages to this project until [exitChatMode]. [sectionId] is the target section:
+     * content whose message names no destination goes there (still as a proposal to review).
+     */
+    fun enterChatMode(projectId: String, sectionId: String? = null) {
         if (_state.value.projectId != projectId) openProject(projectId)
-        update { it.copy(chatProjectId = projectId, workspaceOpen = false) }
+        update { it.copy(chatProjectId = projectId, chatSectionId = sectionId, workspaceOpen = false) }
     }
 
-    fun exitChatMode() = update { it.copy(chatProjectId = null) }
+    fun exitChatMode() = update { it.copy(chatProjectId = null, chatSectionId = null) }
 
     // ------------------------------------------------------------------ projects
 
@@ -363,7 +389,9 @@ class ThesisController(
         return p
     }
 
-    private suspend fun addContent(projectId: String, aiAssist: Boolean, snapshot: ThesisSnapshot, target: ThesisTarget?, content: String, request: String) {
+    private suspend fun addContent(projectId: String, aiAssist: Boolean, snapshot: ThesisSnapshot, named: ThesisTarget?, content: String, request: String) {
+        // The section chosen when Chat was opened from the workspace applies when none is named.
+        val target = named ?: _state.value.chatSectionId?.takeIf { id -> snapshot.section(id)?.let { it.enabled && it.kind.writable } == true }?.let { ThesisTarget(it) }
         // Local, word-for-word structuring by the Offline Formatting Agent.
         val elements = splitter.split(content)
         if (elements.isEmpty()) { note("thesis_note_unknown"); return }
@@ -542,6 +570,97 @@ class ThesisController(
         note("thesis_note_rejected")
     }
 
+    // ------------------------------------------------------------------ section tools (workspace)
+
+    /** Adds a heading the user typed to the open section (a revision; no AI). */
+    fun addHeading(sectionId: String, text: String) {
+        if (text.isBlank()) return
+        direct(listOf(ThesisOp.AddElements(sectionId, null, listOf(NewElement(ThesisStructure.newId("el"), ElementType.HEADING, text.trim(), ElementData(headingLevel = 1))))),
+            ChangeSource.USER, "heading")
+    }
+
+    /**
+     * Adds text the user typed: split word for word into paragraphs, lists and tables by the
+     * Offline Formatting Agent, then saved as a revision.
+     */
+    fun addText(sectionId: String, text: String) = launch(ThesisBusy.SAVING) {
+        val id = _state.value.projectId ?: return@launch
+        val elements = splitter.split(text)
+        if (elements.isEmpty()) return@launch
+        val revision = repository.applyDirect(id, listOf(ThesisOp.AddElements(sectionId, null, elements)), ChangeSource.USER, "text")
+        reload()
+        update { it.copy(previewFile = null) }
+        onMessage(ThesisMessage.Applied(revision.number))
+    }
+
+    /** Inserts an image picked in the workspace, with the caption typed by the user. */
+    fun addImage(sectionId: String, open: () -> InputStream?, name: String, mime: String, data: ElementData) = launch(ThesisBusy.SAVING) {
+        val id = _state.value.projectId ?: return@launch
+        val asset = try { repository.importImage(id, open, name, mime) } catch (e: com.example.thesis.data.ThesisAssetException) {
+            onMessage(ThesisMessage.ImageFailed(e.reason.name)); return@launch
+        }
+        val element = NewElement(ThesisStructure.newId("el"), ElementType.IMAGE, "", data.copy(assetId = asset.id))
+        val revision = repository.applyDirect(id, listOf(ThesisOp.AddElements(sectionId, null, listOf(element))), ChangeSource.IMAGE, "image")
+        reload()
+        update { it.copy(previewFile = null) }
+        onMessage(ThesisMessage.Applied(revision.number))
+    }
+
+    /** Inserts a table the user typed (cells exactly as written). */
+    fun addTable(sectionId: String, header: List<String>, rows: List<List<String>>, caption: String) {
+        if (header.isEmpty()) return
+        direct(listOf(ThesisOp.AddElements(sectionId, null, listOf(NewElement(ThesisStructure.newId("el"), ElementType.TABLE, "",
+            ElementData(caption = caption.trim(), tableHeader = header, tableRows = rows))))), ChangeSource.TABLE, "table")
+    }
+
+    /**
+     * "Apply formatting" (local, Offline Formatting Agent): paragraphs that contain lists,
+     * headings or tables are split into those elements and spacing is normalized. The result is
+     * a FORMATTING proposal to review; words are never changed.
+     */
+    fun formatSection(sectionId: String) = launch(ThesisBusy.ANALYZING) {
+        val projectId = _state.value.projectId ?: return@launch
+        val snapshot = repository.snapshot(projectId)
+        val ops = ArrayList<ThesisOp>()
+        for (e in snapshot.elementsOf(sectionId)) {
+            if (e.type != ElementType.PARAGRAPH) continue
+            val parts = splitter.split(e.text.replace("\r\n", "\n"))
+            if (parts.size > 1 || (parts.size == 1 && parts[0].type != ElementType.PARAGRAPH)) {
+                ops.add(ThesisOp.AddElements(sectionId, e.id, parts))
+                ops.add(ThesisOp.DeleteElement(e.id))
+            } else if (parts.size == 1 && parts[0].text != e.text) {
+                ops.add(ThesisOp.ReplaceText(e.id, parts[0].text))
+            }
+        }
+        if (ops.isEmpty()) { onMessage(ThesisMessage.NothingToFormat); return@launch }
+        propose(projectId, ops, ChangeSource.FORMATTING, "FORMAT", "formatting", "local:format")
+    }
+
+    /** Revisions in which [sectionId] changed (newest first; the last 40 revisions are checked). */
+    fun loadSectionHistory(sectionId: String) = launch(ThesisBusy.ANALYZING) {
+        val projectId = _state.value.projectId ?: return@launch
+        val revisions = repository.revisions(projectId).take(40)
+        val changed = ArrayList<ThesisRevisionEntity>()
+        var newer: String? = null
+        for (r in revisions) {
+            val hash = repository.revisionSnapshot(r.id).sectionHash(sectionId)
+            if (newer != null && newer != hash) changed.add(revisions[revisions.indexOf(r) - 1])
+            newer = hash
+        }
+        // Revision 1 created the project's first sections.
+        revisions.lastOrNull()?.takeIf { it.number == 1 }?.let { first -> if (repository.revisionSnapshot(first.id).section(sectionId) != null) changed.add(first) }
+        update { it.copy(sectionHistory = changed) }
+    }
+
+    /** Changes made BY [revision] (compared with the revision before it). */
+    fun compareWithPrevious(revision: ThesisRevisionEntity) = scope.launch {
+        val all = repository.revisions(revision.projectId)
+        val previous = all.firstOrNull { it.number == revision.number - 1 } ?: return@launch
+        val old = repository.revisionSnapshot(previous.id)
+        val new = repository.revisionSnapshot(revision.id)
+        update { it.copy(compare = RevisionCompare(revision, old, new, ThesisDiff.compare(old, new), againstPrevious = true), screen = ThesisScreen.HISTORY) }
+    }
+
     // ------------------------------------------------------------------ history
 
     fun compareRevision(revision: ThesisRevisionEntity) = scope.launch {
@@ -583,8 +702,9 @@ class ThesisController(
     fun export(format: String) = launch(ThesisBusy.EXPORTING) {
         val id = _state.value.projectId ?: return@launch
         val export = exporter.export(id, format)
-        val title = onSaveToLibrary(export, id)
-        update { it.copy(lastExport = export) }
-        onMessage(ThesisMessage.Exported(title, export.template.notes + export.warnings))
+        val document = onSaveToLibrary(export, id)
+        val notes = export.template.notes + export.warnings
+        update { it.copy(lastExport = ThesisExportResult(format, document, notes)) }
+        onMessage(ThesisMessage.Exported(document.title, notes))
     }
 }

@@ -37,6 +37,7 @@ import com.example.data.db.SmartBubbleDatabase
 import com.example.offline.RuleBasedFormattingEngine
 import com.example.thesis.THESIS_PROPOSAL_CARD
 import com.example.thesis.ThesisChatNote
+import com.example.thesis.ui.ThesisHost
 import com.example.thesis.ThesisController
 import com.example.thesis.ThesisMessage
 import com.example.thesis.ThesisNoteText
@@ -107,7 +108,7 @@ enum class AppNavTab {
     SETTINGS
 }
 
-class SmartBubbleViewModel(application: Application) : AndroidViewModel(application) {
+class SmartBubbleViewModel(application: Application) : AndroidViewModel(application), ThesisHost {
 
     private companion object {
         const val TAG = "SmartBubbleViewModel"
@@ -586,7 +587,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
      * Thesis Builder: structured thesis projects edited through Chat. AI tasks go through
      * [orchestrator] with the default provider; formatting and documents are produced locally.
      */
-    val thesis = ThesisController(
+    override val thesis = ThesisController(
         scope = viewModelScope,
         repository = thesisRepository,
         ai = OrchestratorThesisAi(
@@ -627,8 +628,20 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
     private var sessionBeforeThesis: String? = null
 
-    /** Chat sends the following messages and images to [projectId] (until [exitThesisChat]). */
-    fun enterThesisChat(projectId: String) {
+    // ThesisHost (used by the Thesis Builder workspace).
+    override val templateList: StateFlow<List<TemplateEntity>> get() = allTemplates
+    override val defaultContentLanguage: String get() = appLanguage.value
+    override val feedback: StateFlow<String?> get() = snackBarMessage
+    override fun consumeFeedback() = clearSnackBar()
+    override fun continueThesisInChat(projectId: String, sectionId: String?) = enterThesisChat(projectId, sectionId)
+    override fun openExportedDocument(document: DocumentEntity) = openDocument(document)
+    override fun shareExportedDocument(document: DocumentEntity) = shareDocument(document)
+
+    /**
+     * Chat sends the following messages and images to [projectId] (until [exitThesisChat]);
+     * [sectionId] is the target section for content that names no destination.
+     */
+    fun enterThesisChat(projectId: String, sectionId: String? = null) {
         launchSafely("enterThesisChat") {
             val project = thesisRepository.project(projectId) ?: return@launchSafely
             val conversationId = thesisConversationId(projectId)
@@ -638,7 +651,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             if (!_currentSessionId.value.startsWith("thesis-")) sessionBeforeThesis = _currentSessionId.value
             if (_voiceConversationActive.value) stopVoiceConversation()
             _currentSessionId.value = conversationId
-            thesis.enterChatMode(projectId)
+            thesis.enterChatMode(projectId, sectionId)
             setNavTab(AppNavTab.CHAT)
         }
     }
@@ -751,10 +764,11 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         is ThesisMessage.ImageFailed -> str(R.string.thesis_msg_image_failed)
         is ThesisMessage.Failed -> str(R.string.thesis_msg_failed)
         ThesisMessage.Deleted -> str(R.string.thesis_msg_deleted)
+        ThesisMessage.NothingToFormat -> str(R.string.thesis_msg_nothing_to_format)
     }
 
     /** Copies an export into the Library folder and registers it (linked to the project). */
-    private suspend fun saveThesisExport(export: ThesisExport, projectId: String): String = withContext(Dispatchers.IO) {
+    private suspend fun saveThesisExport(export: ThesisExport, projectId: String): DocumentEntity = withContext(Dispatchers.IO) {
         val dir = File(context.filesDir, "generated_docs").apply { mkdirs() }
         val ext = export.file.extension
         val target = DocumentFileNames.createUniqueFile(dir, export.file.nameWithoutExtension, ext)
@@ -778,7 +792,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             isOrchestratorVerified = false
         )
         database.documentDao().insertDocument(entity)
-        entity.title
+        entity
     }
 
     // ------------------------------------------------------------------ built-in slash commands
