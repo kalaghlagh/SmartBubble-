@@ -1,5 +1,6 @@
 package com.example.thesis.export
 
+import com.example.thesis.core.InlineFormat
 import com.example.thesis.core.ThesisLabels
 import com.example.thesis.core.ThesisNumbering
 import com.example.thesis.core.ThesisStructure
@@ -119,6 +120,25 @@ class ThesisDocxWriter {
 
     private fun pageBreak(sb: StringBuilder) = sb.append("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>")
 
+    /** Runs of **bold**, *italic* and __underline__ text (markers typed in the section editor). */
+    private fun runs(text: String, ctx: Ctx, rPr: String = ""): String =
+        if (!InlineFormat.hasMarkers(text)) run(text, ctx, rPr)
+        else InlineFormat.parse(text).joinToString("") { r ->
+            run(r.text, ctx, rPr + (if (r.bold) "<w:b/><w:bCs/>" else "") + (if (r.italic) "<w:i/><w:iCs/>" else "") + (if (r.underline) "<w:u w:val=\"single\"/>" else ""))
+        }
+
+    /** A content paragraph: formatted runs, the paragraph's own alignment and page break. */
+    private fun textPara(sb: StringBuilder, ctx: Ctx, e: ThesisElement, text: String, style: String?, extraPPr: String = "") {
+        val jc = when (e.data.textAlign) {
+            "center" -> "<w:jc w:val=\"center\"/>"
+            "end" -> "<w:jc w:val=\"${if (ctx.rtl) "left" else "right"}\"/>"
+            "justify" -> "<w:jc w:val=\"both\"/>"
+            else -> ""
+        }
+        val pb = if (e.data.pageBreakBefore) "<w:pageBreakBefore/>" else ""
+        sb.append("<w:p>").append(pPr(style, ctx, text, pb + extraPPr + jc)).append(runs(text, ctx)).append("</w:p>")
+    }
+
     private fun field(instr: String, cached: String, ctx: Ctx): String =
         "<w:r><w:fldChar w:fldCharType=\"begin\" w:dirty=\"true\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> $instr </w:instrText></w:r>" +
             "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>" + run(cached, ctx) + "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
@@ -178,8 +198,10 @@ class ThesisDocxWriter {
         if (m.specialization.isNotBlank()) para(sb, ctx, "${ThesisLabels.get(lang, "specialization")}: ${m.specialization}", "CoverLine", center)
         sb.append("<w:p/>")
         para(sb, ctx, m.title, "Title", center)
+        if (m.subtitle.isNotBlank()) para(sb, ctx, m.subtitle, "CoverLine", center, "<w:i/>")
         sb.append("<w:p/>")
         if (m.studentName.isNotBlank()) para(sb, ctx, "${ThesisLabels.get(lang, "student")}: ${m.studentName}", "CoverLine", center)
+        if (m.studentId.isNotBlank()) para(sb, ctx, "${ThesisLabels.get(lang, "studentId")}: ${m.studentId}", "CoverLine", center)
         if (m.supervisor.isNotBlank()) para(sb, ctx, "${ThesisLabels.get(lang, "supervisor")}: ${m.supervisor}", "CoverLine", center)
         if (m.coSupervisor.isNotBlank()) para(sb, ctx, "${ThesisLabels.get(lang, "coSupervisor")}: ${m.coSupervisor}", "CoverLine", center)
         val jury = m.juryMembers.lines().map { it.trim() }.filter { it.isNotEmpty() }
@@ -193,21 +215,23 @@ class ThesisDocxWriter {
             sb.append("<w:p/>")
             para(sb, ctx, "${ThesisLabels.get(lang, "year")}: ${m.academicYear}", "CoverLine", center)
         }
+        if (m.submissionDate.isNotBlank()) para(sb, ctx, "${ThesisLabels.get(lang, "submitted")}: ${m.submissionDate}", "CoverLine", center)
     }
 
     private fun element(sb: StringBuilder, ctx: Ctx, e: ThesisElement, sectionLevel: Int) {
         val (text, missing) = ThesisStructure.resolveCrossReferences(e.text, ctx.numbering, ctx.language)
         if (missing.isNotEmpty()) ctx.warnings.add("crossref_missing:${missing.joinToString(",")}")
         when (e.type) {
-            ElementType.HEADING -> para(sb, ctx, text, "Heading${(sectionLevel + e.data.headingLevel.coerceAtLeast(1)).coerceAtMost(4)}")
-            ElementType.PARAGRAPH -> para(sb, ctx, text, null)
-            ElementType.REFERENCE -> para(sb, ctx, text, "Bibliography")
+            ElementType.HEADING -> textPara(sb, ctx, e, text, "Heading${(sectionLevel + e.data.headingLevel.coerceAtLeast(1)).coerceAtMost(4)}")
+            ElementType.PARAGRAPH -> textPara(sb, ctx, e, text, null)
+            ElementType.REFERENCE -> textPara(sb, ctx, e, text, "Bibliography")
             ElementType.LIST_ITEM -> {
                 val marker = if (e.data.ordered) e.data.marker.ifBlank { "•" } else "•"
                 val indent = 360 + e.data.headingLevel.coerceIn(0, 3) * 360
-                para(sb, ctx, "$marker\t$text", "ListParagraph", "<w:ind w:${if (ctx.rtl) "right" else "left"}=\"${indent + 360}\" w:hanging=\"360\"/>")
+                textPara(sb, ctx, e, "$marker\t$text", "ListParagraph", "<w:ind w:${if (ctx.rtl) "right" else "left"}=\"${indent + 360}\" w:hanging=\"360\"/>")
             }
             ElementType.IMAGE -> {
+                if (e.data.pageBreakBefore) pageBreak(sb)
                 val asset = e.data.assetId?.let { ctx.assets[it] }
                 if (asset == null || !File(asset.path).isFile) {
                     ctx.warnings.add("image_missing:${e.id}")
@@ -217,6 +241,7 @@ class ThesisDocxWriter {
                 caption(sb, ctx, "Figure", "figure", ctx.numbering.figures[e.id] ?: 0, e.data.caption, e.data.source)
             }
             ElementType.TABLE -> {
+                if (e.data.pageBreakBefore) pageBreak(sb)
                 // Academic convention: table captions above the table.
                 caption(sb, ctx, "Table", "table", ctx.numbering.tables[e.id] ?: 0, e.data.caption, "")
                 table(sb, ctx, e)

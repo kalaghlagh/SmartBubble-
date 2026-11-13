@@ -22,7 +22,8 @@ object ThesisLabels {
             "chapter" to "Chapter", "part" to "Part", "figure" to "Figure", "table" to "Table", "page" to "Page",
             "supervisor" to "Supervisor", "coSupervisor" to "Co-supervisor", "student" to "Presented by", "jury" to "Jury members",
             "year" to "Academic year", "LICENCE" to "Licence Thesis", "MASTER" to "Master's Thesis", "DOCTORATE" to "Doctoral Dissertation",
-            "specialization" to "Specialization"
+            "specialization" to "Specialization", "ABSTRACT_OTHER" to "Résumé / الملخص", "studentId" to "Student ID",
+            "submitted" to "Submission date"
         ),
         "fr" to mapOf(
             "COVER" to "Page de garde", "DEDICATION" to "Dédicace", "ACKNOWLEDGEMENTS" to "Remerciements",
@@ -32,7 +33,8 @@ object ThesisLabels {
             "chapter" to "Chapitre", "part" to "Partie", "figure" to "Figure", "table" to "Tableau", "page" to "Page",
             "supervisor" to "Encadrant", "coSupervisor" to "Co-encadrant", "student" to "Présenté par", "jury" to "Membres du jury",
             "year" to "Année universitaire", "LICENCE" to "Mémoire de Licence", "MASTER" to "Mémoire de Master", "DOCTORATE" to "Thèse de Doctorat",
-            "specialization" to "Spécialité"
+            "specialization" to "Spécialité", "ABSTRACT_OTHER" to "Abstract / الملخص", "studentId" to "Matricule",
+            "submitted" to "Date de dépôt"
         ),
         "ar" to mapOf(
             "COVER" to "صفحة الغلاف", "DEDICATION" to "إهداء", "ACKNOWLEDGEMENTS" to "شكر وتقدير",
@@ -42,7 +44,8 @@ object ThesisLabels {
             "chapter" to "الفصل", "part" to "الجزء", "figure" to "الشكل", "table" to "الجدول", "page" to "الصفحة",
             "supervisor" to "إشراف", "coSupervisor" to "مشرف مساعد", "student" to "إعداد الطالب(ة)", "jury" to "أعضاء لجنة المناقشة",
             "year" to "السنة الجامعية", "LICENCE" to "مذكرة ليسانس", "MASTER" to "مذكرة ماستر", "DOCTORATE" to "أطروحة دكتوراه",
-            "specialization" to "التخصص"
+            "specialization" to "التخصص", "ABSTRACT_OTHER" to "Résumé / Abstract", "studentId" to "رقم التسجيل",
+            "submitted" to "تاريخ الإيداع"
         )
     )
 
@@ -70,12 +73,15 @@ object ThesisStructure {
      */
     fun defaultSections(language: String, level: AcademicLevel): List<ThesisSection> {
         val kinds = listOf(
-            SectionKind.COVER, SectionKind.DEDICATION, SectionKind.ACKNOWLEDGEMENTS, SectionKind.TABLE_OF_CONTENTS,
-            SectionKind.LIST_OF_FIGURES, SectionKind.LIST_OF_TABLES, SectionKind.ABBREVIATIONS, SectionKind.INTRODUCTION
+            SectionKind.COVER, SectionKind.DEDICATION, SectionKind.ACKNOWLEDGEMENTS, SectionKind.ABSTRACT, SectionKind.ABSTRACT,
+            SectionKind.TABLE_OF_CONTENTS, SectionKind.LIST_OF_FIGURES, SectionKind.LIST_OF_TABLES, SectionKind.ABBREVIATIONS,
+            SectionKind.INTRODUCTION
         )
         val out = ArrayList<ThesisSection>()
         kinds.forEach { k ->
-            out.add(ThesisSection(newId("sec"), null, k, ThesisLabels.get(language, k.name), out.size, enabled = k != SectionKind.ABBREVIATIONS))
+            // The second abstract is the one in the other languages (Résumé / الملخص).
+            val title = if (k == SectionKind.ABSTRACT && out.any { it.kind == SectionKind.ABSTRACT }) ThesisLabels.get(language, "ABSTRACT_OTHER") else ThesisLabels.get(language, k.name)
+            out.add(ThesisSection(newId("sec"), null, k, title, out.size, enabled = k != SectionKind.ABBREVIATIONS))
         }
         val chapters = if (level == AcademicLevel.LICENCE) 2 else 3
         repeat(chapters) { out.add(ThesisSection(newId("sec"), null, SectionKind.CHAPTER, "", out.size)) }

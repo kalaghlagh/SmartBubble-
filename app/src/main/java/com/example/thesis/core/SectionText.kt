@@ -40,6 +40,22 @@ object SectionText {
 
     private val TOKEN = Regex("""^\[[^\[\]\n]{1,40}\s\d{1,4}]$""")
 
+    /** Page break line, in the three content languages (any of them is understood). */
+    val PAGE_BREAKS = setOf("[Page break]", "[Saut de page]", "[فاصل صفحة]")
+    fun pageBreakToken(language: String) = when (language) { "fr" -> "[Saut de page]"; "ar" -> "[فاصل صفحة]"; else -> "[Page break]" }
+
+    /** Paragraph alignment typed at the start of a paragraph (or after a heading's #). */
+    val ALIGN_PREFIXES = mapOf("center" to "{center} ", "end" to "{end} ", "justify" to "{justify} ")
+
+    /** Removes an alignment prefix: returns the text and the alignment ("" when none). */
+    fun splitAlign(text: String): Pair<String, String> {
+        for ((align, prefix) in ALIGN_PREFIXES) if (text.startsWith(prefix)) return text.removePrefix(prefix) to align
+        for ((align, prefix) in ALIGN_PREFIXES) if (text.startsWith(prefix.trimEnd())) return text.removePrefix(prefix.trimEnd()).trimStart() to align
+        return text to ""
+    }
+
+    private fun alignPrefix(align: String) = ALIGN_PREFIXES[align].orEmpty()
+
     fun mediaToken(language: String, type: ElementType, n: Int): String =
         "[" + ThesisLabels.get(language, if (type == ElementType.TABLE) "table" else "figure") + " " + n + "]"
 
@@ -51,17 +67,21 @@ object SectionText {
         val sb = StringBuilder()
         var previous: ThesisElement? = null
         for (e in snapshot.elementsOf(sectionId)) {
+            if (e.data.pageBreakBefore) {
+                if (sb.isNotEmpty()) sb.append("\n\n")
+                sb.append(pageBreakToken(language))
+            }
             val line = when (e.type) {
                 ElementType.IMAGE, ElementType.TABLE -> {
                     val token = if (e.type == ElementType.TABLE) mediaToken(language, e.type, ++tables) else mediaToken(language, e.type, ++figures)
                     media[token] = DraftMedia(e.id, e.type, e.data)
                     token
                 }
-                ElementType.HEADING -> "#".repeat(e.data.headingLevel.coerceIn(1, 4)) + " " + e.text
-                ElementType.LIST_ITEM -> (e.data.marker.ifBlank { if (e.data.ordered) "1." else "-" }) + " " + e.text
-                else -> e.text
+                ElementType.HEADING -> "#".repeat(e.data.headingLevel.coerceIn(1, 4)) + " " + alignPrefix(e.data.textAlign) + e.text
+                ElementType.LIST_ITEM -> (e.data.marker.ifBlank { if (e.data.ordered) "1." else "-" }) + " " + alignPrefix(e.data.textAlign) + e.text
+                else -> alignPrefix(e.data.textAlign) + e.text
             }
-            if (sb.isNotEmpty()) sb.append(if (previous?.type == ElementType.LIST_ITEM && e.type == ElementType.LIST_ITEM) "\n" else "\n\n")
+            if (sb.isNotEmpty()) sb.append(if (!e.data.pageBreakBefore && previous?.type == ElementType.LIST_ITEM && e.type == ElementType.LIST_ITEM) "\n" else "\n\n")
             sb.append(line)
             previous = e
         }
@@ -82,6 +102,7 @@ object SectionText {
     private sealed class Piece {
         data class Text(val text: String) : Piece()
         data class Media(val token: String) : Piece()
+        object Break : Piece()
     }
 
     private fun pieces(text: String, media: Map<String, DraftMedia>): List<Piece> {
@@ -90,7 +111,11 @@ object SectionText {
         fun flush() { if (buf.isNotBlank()) out.add(Piece.Text(buf.toString())); buf.setLength(0) }
         for (line in text.replace("\r\n", "\n").split('\n')) {
             val t = line.trim()
-            if (t in media && TOKEN.matches(t)) { flush(); out.add(Piece.Media(t)) } else buf.append(line).append('\n')
+            when {
+                t in media && TOKEN.matches(t) -> { flush(); out.add(Piece.Media(t)) }
+                t in PAGE_BREAKS -> { flush(); out.add(Piece.Break) }
+                else -> buf.append(line).append('\n')
+            }
         }
         flush()
         return out
@@ -113,22 +138,35 @@ object SectionText {
         val unusedText = old.filter { it.type != ElementType.IMAGE && it.type != ElementType.TABLE }.toMutableList()
         val items = ArrayList<Item>()
         val dataUpdates = ArrayList<ThesisOp>()
+        var breakPending = false
         for (piece in pieces(draft.text, draft.media)) {
             when (piece) {
+                is Piece.Break -> breakPending = true
                 is Piece.Media -> {
                     val m = draft.media.getValue(piece.token)
+                    val data = m.data.copy(pageBreakBefore = breakPending)
+                    breakPending = false
                     val existing = m.elementId?.let { id -> old.firstOrNull { it.id == id } }
                     if (existing != null && items.none { it is Item.Keep && it.id == existing.id }) {
                         items.add(Item.Keep(existing.id))
-                        if (existing.data != m.data) dataUpdates.add(ThesisOp.UpdateData(existing.id, m.data))
+                        if (existing.data != data) dataUpdates.add(ThesisOp.UpdateData(existing.id, data))
                     } else if (existing == null) {
-                        items.add(Item.Add(NewElement(ThesisStructure.newId("el"), m.type, "", m.data)))
+                        items.add(Item.Add(NewElement(ThesisStructure.newId("el"), m.type, "", data)))
                     }
                 }
-                is Piece.Text -> for (n in split(piece.text)) {
+                is Piece.Text -> for (raw in split(piece.text)) {
+                    // "{center} text": the alignment is stored with the element, not in its text.
+                    val (text, align) = if (raw.type == ElementType.TABLE) raw.text to "" else splitAlign(raw.text)
+                    val n = raw.copy(text = text, data = raw.data.copy(textAlign = align, pageBreakBefore = breakPending))
+                    breakPending = false
                     // Unchanged text keeps its element (and its type, id and history).
                     val same = if (n.type == ElementType.TABLE) null else unusedText.firstOrNull { norm(it.text) == norm(n.text) }
-                    if (same != null) { unusedText.remove(same); items.add(Item.Keep(same.id)) } else items.add(Item.Add(n))
+                    if (same != null) {
+                        unusedText.remove(same)
+                        items.add(Item.Keep(same.id))
+                        val wanted = same.data.copy(textAlign = align, pageBreakBefore = n.data.pageBreakBefore)
+                        if (wanted != same.data) dataUpdates.add(ThesisOp.UpdateData(same.id, wanted))
+                    } else items.add(Item.Add(n))
                 }
             }
         }

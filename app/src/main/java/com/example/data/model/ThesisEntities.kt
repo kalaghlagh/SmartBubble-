@@ -1,11 +1,12 @@
 package com.example.data.model
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * Thesis Builder tables (schema v4). Content is stored as structured sections and elements with
+ * Thesis Builder tables (schema v4, columns added in v5). Content is stored as structured sections and elements with
  * stable ids; pages are computed when a document is rendered. Large data stays out of Room:
  * images live in the project's private folder and each revision's full snapshot is a compressed
  * file referenced by [ThesisRevisionEntity.snapshotPath].
@@ -36,7 +37,11 @@ data class ThesisProjectEntity(
     val currentRevisionId: String?,
     val currentRevisionNumber: Int,
     val createdAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
+    // Added in database version 5.
+    @ColumnInfo(defaultValue = "") val subtitle: String = "",
+    @ColumnInfo(defaultValue = "") val studentId: String = "",
+    @ColumnInfo(defaultValue = "") val submissionDate: String = ""
 )
 
 @Entity(tableName = "thesis_sections", indices = [Index("projectId")])
@@ -47,7 +52,10 @@ data class ThesisSectionEntity(
     val kind: String,
     val title: String,
     val position: Int,
-    val enabled: Boolean
+    val enabled: Boolean,
+    // Added in database version 5.
+    @ColumnInfo(defaultValue = "0") val completed: Boolean = false,
+    @ColumnInfo(defaultValue = "") val description: String = ""
 )
 
 @Entity(tableName = "thesis_elements", indices = [Index("projectId"), Index("sectionId")])

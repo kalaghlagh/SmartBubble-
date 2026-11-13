@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule

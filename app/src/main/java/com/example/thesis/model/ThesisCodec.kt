@@ -25,6 +25,8 @@ object ThesisCodec {
         if (d.tableHeader.isNotEmpty()) put("th", d.tableHeader)
         if (d.tableRows.isNotEmpty()) put("tr", d.tableRows)
         if (d.verified) put("ver", true)
+        if (d.textAlign.isNotEmpty()) put("ta", d.textAlign)
+        if (d.pageBreakBefore) put("pb", true)
     }
 
     fun dataFromMap(m: Map<String, Any?>?): ElementData {
@@ -40,7 +42,9 @@ object ThesisCodec {
             align = (m["al"] as? String) ?: "center",
             tableHeader = strings(m["th"]),
             tableRows = Json.arr(m["tr"])?.map { strings(it) } ?: emptyList(),
-            verified = b(m["ver"])
+            verified = b(m["ver"]),
+            textAlign = s(m["ta"]),
+            pageBreakBefore = b(m["pb"])
         )
     }
 
@@ -52,7 +56,8 @@ object ThesisCodec {
         "university" to m.university, "faculty" to m.faculty, "department" to m.department,
         "specialization" to m.specialization, "supervisor" to m.supervisor, "coSupervisor" to m.coSupervisor,
         "year" to m.academicYear, "jury" to m.juryMembers, "extra" to m.extraMetadata,
-        "logo" to m.logoAssetId, "template" to m.templateId
+        "logo" to m.logoAssetId, "template" to m.templateId,
+        "subtitle" to m.subtitle, "studentId" to m.studentId, "submitted" to m.submissionDate
     )
 
     fun metaFromMap(m: Map<String, Any?>?): ThesisMeta {
@@ -64,18 +69,20 @@ object ThesisCodec {
             studentName = s(m["student"]), university = s(m["university"]), faculty = s(m["faculty"]),
             department = s(m["department"]), specialization = s(m["specialization"]), supervisor = s(m["supervisor"]),
             coSupervisor = s(m["coSupervisor"]), academicYear = s(m["year"]), juryMembers = s(m["jury"]),
-            extraMetadata = s(m["extra"]), logoAssetId = m["logo"] as? String, templateId = m["template"] as? String
+            extraMetadata = s(m["extra"]), logoAssetId = m["logo"] as? String, templateId = m["template"] as? String,
+            subtitle = s(m["subtitle"]), studentId = s(m["studentId"]), submissionDate = s(m["submitted"])
         )
     }
 
     fun sectionToMap(x: ThesisSection): Map<String, Any?> = linkedMapOf(
-        "id" to x.id, "parent" to x.parentId, "kind" to x.kind.name, "title" to x.title, "pos" to x.position, "on" to x.enabled, "done" to x.completed
+        "id" to x.id, "parent" to x.parentId, "kind" to x.kind.name, "title" to x.title, "pos" to x.position, "on" to x.enabled, "done" to x.completed, "desc" to x.description
     )
 
     fun sectionFromMap(m: Map<String, Any?>): ThesisSection = ThesisSection(
         id = s(m["id"]), parentId = m["parent"] as? String, kind = SectionKind.parse(m["kind"] as? String),
         title = s(m["title"]), position = i(m["pos"]), enabled = (m["on"] as? Boolean) ?: true,
-        completed = (m["done"] as? Boolean) ?: false
+        completed = (m["done"] as? Boolean) ?: false,
+        description = s(m["desc"])
     )
 
     fun elementToMap(e: ThesisElement): Map<String, Any?> = linkedMapOf(
