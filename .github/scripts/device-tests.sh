@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs the section editor tests (ThesisEditorDeviceTest) on the running emulator and keeps the
+# Runs every instrumented test (app/src/androidTest: section editor, app-wide smoke tests in
+# EN/FR/AR, class initialization on ART, PDF engine) on the running emulator and keeps the
 # evidence in device-test-output/: am instrument output, full logcat, every FATAL EXCEPTION with
 # its stack trace, and the screenshots the test wrote. Exits non-zero when a test failed or the
 # app process crashed.
@@ -14,10 +15,11 @@ adb shell getprop ro.build.version.sdk >> "$out/android-version.txt"
 adb install -r -g "$apk"
 adb install -r -g "$test_apk"
 adb logcat -c
-adb shell am instrument -w -r -e class com.example.thesis.ThesisEditorDeviceTest \
-  "$pkg.test/androidx.test.runner.AndroidJUnitRunner" | tee "$out/instrument.txt"
+adb shell am instrument -w -r "$pkg.test/androidx.test.runner.AndroidJUnitRunner" | tee "$out/instrument.txt"
 adb logcat -d -v threadtime > "$out/logcat.txt"
-adb pull "/sdcard/Android/data/$pkg/files/thesis-device" "$out/screenshots" || echo "no screenshots pulled"
+for d in thesis-device app-device; do
+  adb pull "/sdcard/Android/data/$pkg/files/$d" "$out/screenshots-$d" || echo "no $d screenshots pulled"
+done
 grep -n -A80 "FATAL EXCEPTION" "$out/logcat.txt" > "$out/fatal-exceptions.txt" || true
 grep -n "AndroidRuntime\|System.err" "$out/logcat.txt" | head -400 > "$out/androidruntime.txt" || true
 if [ -s "$out/fatal-exceptions.txt" ]; then echo "::error::The app crashed during the device tests (see fatal-exceptions.txt)."; cat "$out/fatal-exceptions.txt"; fi

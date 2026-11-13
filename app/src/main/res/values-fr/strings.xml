@@ -810,6 +810,12 @@
     <string name="thesis_saved_to_device">Enregistré sur l\'appareil</string>
     <string name="thesis_save_device_failed">Le fichier n\'a pas pu être enregistré</string>
     <string name="crash_report_title">L’application s’est fermée de façon inattendue</string>
-    <string name="crash_report_text">Détails de l’erreur de la dernière session. Copiez-les et envoyez-les au développeur. Ils ne contiennent aucun texte saisi.</string>
+    <string name="crash_report_text">Détails de l\'erreur de la dernière session. Copiez-les et envoyez-les au développeur. Ils contiennent l\'erreur, la version de l\'application et le modèle du téléphone ; les clés sont retirées, mais un message d\'erreur peut citer quelques mots du contenu traité.</string>
     <string name="crash_report_copy">Copier le rapport</string>
+    <string name="delivery_open_with">Ouvrir avec</string>
+    <string name="delivery_share_with">Partager avec</string>
+    <string name="delivery_no_app">Aucune application de ce téléphone ne peut ouvrir ce fichier.</string>
+    <string name="delivery_open_failed">Le fichier n\'a pas pu être ouvert.</string>
+    <string name="delivery_share_failed">Le fichier n\'a pas pu être partagé.</string>
+    <string name="scan_docx_ready">J\'ai numérisé votre document et créé un document Word modifiable : **%1$s** (%2$d pages). Le texte a été copié dans le presse-papiers et le DOCX est enregistré dans votre Bibliothèque.</string>
 </resources>

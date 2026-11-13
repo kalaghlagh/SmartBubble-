@@ -128,7 +128,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     private val context = application.applicationContext
     val database = SmartBubbleDatabase.getDatabase(context)
     val preferences = PreferencesManager(context)
-    val deliveryManager = DeliveryManager(context)
+    val deliveryManager = DeliveryManager(context) { id -> str(id) }
     private val credentialStore = CredentialStore(context)
     /** Provider management + single source of truth for the default provider (Room flag). */
     val providerManager = ProviderManager(database, credentialStore)
@@ -1503,6 +1503,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     /** Called when the app leaves the foreground: the mic is closed and speech stops. */
     fun onAppBackgrounded() {
         stopVoiceConversation()
+        // Leaving the app (for example to copy text for Paste Text) can end the process: unsaved
+        // section text is saved now so it is not lost.
+        thesis.saveIfDirty()
     }
 
     fun setVoiceLanguage(language: String) {
@@ -1958,7 +1961,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 val assistantReply = if (isArabic) {
                     "تم مسح ومعالجة المستند ضوئياً بنجاح وتوليد ملف Word (DOCX) أصلي قابل للتحرير بالكامل: **${docEntity.title}** (${reviewState.pages.size} صفحات). تم نسخ المحتوى النصي إلى الحافظة وحفظ الملف في مكتبتك."
                 } else {
-                    "I've scanned and transformed your document into a genuine, fully editable Word document: **${docEntity.title}** (${reviewState.pages.size} pages). The text has been copied to your clipboard and the DOCX is saved in your Library."
+                    str(R.string.scan_docx_ready, docEntity.title, reviewState.pages.size)
                 }
 
                 val assistantMsg = ChatMessageEntity(

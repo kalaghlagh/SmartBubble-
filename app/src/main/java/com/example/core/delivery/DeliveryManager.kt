@@ -3,16 +3,23 @@ package com.example.core.delivery
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.util.Log
 import android.net.Uri
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import com.example.R
 import java.io.File
 
 /**
  * Manages the "BOTH Delivery System" (Real Office File + Clipboard Content).
  */
-class DeliveryManager(private val context: Context) {
+class DeliveryManager(
+    private val context: Context,
+    /** Strings in the app language (the application context follows the system language only). */
+    private val strings: (Int) -> String = { context.getString(it) }
+) {
 
     fun deliverBoth(
         file: File,
@@ -72,12 +79,16 @@ class DeliveryManager(private val context: Context) {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            val chooser = Intent.createChooser(intent, "Open with").apply {
+            val chooser = Intent.createChooser(intent, strings(R.string.delivery_open_with)).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(chooser)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(context, strings(R.string.delivery_no_app), Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
-            Toast.makeText(context, "No compatible application found to open this file.", Toast.LENGTH_LONG).show()
+            // For example a file outside the folders the FileProvider exposes: not a missing app.
+            Log.e("DeliveryManager", "openFile failed", e)
+            Toast.makeText(context, strings(R.string.delivery_open_failed), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -95,12 +106,13 @@ class DeliveryManager(private val context: Context) {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            val chooser = Intent.createChooser(intent, "Share Document").apply {
+            val chooser = Intent.createChooser(intent, strings(R.string.delivery_share_with)).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(chooser)
         } catch (e: Exception) {
-            Toast.makeText(context, "Unable to share file.", Toast.LENGTH_SHORT).show()
+            Log.e("DeliveryManager", "shareFile failed", e)
+            Toast.makeText(context, strings(R.string.delivery_share_failed), Toast.LENGTH_SHORT).show()
         }
     }
 

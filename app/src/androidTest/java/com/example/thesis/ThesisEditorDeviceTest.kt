@@ -205,6 +205,25 @@ class ThesisEditorDeviceTest {
     }
 
     @Test
+    fun leavingTheApp_savesUnsavedText() {
+        openEditor()
+        field().performTextInput("Typed before leaving the app.")
+        compose.waitForIdle()
+        assertTrue(vm.thesis.state.value.draft!!.dirty)
+        // Another app comes to the front (as when copying text for Paste Text): onStop runs.
+        compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+        // Plain polling: the activity is stopped, so the Compose test clock is not used here.
+        val thesis = vm.thesis
+        val deadline = System.currentTimeMillis() + 20_000
+        while (!(thesis.state.value.busy == null && thesis.state.value.draft?.dirty == false)) {
+            if (System.currentTimeMillis() > deadline) throw AssertionError("not saved in background: busy=${thesis.state.value.busy} dirty=${thesis.state.value.draft?.dirty}")
+            Thread.sleep(50)
+        }
+        compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+        assertTrue(text.contains("Typed before leaving the app."))
+    }
+
+    @Test
     fun pasteText_everyKindOfClipboard() {
         openEditor()
         field().performTextInput("Existing paragraph.")
