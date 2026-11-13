@@ -18,6 +18,7 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextInputSelection
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performTouchInput
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -455,10 +456,20 @@ class ThesisAndroidTest {
 
     private fun tagExists(tag: String) = compose.onAllNodes(androidx.compose.ui.test.hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
 
+    /** Controller state and the semantics tree of every window, for failure messages. */
+    private fun diagnostics(): String = buildString {
+        val st = controller.state.value
+        append("state: screen=${st.screen} busy=${st.busy} review=${st.review != null} assist=${st.assist != null} ")
+        append("draft=${st.draft?.text?.replace("\n", "\\n")?.take(300)}\n")
+        try { append(compose.onAllNodes(androidx.compose.ui.test.isRoot()).printToString(maxDepth = 60)) } catch (e: Throwable) { append("semantics tree unavailable: $e") }
+    }
+
     private fun tap(tag: String) {
-        try { compose.waitUntil(10_000) { tagExists(tag) } } catch (e: Throwable) { throw AssertionError("Timed out waiting for node '$tag' to tap", e) }
+        try { compose.waitUntil(10_000) { tagExists(tag) } } catch (e: Throwable) { throw AssertionError("Timed out waiting for node '$tag' to tap\n" + diagnostics(), e) }
         val node = compose.onNodeWithTag(tag)
         try { node.performScrollTo() } catch (e: AssertionError) { /* not inside a scrolling container */ }
+        // A click on a node outside the visible window is not delivered: fail with the evidence.
+        try { node.assertIsDisplayed() } catch (e: AssertionError) { throw AssertionError("Node '$tag' exists but is not displayed, the tap cannot reach it\n" + diagnostics(), e) }
         node.performClick()
         compose.waitForIdle()
     }
@@ -483,7 +494,7 @@ class ThesisAndroidTest {
 
     /** waitUntil that names the step in the failure message (shown in the CI summary). */
     private fun await(step: String, timeout: Long = 15_000, condition: () -> Boolean) {
-        try { compose.waitUntil(timeout) { condition() } } catch (e: Throwable) { throw AssertionError("Timed out: $step", e) }
+        try { compose.waitUntil(timeout) { condition() } } catch (e: Throwable) { throw AssertionError("Timed out: $step\n" + diagnostics(), e) }
     }
 
     private fun awaitRepo(step: String, timeout: Long = 15_000, condition: suspend () -> Boolean) = await(step, timeout) { runBlocking { condition() } }

@@ -220,7 +220,10 @@ class ThesisController(
 
     /** Runs one operation at a time; the UI disables actions while [ThesisUiState.busy] is set. */
     private fun launch(busy: ThesisBusy, block: suspend CoroutineScope.() -> Unit) {
-        if (job?.isActive == true) return
+        // Guarded by the busy state the UI shows (not by job.isActive): the previous job publishes
+        // busy = null in its finally block while it is still technically active, and a request
+        // made right after that (buttons are enabled again) must not be dropped silently.
+        if (_state.value.busy != null) return
         update { it.copy(busy = busy) }
         job = scope.launch {
             try {
