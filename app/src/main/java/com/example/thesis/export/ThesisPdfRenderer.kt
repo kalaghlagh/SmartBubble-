@@ -79,7 +79,7 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
             .setAlignment(when (align) { "center" -> Layout.Alignment.ALIGN_CENTER; "end" -> Layout.Alignment.ALIGN_OPPOSITE; else -> Layout.Alignment.ALIGN_NORMAL })
             .setLineSpacing(0f, multiplier)
             .setIncludePad(false)
-        if (align == "justify" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) b.setJustificationMode(Layout.JUSTIFICATION_MODE_INTER_WORD)
+        if (align == "justify" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) b.setJustificationMode(com.example.document.pdf.interWordJustification())
         return b.build()
     }
 

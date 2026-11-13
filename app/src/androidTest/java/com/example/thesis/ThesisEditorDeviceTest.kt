@@ -96,11 +96,48 @@ class ThesisEditorDeviceTest {
 
     private fun clipboard() = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
 
-    private fun setClip(clip: ClipData?) {
+    private fun setClipNoWait(clip: ClipData?) {
         compose.runOnUiThread {
             if (clip != null) clipboard().setPrimaryClip(clip)
             else if (Build.VERSION.SDK_INT >= 28) clipboard().clearPrimaryClip()
         }
+        compose.waitForIdle()
+    }
+
+    /**
+     * Copying shows Android's "copied" preview, a separate window that takes the focus for a few
+     * seconds; Compose test input bypasses the window manager, so it would not give the focus
+     * back as a finger does. Wait for the app window to have the focus again.
+     */
+    private fun awaitWindowFocus(step: String) {
+        val deadline = System.currentTimeMillis() + 20_000
+        while (!compose.activity.hasWindowFocus()) {
+            if (System.currentTimeMillis() > deadline) throw AssertionError("app window has no focus: $step")
+            Thread.sleep(100)
+        }
+        compose.waitForIdle()
+    }
+
+    private fun setClip(clip: ClipData?) {
+        setClipNoWait(clip)
+        awaitWindowFocus("after setting the clipboard")
+    }
+
+    /** A tap through the window manager (as a finger): it also gives the focus to the app window. */
+    private fun systemTap(tag: String) {
+        await("node $tag") { exists(tag) }
+        try { compose.onNodeWithTag(tag).performScrollTo() } catch (e: AssertionError) { }
+        compose.waitForIdle()
+        val b = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+        val loc = IntArray(2)
+        compose.runOnUiThread { compose.activity.window.decorView.findViewById<android.view.View>(android.R.id.content).getLocationOnScreen(loc) }
+        val x = loc[0] + b.center.x
+        val y = loc[1] + b.center.y
+        val ui = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val t0 = android.os.SystemClock.uptimeMillis()
+        fun ev(action: Int, t: Long) = android.view.MotionEvent.obtain(t0, t, action, x, y, 0).apply { source = android.view.InputDevice.SOURCE_TOUCHSCREEN }
+        ui.injectInputEvent(ev(android.view.MotionEvent.ACTION_DOWN, t0), true)
+        ui.injectInputEvent(ev(android.view.MotionEvent.ACTION_UP, t0 + 60), true)
         compose.waitForIdle()
     }
 
@@ -134,7 +171,7 @@ class ThesisEditorDeviceTest {
     }
 
     // Heading, alignment and list markers at the start of a line are structure, not words.
-    private val prefix = Regex("""(?m)^(#{1,6}\s+)?(\{(center|end|justify)\}\s?)?([-•*]\s+|\d{1,3}[.)]\s+)?""")
+    private val prefix = Regex("""(?m)^(#{1,6}\s+)?([-•*]\s+|\d{1,3}[.)]\s+)?(\{(center|end|justify)\}\s?)?([-•*]\s+|\d{1,3}[.)]\s+)?""")
     private fun words(t: String) = Regex("[\\p{L}\\p{N}]+").findAll(prefix.replace(t, "")).map { it.value }.toList()
 
     /** Runs a toolbar button and checks that no word of the text was lost. */
@@ -186,6 +223,7 @@ class ThesisEditorDeviceTest {
     fun formatting_afterTypingWithKeyEvents() {
         openEditor()
         tapInText()
+        awaitWindowFocus("before typing with key events")
         InstrumentationRegistry.getInstrumentation().sendStringSync("typed with keys")
         compose.waitForIdle()
         await("key text") { text.contains("typed with keys") }
@@ -207,6 +245,20 @@ class ThesisEditorDeviceTest {
         press("thesis_paste_text") { longPressFirstWord() }
         assertTrue("Arabic paste missing: $text", text.contains("نص ملصوق بالعربية\nمع سطر ثانٍ و emoji 🌍 et français é"))
         shot("07-arabic")
+    }
+
+    @Test
+    fun pasteRightAfterCopying_whileAndroidShowsTheCopiedPreview() {
+        // As on a phone: copy, then tap Paste Text at once. The "copied" preview window still has
+        // the focus when the tap arrives, so Android refuses the clipboard read at that moment;
+        // the editor waits for the focus and pastes then.
+        openEditor()
+        field().performTextInput("Before.")
+        compose.waitForIdle()
+        setClipNoWait(ClipData.newPlainText("t", "Pasted right after copying"))
+        systemTap("thesis_paste_text")
+        await("pasted after the focus came back", 20_000) { text.contains("Pasted right after copying") }
+        assertTrue("text lost: $text", text.contains("Before."))
     }
 
     @Test

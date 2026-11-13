@@ -246,16 +246,23 @@ class AppSmokeDeviceTest {
                 // A4 in points (595 x 842), within rounding.
                 assertTrue("not A4: ${p.width}x${p.height}", p.width in 590..600 && p.height in 837..847)
             }
-            var inked = 0
+            // Ink in the body of each page (the footer band with the page number is left out), on
+            // a 2x render so a page holding a single heading still counts.
+            val ink = IntArray(r.pageCount)
             for (i in 0 until r.pageCount) r.openPage(i).use { p ->
-                val bmp = Bitmap.createBitmap(p.width, p.height, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) }
-                p.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                var dark = 0
-                for (y in 0 until bmp.height step 4) for (x in 0 until bmp.width step 4) if (Color.red(bmp.getPixel(x, y)) < 128) dark++
-                if (dark > 20) inked++
+                val bmp = Bitmap.createBitmap(p.width * 2, p.height * 2, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) }
+                p.render(bmp, null, android.graphics.Matrix().apply { setScale(2f, 2f) }, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                val bodyBottom = bmp.height - 2 * 60
+                val px = IntArray(bmp.width)
+                for (y in 0 until bodyBottom) {
+                    bmp.getPixels(px, 0, bmp.width, 0, y, bmp.width, 1)
+                    for (c in px) if ((Color.red(c) + Color.green(c) + Color.blue(c)) / 3 < 160) ink[i]++
+                }
                 if (i < 4) FileOutputStream(File(File(context.getExternalFilesDir(null), "app-device").apply { mkdirs() }, "thesis-pdf-page-${i + 1}.png")).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
             }
-            assertEquals("blank PDF pages", r.pageCount, inked)
+            val inked = ink.count { it > 50 }
+            android.util.Log.i("AppSmokeDeviceTest", "PDF ink per page: ${ink.toList()}")
+            assertEquals("blank PDF pages, ink per page: ${ink.toList()}", r.pageCount, inked)
         }
         assertNotNull(thesis.state.value.lastExport)
         assertTrue("crash report written", CrashLog.read(context) == null)

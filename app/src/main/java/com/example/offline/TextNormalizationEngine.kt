@@ -49,7 +49,7 @@ object TextNormalizationEngine {
                 }
                 '\n', ' ' -> endLine()
                 ' ' -> { endLine(); endLine() }
-                '﻿' -> Unit
+                '\uFEFF' -> Unit
                 else -> out.append(c)
             }
             i++

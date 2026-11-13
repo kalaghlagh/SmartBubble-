@@ -56,7 +56,7 @@ internal class PdfProfileRenderer(private val profile: TemplateProfile) {
             .setLineSpacing(0f, multiplier)
             .setIncludePad(false)
         if (align == "justify" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            builder.setJustificationMode(Layout.JUSTIFICATION_MODE_INTER_WORD)
+            builder.setJustificationMode(interWordJustification())
         }
         return builder.build()
     }
@@ -201,3 +201,12 @@ internal class PdfProfileRenderer(private val profile: TemplateProfile) {
         }
     }
 }
+
+/**
+ * Inter-word justification. Lint expects the LineBreaker constant (API 29); on API 26-28 only
+ * Layout's exists. Both are 1, so this is the same value on every version.
+ */
+@android.annotation.SuppressLint("WrongConstant")
+internal fun interWordJustification(): Int =
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) android.graphics.text.LineBreaker.JUSTIFICATION_MODE_INTER_WORD
+    else android.text.Layout.JUSTIFICATION_MODE_INTER_WORD

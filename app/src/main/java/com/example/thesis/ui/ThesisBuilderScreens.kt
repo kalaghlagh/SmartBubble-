@@ -831,6 +831,7 @@ private fun ThesisSectionEditor(host: ThesisHost) {
     val draft = state.draft
     val section = snapshot?.section(state.selectedSectionId)
     val context = LocalContext.current
+    val view = androidx.compose.ui.platform.LocalView.current
     var value by remember(draft?.sectionId) { mutableStateOf(TextFieldValue(draft?.text.orEmpty())) }
     // Undo / redo of the text (typing is grouped by pauses).
     val undo = remember(draft?.sectionId) { mutableStateListOf<TextFieldValue>() }
@@ -982,13 +983,41 @@ private fun ThesisSectionEditor(host: ThesisHost) {
             if (draft.media.isNotEmpty()) MediaStrip(state.assets, draft, onEdit = { editingMedia = it })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ContentAction(Icons.Outlined.ContentPaste, R.string.thesis_paste_text, "thesis_paste_text", true) {
-                    // Some clipboard items (links to content of another app) can throw when read: treated as no text.
-                    val text = try {
-                        val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.primaryClip
-                        clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
-                    } catch (e: Exception) { android.util.Log.w("ThesisEditor", "Clipboard could not be read", e); null }
-                    if (text.isNullOrBlank()) android.widget.Toast.makeText(context, context.getString(R.string.thesis_clipboard_empty), android.widget.Toast.LENGTH_SHORT).show()
-                    else insertAtCursor(text)
+                    fun toast(id: Int) = android.widget.Toast.makeText(context, context.getString(id), android.widget.Toast.LENGTH_SHORT).show()
+                    fun pasteNow() {
+                        // Some clipboard items (links to content of another app) can throw when read: treated as no text.
+                        val text = try {
+                            val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.primaryClip
+                            clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+                        } catch (e: Exception) { android.util.Log.w("ThesisEditor", "Clipboard could not be read", e); null }
+                        if (text.isNullOrBlank()) toast(R.string.thesis_clipboard_empty) else insertAtCursor(text)
+                    }
+                    // Android 10+ lets only the focused window read the clipboard. Right after a copy,
+                    // the system "copied" preview is a separate window that holds the focus, and the
+                    // tap on this button arrives before the focus comes back: reading then returns
+                    // nothing ("Denying clipboard access ... not in focus" in logcat). Wait for the
+                    // focus (a short moment), but only paste into the section that was open.
+                    if (view.hasWindowFocus()) pasteNow() else {
+                        val sectionAtTap = draft.sectionId
+                        val observer = view.viewTreeObserver
+                        var done = false
+                        val listener = object : android.view.ViewTreeObserver.OnWindowFocusChangeListener {
+                            override fun onWindowFocusChanged(hasFocus: Boolean) {
+                                if (!hasFocus || done) return
+                                done = true
+                                view.post { if (view.viewTreeObserver.isAlive) view.viewTreeObserver.removeOnWindowFocusChangeListener(this) }
+                                if (controller.state.value.draft?.sectionId == sectionAtTap) pasteNow()
+                            }
+                        }
+                        observer.addOnWindowFocusChangeListener(listener)
+                        view.postDelayed({
+                            if (!done) {
+                                done = true
+                                if (view.viewTreeObserver.isAlive) view.viewTreeObserver.removeOnWindowFocusChangeListener(listener)
+                                toast(R.string.thesis_clipboard_unavailable)
+                            }
+                        }, 10_000)
+                    }
                 }
                 ContentAction(Icons.Outlined.Forum, R.string.thesis_insert_from_chat, "thesis_insert_from_chat", true) { pickChat = true }
                 ContentAction(Icons.Outlined.Image, R.string.thesis_add_image, "thesis_add_image", idle) { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }

@@ -711,6 +711,7 @@
     <string name="thesis_chat_none">Aucun message dans le Chat. Copiez un texte du Chat et utilisez Coller le texte.</string>
     <string name="thesis_chat_you">Vous</string>
     <string name="thesis_clipboard_empty">Le presse-papiers ne contient pas de texte.</string>
+    <string name="thesis_clipboard_unavailable">Le collage n\'est pas possible tant qu\'une autre fenêtre est au premier plan. Fermez-la et touchez à nouveau Coller le texte.</string>
     <string name="thesis_edit_failed">La modification n\'a pas pu être faite. Votre texte n\'a pas été modifié.</string>
     <string name="thesis_collapse">Réduire</string>
     <string name="thesis_continue_editing">Continuer la rédaction</string>

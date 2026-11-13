@@ -34,7 +34,7 @@ object EditorOps {
     })
 
     // Start of a line that formatting never touches: heading, alignment and list markers.
-    private val LINE_PREFIX = Regex("""^(#{1,6}\s+)?(\{(center|end|justify)\}\s?)?([-•*]\s+|\d{1,3}[.)]\s+)?""")
+    private val LINE_PREFIX = Regex("""^(#{1,6}\s+)?([-•*]\s+|\d{1,3}[.)]\s+)?(\{(center|end|justify)\}\s?)?([-•*]\s+|\d{1,3}[.)]\s+)?""")
     // Lines that stand for a figure, table or page break ("[Figure 1]", "[Page break]").
     private val PLACEHOLDER = Regex("""^\[[^\[\]\n]{1,60}]$""")
 
@@ -176,9 +176,13 @@ object EditorOps {
     /** Alignment of the current paragraph(s): "" (default), "center", "end" or "justify". */
     fun setAlign(t: EditorText, align: String): EditorText = mapLines(t) { _, l ->
         if (l.isBlank()) l else {
+            // Heading and list markers stay first ("## {center} Title", "- {end} item"), the form
+            // SectionText reads; an older "{end} - item" is put back in that order.
             val heading = HEADING.find(l)?.value.orEmpty()
-            val rest = l.substring(heading.length).replaceFirst(ALIGN, "")
-            heading + (if (align.isEmpty()) "" else "{$align} ") + rest
+            var rest = l.substring(heading.length).replaceFirst(ALIGN, "")
+            val list = (BULLET.find(rest) ?: NUMBER.find(rest))?.value.orEmpty()
+            rest = rest.substring(list.length).replaceFirst(ALIGN, "")
+            heading + list + (if (align.isEmpty()) "" else "{$align} ") + rest
         }
     }
 
