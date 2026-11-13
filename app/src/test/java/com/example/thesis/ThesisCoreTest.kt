@@ -380,4 +380,90 @@ class ThesisCoreTest {
         val op = ThesisOperations.decode(ThesisOperations.encode(listOf(ThesisOp.UpdateSection(intro.id, completed = true))))
         assertEquals(ThesisOp.UpdateSection(intro.id, completed = true), op.single())
     }
+
+    @Test
+    fun inlineFormat_parsesMarkersOnlyAroundText() {
+        val runs = com.example.thesis.core.InlineFormat.parse("A **bold** and *italic* and __under__ and **__both__** end.")
+        assertEquals("A bold and italic and under and both end.", runs.joinToString("") { it.text })
+        assertTrue(runs.first { it.text == "bold" }.bold)
+        assertTrue(runs.first { it.text == "italic" }.italic)
+        assertTrue(runs.first { it.text == "under" }.underline)
+        runs.first { it.text == "both" }.let { assertTrue(it.bold && it.underline) }
+        // Not formatting: arithmetic and lone markers stay as typed.
+        assertEquals("5 * 3 = 15 and a_b_c", com.example.thesis.core.InlineFormat.plain("5 * 3 = 15 and a_b_c"))
+        assertFalse(com.example.thesis.core.InlineFormat.hasMarkers("5 * 3 * 2"))
+    }
+
+    @Test
+    fun sectionText_formattingAlignmentAndPageBreakRoundTrip() {
+        var s = newThesis()
+        val intro = s.kind(SectionKind.INTRODUCTION).id
+        val draft0 = com.example.thesis.core.SectionText.load(s, intro)
+        val typed = "## {center} Context\n\n{justify} The **aquifer** is *karstic* and __shallow__ in the north of the basin.\n\n[Page break]\n\n- First well\n- Second well"
+        val (after, _) = applyDraft(s, draft0.copy(text = typed))
+        val els = after.elementsOf(intro)
+        assertEquals(listOf(ElementType.HEADING, ElementType.PARAGRAPH, ElementType.LIST_ITEM, ElementType.LIST_ITEM), els.map { it.type })
+        assertEquals("Context", els[0].text)
+        assertEquals("center", els[0].data.textAlign)
+        assertEquals("The **aquifer** is *karstic* and __shallow__ in the north of the basin.", els[1].text)
+        assertEquals("justify", els[1].data.textAlign)
+        assertTrue(els[2].data.pageBreakBefore)
+        assertFalse(els[3].data.pageBreakBefore)
+        // Loading gives the same text back; saving it again changes nothing.
+        val reloaded = com.example.thesis.core.SectionText.load(after, intro)
+        assertEquals(typed, reloaded.text)
+        assertTrue(applyDraft(after, reloaded).second.isEmpty())
+        // Changing only the alignment updates the element in place (same id).
+        val (aligned, ops) = applyDraft(after, reloaded.copy(text = typed.replace("{justify} ", "{end} ")))
+        assertTrue(ops.all { it is ThesisOp.UpdateData })
+        assertEquals("end", aligned.element(els[1].id)!!.data.textAlign)
+        // Data fields survive encoding.
+        val d = ThesisCodec.decodeData(ThesisCodec.encodeData(ElementData(textAlign = "center", pageBreakBefore = true)))
+        assertEquals("center", d.textAlign)
+        assertTrue(d.pageBreakBefore)
+    }
+
+    @Test
+    fun defaultStructure_hasBothAbstractsAndOptionalAppendices_andMetaFieldsEncode() {
+        val s = newThesis("fr")
+        val abstracts = s.sections.filter { it.kind == SectionKind.ABSTRACT }
+        assertEquals(listOf("Résumé", "Abstract / الملخص"), abstracts.map { it.title })
+        assertTrue(abstracts.all { it.enabled })
+        assertFalse(s.kind(SectionKind.APPENDIX).enabled)
+        val kinds = s.outline(false).map { it.first.kind }
+        assertTrue(kinds.indexOf(SectionKind.ABSTRACT) < kinds.indexOf(SectionKind.TABLE_OF_CONTENTS))
+        val meta = ThesisMeta("T", subtitle = "Sub", studentId = "42", submissionDate = "2026-06-15")
+        assertEquals(meta, ThesisCodec.metaFromMap(ThesisCodec.metaToMap(meta)))
+        val sec = ThesisSection("x", null, SectionKind.CUSTOM, "X", 0, completed = true, description = "Notes")
+        assertEquals(sec, ThesisCodec.sectionFromMap(ThesisCodec.sectionToMap(sec)))
+    }
+
+    @Test
+    fun editorOps_toolbarCommands() {
+        val E = com.example.thesis.core.EditorOps
+        fun t(text: String, a: Int, b: Int = a) = com.example.thesis.core.EditorText.of(text, a, b)
+        // Bold around the selection (spaces stay outside), toggled off again.
+        val b = E.toggleWrap(t("The aquifer is deep.", 4, 12), "**")
+        assertEquals("The **aquifer** is deep.", b.text)
+        assertEquals("aquifer", b.selected)
+        assertEquals("The aquifer is deep.", E.toggleWrap(b, "**").text)
+        assertEquals("A *word* here", E.toggleWrap(t("A word here", 2, 6), "*").text)
+        assertEquals("A __word__ here", E.toggleWrap(t("A word here", 2, 6), "__").text)
+        // Headings and alignment on the current line.
+        val h = E.setHeading(t("Intro\n\nContext line", 9), 2)
+        assertEquals("Intro\n\n## Context line", h.text)
+        assertEquals("Intro\n\nContext line", E.setHeading(t(h.text, 10), 0).text)
+        assertEquals("## {center} Context line", E.setAlign(t("## Context line", 4), "center").text)
+        assertEquals("{justify} Text", E.setAlign(t("{center} Text", 0), "justify").text)
+        assertEquals("Text", E.setAlign(t("{end} Text", 2), "").text)
+        // Lists on the selected lines.
+        val bl = E.toggleBullets(t("one\ntwo\nthree", 0, 13))
+        assertEquals("- one\n- two\n- three", bl.text)
+        assertEquals("one\ntwo\nthree", E.toggleBullets(t(bl.text, 0, bl.text.length)).text)
+        assertEquals("1. one\n2. two", E.toggleNumbers(t("- one\n- two", 0, 11)).text)
+        // Blocks (tables, images, page breaks) become their own paragraph at the cursor.
+        val pb = E.insertBlock(t("First.Second.", 6), "[Page break]")
+        assertEquals("First.\n\n[Page break]\n\nSecond.", pb.text)
+        assertEquals("[Page break]", E.insertBlock(t("", 0), "[Page break]").text)
+    }
 }

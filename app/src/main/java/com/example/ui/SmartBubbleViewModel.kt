@@ -603,7 +603,8 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         previewDir = File(context.cacheDir, "thesis_preview"),
         onMessage = { _snackBarMessage.value = thesisMessageText(it) },
         onChatNote = { addThesisChatNote(it) },
-        onSaveToLibrary = { export, projectId -> saveThesisExport(export, projectId) }
+        onSaveToLibrary = { export, projectId -> saveThesisExport(export, projectId) },
+        formDraftFile = File(context.filesDir, "thesis/new_thesis_draft.json")
     )
 
     init {
@@ -774,6 +775,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         ThesisMessage.Deleted -> str(R.string.thesis_msg_deleted)
         ThesisMessage.NothingToFormat -> str(R.string.thesis_msg_nothing_to_format)
         ThesisMessage.Saved -> str(R.string.thesis_msg_saved)
+        ThesisMessage.DraftSaved -> str(R.string.thesis_msg_draft_saved)
         ThesisMessage.Renamed -> str(R.string.thesis_msg_renamed)
     }
 

@@ -10,11 +10,16 @@ import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.os.Build
 import android.text.Layout
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
+import android.text.style.StyleSpan
+import android.text.style.UnderlineSpan
 import android.text.TextPaint
 import com.example.document.pdf.PdfPagination
 import com.example.document.pdf.PdfProfileLayout
 import com.example.template.domain.TemplateProfile
+import com.example.thesis.core.InlineFormat
 import com.example.thesis.core.ThesisLabels
 import com.example.thesis.core.ThesisNumbering
 import com.example.thesis.core.ThesisStructure
@@ -53,7 +58,21 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
         color = color(colorHex)
     }
 
-    private fun staticLayout(text: String, paint: TextPaint, width: Int, align: String): StaticLayout {
+    /** Draws **bold**, *italic* and __underline__ runs of the section editor without the markers. */
+    private fun styled(text: String): CharSequence {
+        if (!InlineFormat.hasMarkers(text)) return text
+        val sb = SpannableStringBuilder()
+        for (r in InlineFormat.parse(text)) {
+            val start = sb.length
+            sb.append(r.text)
+            val style = when { r.bold && r.italic -> Typeface.BOLD_ITALIC; r.bold -> Typeface.BOLD; r.italic -> Typeface.ITALIC; else -> Typeface.NORMAL }
+            if (style != Typeface.NORMAL) sb.setSpan(StyleSpan(style), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (r.underline) sb.setSpan(UnderlineSpan(), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        return sb
+    }
+
+    private fun staticLayout(text: CharSequence, paint: TextPaint, width: Int, align: String): StaticLayout {
         val natural = (paint.fontMetrics.descent - paint.fontMetrics.ascent).coerceAtLeast(1f)
         val multiplier = (layout.lineSpacing * paint.textSize / natural).coerceIn(0.8f, 3f)
         val b = StaticLayout.Builder.obtain(text, 0, text.length, paint, width.coerceAtLeast(1))
@@ -157,7 +176,7 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
         }
 
         fun text(t: String, p: TextPaint, align: String = layout.bodyAlignment, after: Float = layout.paragraphSpacing, indent: Float = 0f) =
-            block(staticLayout(t, p, (width - indent).toInt(), align), if (rtl) layout.marginLeft else layout.marginLeft + indent, after)
+            block(staticLayout(styled(t), p, (width - indent).toInt(), align), if (rtl) layout.marginLeft else layout.marginLeft + indent, after)
 
         fun pageOf(list: List<Pair<String, Int>>?, index: Int): String = list?.getOrNull(index)?.second?.toString() ?: "000"
 
@@ -244,14 +263,17 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
                     text(ThesisLabels.get(lang, m.level.name), body, "center", 6f)
                     if (m.specialization.isNotBlank()) text("${ThesisLabels.get(lang, "specialization")}: ${m.specialization}", body, "center", 6f)
                     y += 40f
-                    text(m.title, title, "center", 40f)
+                    text(m.title, title, "center", if (m.subtitle.isBlank()) 40f else 8f)
+                    if (m.subtitle.isNotBlank()) text(m.subtitle, body, "center", 32f)
                     if (m.studentName.isNotBlank()) text("${ThesisLabels.get(lang, "student")}: ${m.studentName}", body, "center", 6f)
+                    if (m.studentId.isNotBlank()) text("${ThesisLabels.get(lang, "studentId")}: ${m.studentId}", body, "center", 6f)
                     if (m.supervisor.isNotBlank()) text("${ThesisLabels.get(lang, "supervisor")}: ${m.supervisor}", body, "center", 6f)
                     if (m.coSupervisor.isNotBlank()) text("${ThesisLabels.get(lang, "coSupervisor")}: ${m.coSupervisor}", body, "center", 6f)
                     val jury = m.juryMembers.lines().map { it.trim() }.filter { it.isNotEmpty() }
                     if (jury.isNotEmpty()) { y += 16f; text(ThesisLabels.get(lang, "jury"), headings[3], "center", 4f); jury.forEach { text(it, body, "center", 2f) } }
                     m.extraMetadata.lines().map { it.trim() }.filter { it.isNotEmpty() }.forEach { text(it, body, "center", 2f) }
                     if (m.academicYear.isNotBlank()) { y += 20f; text("${ThesisLabels.get(lang, "year")}: ${m.academicYear}", body, "center", 0f) }
+                    if (m.submissionDate.isNotBlank()) { y += 6f; text("${ThesisLabels.get(lang, "submitted")}: ${m.submissionDate}", body, "center", 0f) }
                 }
                 SectionKind.TABLE_OF_CONTENTS -> {
                     text(ThesisStructure.displayTitle(section, numbering, lang), headings[0], "center", 16f)
@@ -274,10 +296,12 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
                     block(heading, layout.marginLeft, 12f)
                     for (e in snapshot.elementsOf(section.id)) {
                         val (t, _) = ThesisStructure.resolveCrossReferences(e.text, numbering, lang)
+                        if (e.data.pageBreakBefore) newPage()
+                        val ta = e.data.textAlign
                         when (e.type) {
-                            ElementType.HEADING -> text(t, headings[(level + e.data.headingLevel.coerceAtLeast(1) - 1).coerceIn(0, 3)], "start", 8f)
-                            ElementType.PARAGRAPH -> text(t, body)
-                            ElementType.REFERENCE -> text(t, body, "start", 6f)
+                            ElementType.HEADING -> text(t, headings[(level + e.data.headingLevel.coerceAtLeast(1) - 1).coerceIn(0, 3)], ta.ifEmpty { "start" }, 8f)
+                            ElementType.PARAGRAPH -> text(t, body, ta.ifEmpty { layout.bodyAlignment })
+                            ElementType.REFERENCE -> text(t, body, ta.ifEmpty { "start" }, 6f)
                             ElementType.LIST_ITEM -> text((if (e.data.ordered) e.data.marker.ifBlank { "•" } else "•") + "  " + t, body, "start", 3f, layout.listIndent * (1 + e.data.headingLevel.coerceIn(0, 3)))
                             ElementType.IMAGE -> {
                                 image(e)

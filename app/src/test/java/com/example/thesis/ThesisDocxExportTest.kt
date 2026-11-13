@@ -199,4 +199,32 @@ class ThesisDocxExportTest {
         assertTrue("logo_missing" in report.warnings)
         assertFalse(zip(out, "word/document.xml")!!.contains("r:embed"))
     }
+
+    /** Formatting typed in the section editor reaches Word: runs, alignment, page breaks, new cover fields. */
+    @Test
+    fun editorFormatting_boldItalicUnderlineAlignmentAndPageBreak() {
+        var (s, assets) = thesis()
+        val intro = s.sections.first { it.kind == SectionKind.INTRODUCTION }.id
+        s = s.copy(meta = s.meta.copy(subtitle = "A hydrogeological study", studentId = "2021-0457", submissionDate = "2026-06-15"))
+        s = ThesisOperations.apply(s, listOf(ThesisOp.AddElements(intro, null, listOf(
+            NewElement("f1", ElementType.PARAGRAPH, "Some **bold words**, *an italic part* and __underlined__ text.", ElementData(textAlign = "justify")),
+            NewElement("f2", ElementType.PARAGRAPH, "Centered paragraph after a break.", ElementData(textAlign = "center", pageBreakBefore = true))
+        ))))
+        val out = tmp.newFile("fmt.docx")
+        ThesisDocxWriter().write(s, assets, ThesisTemplate.Profile(ThesisDocxWriter.builtInProfile(), null), out)
+        val doc = zip(out, "word/document.xml")!!
+        assertWellFormed(doc)
+        val t = texts(doc)
+        assertTrue(t.contains("bold words"))
+        assertFalse(doc.contains("**"))
+        assertFalse(t.contains("__underlined__"))
+        assertTrue(Regex("""<w:rPr><w:b/><w:bCs/></w:rPr><w:t xml:space="preserve">bold words</w:t>""").containsMatchIn(doc))
+        assertTrue(doc.contains("<w:i/><w:iCs/></w:rPr><w:t xml:space=\"preserve\">an italic part</w:t>"))
+        assertTrue(doc.contains("<w:u w:val=\"single\"/></w:rPr><w:t xml:space=\"preserve\">underlined</w:t>"))
+        assertTrue(doc.contains("<w:jc w:val=\"both\"/>"))
+        assertTrue(Regex("""<w:pageBreakBefore/><w:jc w:val="center"/></w:pPr><w:r><w:t xml:space="preserve">Centered paragraph""").containsMatchIn(doc))
+        assertTrue(t.contains("A hydrogeological study"))
+        assertTrue(t.contains("Student ID: 2021-0457"))
+        assertTrue(t.contains("Submission date: 2026-06-15"))
+    }
 }

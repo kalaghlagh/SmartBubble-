@@ -122,6 +122,20 @@ object SmartBubbleMigrations {
         }
     }
 
+    /**
+     * v4 -> v5 (Thesis Builder): section completion flag and note, and the thesis subtitle,
+     * student ID and submission date. Columns are only added (with defaults); nothing is removed.
+     */
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `thesis_sections` ADD COLUMN `completed` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `thesis_sections` ADD COLUMN `description` TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE `thesis_projects` ADD COLUMN `subtitle` TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE `thesis_projects` ADD COLUMN `studentId` TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE `thesis_projects` ADD COLUMN `submissionDate` TEXT NOT NULL DEFAULT ''")
+        }
+    }
+
     /** Every migration, in order. Always pass this to the database builder. */
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 }

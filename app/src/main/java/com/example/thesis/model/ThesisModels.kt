@@ -71,7 +71,11 @@ data class ThesisMeta(
     val extraMetadata: String = "",
     val logoAssetId: String? = null,
     /** Template bound from My Templates (null = default template, then built-in formatting). */
-    val templateId: String? = null
+    val templateId: String? = null,
+    val subtitle: String = "",
+    val studentId: String = "",
+    /** Submission date as entered (ISO yyyy-MM-dd from the date picker). */
+    val submissionDate: String = ""
 ) {
     val rtl: Boolean get() = language == "ar"
 }
@@ -85,7 +89,9 @@ data class ThesisSection(
     val position: Int,
     val enabled: Boolean = true,
     /** Marked as finished by the user (status "Completed" in the workspace). */
-    val completed: Boolean = false
+    val completed: Boolean = false,
+    /** The user's own note about the section (not exported). */
+    val description: String = ""
 )
 
 /**
@@ -106,7 +112,11 @@ data class ElementData(
     val tableHeader: List<String> = emptyList(),
     val tableRows: List<List<String>> = emptyList(),
     /** A reference the user confirmed as checked (AI-suggested references start unverified). */
-    val verified: Boolean = false
+    val verified: Boolean = false,
+    /** Paragraph alignment of text elements: "" (default), "center", "end" or "justify". */
+    val textAlign: String = "",
+    /** Starts a new page before this element. */
+    val pageBreakBefore: Boolean = false
 ) {
     companion object { val EMPTY = ElementData() }
 }
@@ -168,7 +178,7 @@ data class ThesisSnapshot(
     fun sectionHash(sectionId: String): String {
         val s = section(sectionId) ?: return "missing"
         val content = buildString {
-            append(s.title).append('|').append(s.enabled).append('|').append(s.parentId).append(if (s.completed) "|done" else "").append('\n')
+            append(s.title).append('|').append(s.enabled).append('|').append(s.parentId).append(if (s.completed) "|done" else "").append('|').append(s.description).append('\n')
             for (e in elementsOf(sectionId)) append(e.id).append('|').append(e.type).append('|').append(e.text).append('|').append(e.data).append('\n')
         }
         return sha1(content)

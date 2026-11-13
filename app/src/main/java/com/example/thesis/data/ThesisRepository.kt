@@ -84,18 +84,20 @@ class ThesisRepository(
         language = p.language, studentName = p.studentName, university = p.university, faculty = p.faculty,
         department = p.department, specialization = p.specialization, supervisor = p.supervisor, coSupervisor = p.coSupervisor,
         academicYear = p.academicYear, juryMembers = p.juryMembers, extraMetadata = p.extraMetadata,
-        logoAssetId = p.logoAssetId, templateId = p.templateId
+        logoAssetId = p.logoAssetId, templateId = p.templateId,
+        subtitle = p.subtitle, studentId = p.studentId, submissionDate = p.submissionDate
     )
 
     private fun ThesisProjectEntity.withMeta(m: ThesisMeta, now: Long) = copy(
         title = m.title, level = m.level.name, language = m.language, studentName = m.studentName, university = m.university,
         faculty = m.faculty, department = m.department, specialization = m.specialization, supervisor = m.supervisor,
         coSupervisor = m.coSupervisor, academicYear = m.academicYear, juryMembers = m.juryMembers, extraMetadata = m.extraMetadata,
-        logoAssetId = m.logoAssetId, templateId = m.templateId, updatedAt = now
+        logoAssetId = m.logoAssetId, templateId = m.templateId, updatedAt = now,
+        subtitle = m.subtitle, studentId = m.studentId, submissionDate = m.submissionDate
     )
 
     private fun sectionEntity(projectId: String, s: ThesisSection) =
-        ThesisSectionEntity(s.id, projectId, s.parentId, s.kind.name, s.title, s.position, s.enabled)
+        ThesisSectionEntity(s.id, projectId, s.parentId, s.kind.name, s.title, s.position, s.enabled, s.completed, s.description)
 
     private fun elementEntity(projectId: String, e: ThesisElement, now: Long) =
         ThesisElementEntity(e.id, projectId, e.sectionId, e.type.name, e.position, e.text, ThesisCodec.encodeData(e.data), now)
@@ -109,7 +111,7 @@ class ThesisRepository(
         val p = dao.project(projectId) ?: throw IllegalArgumentException("Unknown thesis project")
         return ThesisSnapshot(
             meta = metaOf(p),
-            sections = dao.sections(projectId).map { ThesisSection(it.id, it.parentId, SectionKind.parse(it.kind), it.title, it.position, it.enabled) },
+            sections = dao.sections(projectId).map { ThesisSection(it.id, it.parentId, SectionKind.parse(it.kind), it.title, it.position, it.enabled, it.completed, it.description) },
             elements = dao.elements(projectId).map { ThesisElement(it.id, it.sectionId, ElementType.parse(it.type), it.position, it.text, ThesisCodec.decodeData(it.data)) }
         )
     }
@@ -173,7 +175,8 @@ class ThesisRepository(
             dao.insertProject(
                 ThesisProjectEntity(id, meta.title, meta.level.name, meta.language, meta.studentName, meta.university, meta.faculty,
                     meta.department, meta.specialization, meta.supervisor, meta.coSupervisor, meta.academicYear, meta.juryMembers,
-                    meta.extraMetadata, meta.logoAssetId, meta.templateId, aiAssist, null, 0, now, now)
+                    meta.extraMetadata, meta.logoAssetId, meta.templateId, aiAssist, null, 0, now, now,
+                    subtitle = meta.subtitle, studentId = meta.studentId, submissionDate = meta.submissionDate)
             )
         }
         val empty = ThesisSnapshot(meta, emptyList(), emptyList())

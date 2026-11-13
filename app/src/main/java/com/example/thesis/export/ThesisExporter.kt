@@ -97,8 +97,9 @@ class ThesisExporter(
     private val pdfRenderer: (TemplateProfile, ThesisSnapshot, List<ThesisAsset>, File) -> Int,
     private val io: CoroutineDispatcher = Dispatchers.IO
 ) {
-    suspend fun export(projectId: String, format: String, fileName: String? = null): ThesisExport {
-        val snapshot = repository.snapshot(projectId)
+    /** [part] limits the document (e.g. one section for "Preview page"); the saved content is never changed. */
+    suspend fun export(projectId: String, format: String, fileName: String? = null, part: (ThesisSnapshot) -> ThesisSnapshot = { it }): ThesisExport {
+        val snapshot = part(repository.snapshot(projectId))
         val assets = repository.assets(projectId)
         val resolved = ThesisTemplateResolver.resolve(templates, snapshot.meta.templateId)
         outputDir.mkdirs()

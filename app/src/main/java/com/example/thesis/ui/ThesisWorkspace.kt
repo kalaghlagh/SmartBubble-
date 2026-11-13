@@ -259,7 +259,9 @@ internal fun ThesisMetaForm(
                 }
             }
             Text(stringResource(R.string.thesis_template_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            field(R.string.thesis_field_subtitle, meta.subtitle, "thesis_field_subtitle") { meta = meta.copy(subtitle = it) }
             field(R.string.thesis_field_student, meta.studentName, "thesis_field_student") { meta = meta.copy(studentName = it) }
+            field(R.string.thesis_field_student_id, meta.studentId, "thesis_field_student_id") { meta = meta.copy(studentId = it) }
             field(R.string.thesis_field_university, meta.university, "thesis_field_university") { meta = meta.copy(university = it) }
             field(R.string.thesis_field_faculty, meta.faculty, "thesis_field_faculty") { meta = meta.copy(faculty = it) }
             field(R.string.thesis_field_department, meta.department, "thesis_field_department") { meta = meta.copy(department = it) }
@@ -267,6 +269,7 @@ internal fun ThesisMetaForm(
             field(R.string.thesis_field_supervisor, meta.supervisor, "thesis_field_supervisor") { meta = meta.copy(supervisor = it) }
             field(R.string.thesis_field_cosupervisor, meta.coSupervisor, "thesis_field_cosupervisor") { meta = meta.copy(coSupervisor = it) }
             field(R.string.thesis_field_year, meta.academicYear, "thesis_field_year") { meta = meta.copy(academicYear = it) }
+            field(R.string.thesis_field_submission_date, meta.submissionDate, "thesis_field_submission_date") { meta = meta.copy(submissionDate = it) }
             field(R.string.thesis_field_jury, meta.juryMembers, "thesis_field_jury", 3) { meta = meta.copy(juryMembers = it) }
             field(R.string.thesis_field_extra, meta.extraMetadata, "thesis_field_extra", 2) { meta = meta.copy(extraMetadata = it) }
             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -237,6 +238,71 @@ class SmartBubbleMigrationTest {
             )
         )
         assertEquals("Thesis", db.thesisDao().project("t-1")?.title)
+    }
+
+    /** Frozen v4 Thesis Builder DDL (as created by MIGRATION_3_4). */
+    private val thesisV4Ddl = arrayOf(
+        "CREATE TABLE IF NOT EXISTS `thesis_projects` (`id` TEXT NOT NULL, `title` TEXT NOT NULL, `level` TEXT NOT NULL, " +
+            "`language` TEXT NOT NULL, `studentName` TEXT NOT NULL, `university` TEXT NOT NULL, `faculty` TEXT NOT NULL, " +
+            "`department` TEXT NOT NULL, `specialization` TEXT NOT NULL, `supervisor` TEXT NOT NULL, `coSupervisor` TEXT NOT NULL, " +
+            "`academicYear` TEXT NOT NULL, `juryMembers` TEXT NOT NULL, `extraMetadata` TEXT NOT NULL, `logoAssetId` TEXT, " +
+            "`templateId` TEXT, `aiAssist` INTEGER NOT NULL, `currentRevisionId` TEXT, `currentRevisionNumber` INTEGER NOT NULL, " +
+            "`createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "CREATE TABLE IF NOT EXISTS `thesis_sections` (`id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `parentId` TEXT, " +
+            "`kind` TEXT NOT NULL, `title` TEXT NOT NULL, `position` INTEGER NOT NULL, `enabled` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "CREATE INDEX IF NOT EXISTS `index_thesis_sections_projectId` ON `thesis_sections` (`projectId`)",
+        "CREATE TABLE IF NOT EXISTS `thesis_elements` (`id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `sectionId` TEXT NOT NULL, " +
+            "`type` TEXT NOT NULL, `position` INTEGER NOT NULL, `text` TEXT NOT NULL, `data` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, " +
+            "PRIMARY KEY(`id`))",
+        "CREATE INDEX IF NOT EXISTS `index_thesis_elements_projectId` ON `thesis_elements` (`projectId`)",
+        "CREATE INDEX IF NOT EXISTS `index_thesis_elements_sectionId` ON `thesis_elements` (`sectionId`)",
+        "CREATE TABLE IF NOT EXISTS `thesis_assets` (`id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `originalName` TEXT NOT NULL, " +
+            "`path` TEXT NOT NULL, `width` INTEGER NOT NULL, `height` INTEGER NOT NULL, `mimeType` TEXT NOT NULL, " +
+            "`sizeBytes` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "CREATE INDEX IF NOT EXISTS `index_thesis_assets_projectId` ON `thesis_assets` (`projectId`)",
+        "CREATE TABLE IF NOT EXISTS `thesis_revisions` (`id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `number` INTEGER NOT NULL, " +
+            "`source` TEXT NOT NULL, `summary` TEXT NOT NULL, `snapshotPath` TEXT NOT NULL, `snapshotHash` TEXT NOT NULL, " +
+            "`restoredFrom` INTEGER, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "CREATE INDEX IF NOT EXISTS `index_thesis_revisions_projectId` ON `thesis_revisions` (`projectId`)",
+        "CREATE TABLE IF NOT EXISTS `thesis_proposals` (`id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `baseRevisionId` TEXT, " +
+            "`source` TEXT NOT NULL, `kind` TEXT NOT NULL, `status` TEXT NOT NULL, `request` TEXT NOT NULL, `payload` TEXT NOT NULL, " +
+            "`targetHashes` TEXT NOT NULL, `explanation` TEXT NOT NULL, `warnings` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, " +
+            "`decidedAt` INTEGER, PRIMARY KEY(`id`))",
+        "CREATE INDEX IF NOT EXISTS `index_thesis_proposals_projectId` ON `thesis_proposals` (`projectId`)"
+    )
+
+    /** v4 -> v5: existing thesis projects and sections keep their data; new columns get defaults and work. */
+    @Test
+    fun migrateFromVersion4_keepsThesisDataAndAddsColumns() = runBlocking {
+        createRawDatabase(4, documentsDdl, templatesV2Ddl, providersDdl, chatMessagesDdl, conversationsDdl, *thesisV4Ddl) { db ->
+            insertDocument(db, "doc-1", "Report.docx", "/data/generated_docs/a.docx")
+            db.insertRow(
+                "thesis_projects", "id" to "t-1", "title" to "مذكرة", "level" to "MASTER", "language" to "ar", "studentName" to "Amina",
+                "university" to "U", "faculty" to "", "department" to "", "specialization" to "", "supervisor" to "S", "coSupervisor" to "",
+                "academicYear" to "2025-2026", "juryMembers" to "", "extraMetadata" to "", "logoAssetId" to null, "templateId" to null,
+                "aiAssist" to 1, "currentRevisionId" to null, "currentRevisionNumber" to 0, "createdAt" to 1L, "updatedAt" to 2L
+            )
+            db.insertRow("thesis_sections", "id" to "s-1", "projectId" to "t-1", "parentId" to null, "kind" to "INTRODUCTION",
+                "title" to "مقدمة عامة", "position" to 0, "enabled" to 1)
+            db.insertRow("thesis_elements", "id" to "e-1", "projectId" to "t-1", "sectionId" to "s-1", "type" to "PARAGRAPH",
+                "position" to 0, "text" to "نص المقدمة", "data" to "", "updatedAt" to 1L)
+        }
+        val db = openProduction() // Room validates the migrated schema against the entities
+        assertEquals("Report.docx", db.documentDao().getDocumentById("doc-1")?.title)
+        val p = db.thesisDao().project("t-1")!!
+        assertEquals("مذكرة", p.title)
+        assertEquals("Amina", p.studentName)
+        assertEquals("", p.subtitle)
+        assertEquals("", p.studentId)
+        val sections = db.thesisDao().sections("t-1")
+        assertEquals("مقدمة عامة", sections.single().title)
+        assertFalse(sections.single().completed)
+        assertEquals("", sections.single().description)
+        assertEquals("نص المقدمة", db.thesisDao().elements("t-1").single().text)
+        db.thesisDao().upsertSections(listOf(sections.single().copy(completed = true, description = "Draft")))
+        assertTrue(db.thesisDao().sections("t-1").single().completed)
+        db.thesisDao().updateProject(p.copy(subtitle = "Étude", studentId = "42", submissionDate = "2026-06-15"))
+        assertEquals("Étude", db.thesisDao().project("t-1")!!.subtitle)
     }
 
     /** Data written through Room survives closing and reopening with the production config. */
