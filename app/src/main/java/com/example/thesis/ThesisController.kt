@@ -110,6 +110,10 @@ data class ThesisUiState(
     val chatSectionId: String? = null,
     /** Revisions in which the open section changed (section history). */
     val sectionHistory: List<ThesisRevisionEntity>? = null,
+    /** Saved, unfinished "New thesis" form. */
+    val formDraft: ThesisMeta? = null,
+    /** The preview shows one section only ("Preview page" in the editor). */
+    val previewSectionId: String? = null,
     /** Text of the section open in the editor (saved with "Save changes"). */
     val draft: SectionDraft? = null,
     /** AI assistant request and result for the open section. */
@@ -151,6 +155,7 @@ sealed class ThesisMessage {
     object Deleted : ThesisMessage()
     object NothingToFormat : ThesisMessage()
     object Saved : ThesisMessage()
+    object DraftSaved : ThesisMessage()
     object Renamed : ThesisMessage()
 }
 
@@ -183,7 +188,9 @@ class ThesisController(
     private val onMessage: (ThesisMessage) -> Unit = {},
     private val onChatNote: suspend (ThesisChatNote) -> Unit = {},
     /** Moves an export into the Library and returns its Library entry. */
-    private val onSaveToLibrary: suspend (ThesisExport, String) -> DocumentEntity
+    private val onSaveToLibrary: suspend (ThesisExport, String) -> DocumentEntity,
+    /** Unfinished "New thesis" form ("Save draft"); null keeps it in memory only. */
+    private val formDraftFile: File? = null
 ) {
     private val _state = MutableStateFlow(ThesisUiState())
     val state: StateFlow<ThesisUiState> = _state.asStateFlow()
@@ -268,6 +275,8 @@ class ThesisController(
             ThesisScreen.PROJECT -> show(ThesisScreen.HOME)
             ThesisScreen.AI -> update { it.copy(screen = ThesisScreen.SECTION) }
             ThesisScreen.SECTION -> if (st.draft?.dirty == true) saveDraft(thenShow = ThesisScreen.PROJECT) else update { it.copy(screen = ThesisScreen.PROJECT, draft = null, assist = null) }
+            // "Preview page" returns to the section being edited.
+            ThesisScreen.PREVIEW -> update { it.copy(screen = if (it.previewSectionId != null && it.draft != null) ThesisScreen.SECTION else ThesisScreen.PROJECT) }
             else -> show(ThesisScreen.PROJECT)
         }
     }
@@ -312,8 +321,38 @@ class ThesisController(
 
     // ------------------------------------------------------------------ projects
 
+    init {
+        scope.launch {
+            val draft = try {
+                formDraftFile?.takeIf { it.isFile }?.let { f -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.example.thesis.model.ThesisCodec.metaFromMap(com.example.ai.providers.Json.obj(com.example.ai.providers.Json.parse(f.readText()))) } }
+            } catch (e: Exception) { null }
+            if (draft != null) update { it.copy(formDraft = draft) }
+        }
+    }
+
+    /** "Save draft" on the New thesis form: keeps what was typed (nothing is created yet). */
+    fun saveFormDraft(meta: ThesisMeta) = launch(ThesisBusy.SAVING) {
+        formDraftFile?.let { f ->
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                f.parentFile?.mkdirs()
+                val tmp = File(f.parentFile, f.name + ".tmp")
+                tmp.writeText(com.example.ai.providers.Json.write(com.example.thesis.model.ThesisCodec.metaToMap(meta)))
+                if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
+            }
+        }
+        update { it.copy(formDraft = meta) }
+        onMessage(ThesisMessage.DraftSaved)
+    }
+
+    fun discardFormDraft() {
+        update { it.copy(formDraft = null) }
+        scope.launch { formDraftFile?.let { f -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { f.delete() } } }
+    }
+
     fun createProject(meta: ThesisMeta, aiAssist: Boolean) = launch(ThesisBusy.SAVING) {
         val id = repository.createProject(meta, aiAssist)
+        formDraftFile?.let { f -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { f.delete() } }
+        update { it.copy(formDraft = null) }
         onMessage(ThesisMessage.Created(meta.title))
         openProject(id)
     }
@@ -637,16 +676,61 @@ class ThesisController(
 
     fun updateDraft(text: String) = update { st -> st.copy(draft = st.draft?.copy(text = text)) }
 
+    /** Section title and note typed in the editor (saved with the text). */
+    fun updateDraftInfo(title: String, description: String) = update { st -> st.copy(draft = st.draft?.copy(title = title, description = description)) }
+
+    /** New chapter at the end of the main body, with the title the user typed (may be empty). */
+    fun addChapter(title: String) {
+        val snapshot = _state.value.snapshot ?: return
+        val last = snapshot.children(null).lastOrNull { it.kind == SectionKind.CHAPTER || it.kind == SectionKind.PART }
+            ?: snapshot.children(null).lastOrNull { it.kind == SectionKind.INTRODUCTION }
+        direct(listOf(ThesisOp.AddSection(ThesisSection(ThesisStructure.newId("sec"), null, SectionKind.CHAPTER, title.trim(), 0), last?.id)), ChangeSource.STRUCTURE, "chapter")
+    }
+
+    /** Sub-section at the end of [parentId] (section in a chapter, sub-section in a section). */
+    fun addSubsection(parentId: String, title: String) {
+        val snapshot = _state.value.snapshot ?: return
+        val parent = snapshot.section(parentId) ?: return
+        val kind = if (parent.kind == SectionKind.SECTION) SectionKind.SUBSECTION else SectionKind.SECTION
+        direct(listOf(ThesisOp.AddSection(ThesisSection(ThesisStructure.newId("sec"), parentId, kind, title.trim(), 0), snapshot.children(parentId).lastOrNull()?.id)), ChangeSource.STRUCTURE, "section")
+    }
+
+    /** "Preview page": renders only [sectionId] (with its sub-sections) from the saved content. */
+    fun buildSectionPreview(sectionId: String) = launch(ThesisBusy.PREVIEWING) {
+        val id = _state.value.projectId ?: return@launch
+        // The preview shows saved content: unsaved text is saved first (nothing is lost).
+        if (_state.value.draft?.let { it.sectionId == sectionId && it.dirty } == true) persistDraft()
+        previewDir.mkdirs()
+        previewDir.listFiles()?.forEach { it.delete() }
+        val export = exporter.export(id, "PDF", "section-$sectionId-${System.currentTimeMillis()}.pdf") { s -> sectionOnly(s, sectionId) }
+        update { it.copy(previewFile = export.file, previewPages = export.pages, previewSectionId = sectionId, screen = ThesisScreen.PREVIEW) }
+    }
+
+    private fun sectionOnly(s: ThesisSnapshot, sectionId: String): ThesisSnapshot {
+        val keep = HashSet<String>()
+        fun walk(id: String) { keep.add(id); s.children(id).forEach { walk(it.id) } }
+        walk(sectionId)
+        return s.copy(
+            sections = s.sections.filter { it.id in keep }.map { if (it.id == sectionId) it.copy(parentId = null, enabled = true) else it },
+            elements = s.elements.filter { it.sectionId in keep }
+        )
+    }
+
+    /** Edited AI result (the user may correct it before inserting). */
+    fun setAssistResult(text: String) = update { st -> st.copy(assist = st.assist?.copy(result = text)) }
+
     /**
      * Saves the editor text word for word: the Offline Formatting Agent splits it into paragraphs,
      * headings, lists and tables; unchanged text keeps its elements; figures stay where their
      * placeholder line is. One revision per save (history can restore any earlier one).
      */
-    fun saveDraft(thenShow: ThesisScreen? = null) = launch(ThesisBusy.SAVING) {
-        val projectId = _state.value.projectId ?: return@launch
-        val draft = _state.value.draft ?: return@launch
+    fun saveDraft(thenShow: ThesisScreen? = null) = launch(ThesisBusy.SAVING) { persistDraft(thenShow) }
+
+    private suspend fun persistDraft(thenShow: ThesisScreen? = null) {
+        val projectId = _state.value.projectId ?: return
+        val draft = _state.value.draft ?: return
         val snapshot = repository.snapshot(projectId)
-        if (snapshot.section(draft.sectionId) == null) { onMessage(ThesisMessage.Failed("section")); return@launch }
+        if (snapshot.section(draft.sectionId) == null) { onMessage(ThesisMessage.Failed("section")); return }
         val ops = SectionText.plan(snapshot, draft) { splitter.split(it) }
         if (ops.isNotEmpty()) {
             repository.applyDirect(projectId, ops, ChangeSource.USER, "section")
@@ -689,6 +773,18 @@ class ThesisController(
             val text = listOf(before, token, after).filter { it.isNotEmpty() }.joinToString("\n\n")
             st.copy(assets = assets, draft = d.copy(text = text, media = d.media + (token to DraftMedia(null, ElementType.IMAGE, data.copy(assetId = asset.id))), mediaChanged = true))
         }
+    }
+
+    /** Inserts a table typed in the editor (its placeholder, e.g. "[Table 1]", marks its place). */
+    fun insertDraftTable(data: ElementData, at: Int) = update { st ->
+        val d = st.draft ?: return@update st
+        val language = st.snapshot?.meta?.language ?: "en"
+        val token = SectionText.nextToken(d, language, ElementType.TABLE)
+        val pos = at.coerceIn(0, d.text.length)
+        val before = d.text.substring(0, pos).trimEnd('\n', ' ')
+        val after = d.text.substring(pos).trimStart('\n', ' ')
+        val text = listOf(before, token, after).filter { it.isNotEmpty() }.joinToString("\n\n")
+        st.copy(draft = d.copy(text = text, media = d.media + (token to DraftMedia(null, ElementType.TABLE, data)), mediaChanged = true))
     }
 
     /** Changes the caption (and size) of a figure of the draft. */
@@ -893,6 +989,10 @@ class ThesisController(
     /** Renders the page preview (the same layout as the PDF export); reused while nothing changed. */
     fun buildPreview() = launch(ThesisBusy.PREVIEWING) {
         val id = _state.value.projectId ?: return@launch
+        if (_state.value.previewSectionId != null) {
+            update { it.copy(previewSectionId = null, previewFile = null) }
+            previewDir.listFiles()?.forEach { it.delete() }
+        }
         val project = repository.project(id) ?: return@launch
         previewDir.mkdirs()
         val name = "preview-${project.currentRevisionId ?: "0"}-${project.updatedAt}.pdf"

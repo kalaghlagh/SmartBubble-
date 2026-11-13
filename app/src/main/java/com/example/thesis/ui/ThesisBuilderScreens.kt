@@ -41,6 +41,24 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.FormatAlignCenter
+import androidx.compose.material.icons.filled.FormatAlignJustify
+import androidx.compose.material.icons.filled.FormatAlignLeft
+import androidx.compose.material.icons.filled.FormatAlignRight
+import androidx.compose.material.icons.filled.FormatBold
+import androidx.compose.material.icons.filled.FormatItalic
+import androidx.compose.material.icons.filled.FormatListBulleted
+import androidx.compose.material.icons.filled.FormatListNumbered
+import androidx.compose.material.icons.filled.FormatUnderlined
+import androidx.compose.material.icons.filled.HorizontalRule
+import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.filled.Title
+import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.outlined.Event
+import androidx.compose.material.icons.outlined.TableChart
+import androidx.compose.runtime.mutableStateListOf
+import com.example.thesis.core.EditorOps
+import com.example.thesis.core.EditorText
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
@@ -288,6 +306,21 @@ private fun ThesisHomeScreen(host: ThesisHost) {
                 Text(stringResource(R.string.thesis_new_thesis), style = MaterialTheme.typography.titleMedium)
             }
         }
+        state.formDraft?.let { d ->
+            item {
+                Card(Modifier.fillMaxWidth().padding(horizontal = 20.dp).testTag("thesis_form_draft"), shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text(stringResource(R.string.thesis_form_draft_title), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        if (d.title.isNotBlank()) Text(d.title, style = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilledTonalButton(onClick = { controller.show(ThesisScreen.CREATE) }, modifier = Modifier.testTag("thesis_form_draft_continue")) { Text(stringResource(R.string.thesis_continue_editing)) }
+                            TextButton(onClick = { controller.discardFormDraft() }, modifier = Modifier.testTag("thesis_form_draft_discard")) { Text(stringResource(R.string.thesis_discard)) }
+                        }
+                    }
+                }
+            }
+        }
         item {
             Text(stringResource(R.string.thesis_my_projects), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp).semantics { heading() })
@@ -330,6 +363,7 @@ private fun ProjectCard(p: ThesisProjectEntity, percent: Int, busy: Boolean, onO
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(p.title, style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content), fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (p.studentName.isNotBlank()) Text(p.studentName, style = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(degreeLabel(levelOf(p.level)) + " • " + formatDate(p.updatedAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -363,23 +397,42 @@ private fun ProjectCard(p: ThesisProjectEntity, percent: Int, busy: Boolean, onO
 private fun ThesisCreateScreen(host: ThesisHost) {
     val controller = host.thesis
     val state by controller.state.collectAsState()
-    var title by remember { mutableStateOf("") }
-    var student by remember { mutableStateOf("") }
-    var university by remember { mutableStateOf("") }
-    var faculty by remember { mutableStateOf("") }
-    var supervisor by remember { mutableStateOf("") }
-    var level by remember { mutableStateOf(AcademicLevel.MASTER) }
-    var language by remember { mutableStateOf(host.defaultContentLanguage.takeIf { l -> languages.any { it.first == l } } ?: "en") }
+    // A saved, unfinished form ("Save draft") is filled in again.
+    val initial = remember { controller.state.value.formDraft }
+    var title by remember { mutableStateOf(initial?.title.orEmpty()) }
+    var subtitle by remember { mutableStateOf(initial?.subtitle.orEmpty()) }
+    var level by remember { mutableStateOf(initial?.level ?: AcademicLevel.MASTER) }
+    var specialization by remember { mutableStateOf(initial?.specialization.orEmpty()) }
+    var university by remember { mutableStateOf(initial?.university.orEmpty()) }
+    var faculty by remember { mutableStateOf(initial?.faculty.orEmpty()) }
+    var department by remember { mutableStateOf(initial?.department.orEmpty()) }
+    var student by remember { mutableStateOf(initial?.studentName.orEmpty()) }
+    var studentId by remember { mutableStateOf(initial?.studentId.orEmpty()) }
+    var supervisor by remember { mutableStateOf(initial?.supervisor.orEmpty()) }
+    var coSupervisor by remember { mutableStateOf(initial?.coSupervisor.orEmpty()) }
+    var academicYear by remember { mutableStateOf(initial?.academicYear.orEmpty()) }
+    var submissionDate by remember { mutableStateOf(initial?.submissionDate.orEmpty()) }
+    var language by remember {
+        mutableStateOf(initial?.language?.takeIf { l -> languages.any { it.first == l } }
+            ?: host.defaultContentLanguage.takeIf { l -> languages.any { it.first == l } } ?: "en")
+    }
     var showErrors by remember { mutableStateOf(false) }
     val busy = state.busy != null
+    val yearOk = academicYear.isBlank() || Regex("""^\d{4}\s*[-/–]\s*\d{4}$""").matches(academicYear.trim())
+    fun meta() = ThesisMeta(
+        title = title.trim(), level = level, language = language, studentName = student.trim(), university = university.trim(),
+        faculty = faculty.trim(), department = department.trim(), specialization = specialization.trim(), supervisor = supervisor.trim(),
+        coSupervisor = coSupervisor.trim(), academicYear = academicYear.trim(), subtitle = subtitle.trim(), studentId = studentId.trim(),
+        submissionDate = submissionDate
+    )
+    val anything = listOf(title, subtitle, specialization, university, faculty, department, student, studentId, supervisor, coSupervisor, academicYear, submissionDate).any { it.isNotBlank() }
     Column(Modifier.fillMaxSize()) {
         BlueTopBar(stringResource(R.string.thesis_new_thesis), onBack = { controller.back() })
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (initial != null) Text(stringResource(R.string.thesis_form_draft_restored), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("thesis_form_draft_restored"))
+            FormHeader(R.string.thesis_form_academic)
             LabeledField(R.string.thesis_field_title, title, "thesis_field_title", required = true, error = showErrors && title.isBlank(), errorText = R.string.thesis_title_required) { title = it }
-            LabeledField(R.string.thesis_field_student, student, "thesis_field_student", required = true, error = showErrors && student.isBlank(), errorText = R.string.thesis_student_required) { student = it }
-            LabeledField(R.string.thesis_field_university, university, "thesis_field_university") { university = it }
-            LabeledField(R.string.thesis_field_faculty_department, faculty, "thesis_field_faculty") { faculty = it }
-            LabeledField(R.string.thesis_field_supervisor, supervisor, "thesis_field_supervisor") { supervisor = it }
+            LabeledField(R.string.thesis_field_subtitle, subtitle, "thesis_field_subtitle") { subtitle = it }
             Text(stringResource(R.string.thesis_degree_level) + " *", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 AcademicLevel.values().forEach { l ->
@@ -393,43 +446,94 @@ private fun ThesisCreateScreen(host: ThesisHost) {
                     }
                 }
             }
-            Text(stringResource(R.string.thesis_field_language) + " *", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            LabeledField(R.string.thesis_field_specialization, specialization, "thesis_field_specialization") { specialization = it }
+            LabeledField(R.string.thesis_field_university, university, "thesis_field_university") { university = it }
+            LabeledField(R.string.thesis_field_faculty, faculty, "thesis_field_faculty") { faculty = it }
+            LabeledField(R.string.thesis_field_department, department, "thesis_field_department") { department = it }
+            FormHeader(R.string.thesis_form_student)
+            LabeledField(R.string.thesis_field_student_full, student, "thesis_field_student", required = true, error = showErrors && student.isBlank(), errorText = R.string.thesis_student_required) { student = it }
+            LabeledField(R.string.thesis_field_student_id, studentId, "thesis_field_student_id") { studentId = it }
+            FormHeader(R.string.thesis_form_supervision)
+            LabeledField(R.string.thesis_field_supervisor, supervisor, "thesis_field_supervisor") { supervisor = it }
+            LabeledField(R.string.thesis_field_cosupervisor, coSupervisor, "thesis_field_cosupervisor") { coSupervisor = it }
+            FormHeader(R.string.thesis_form_year)
+            LabeledField(R.string.thesis_field_year, academicYear, "thesis_field_year", error = !yearOk, errorText = R.string.thesis_year_format, placeholder = "2025-2026") { academicYear = it }
+            DateField(R.string.thesis_field_submission_date, submissionDate, "thesis_field_submission_date") { submissionDate = it }
+            FormHeader(R.string.thesis_form_language)
             LanguagePicker(language) { language = it }
             Text(stringResource(R.string.thesis_required_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         HorizontalDivider()
-        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            FilledTonalButton(onClick = { controller.back() }, enabled = !busy, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f).height(52.dp).testTag("thesis_cancel_meta")) {
-                Text(stringResource(R.string.action_cancel))
+        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(onClick = { controller.back() }, enabled = !busy, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 6.dp),
+                modifier = Modifier.weight(1f).height(52.dp).testTag("thesis_cancel_meta")) {
+                Text(stringResource(R.string.action_cancel), maxLines = 1)
+            }
+            OutlinedButton(onClick = { controller.saveFormDraft(meta()) }, enabled = !busy && anything, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 6.dp),
+                modifier = Modifier.weight(1f).height(52.dp).testTag("thesis_save_draft")) {
+                Text(stringResource(R.string.thesis_save_draft), maxLines = 1, textAlign = TextAlign.Center)
             }
             Button(
                 onClick = {
-                    if (title.isBlank() || student.isBlank()) showErrors = true
-                    else controller.createProject(
-                        ThesisMeta(title.trim(), level, language, studentName = student.trim(), university = university.trim(), faculty = faculty.trim(), supervisor = supervisor.trim()),
-                        aiAssist = true
-                    )
+                    if (title.isBlank() || student.isBlank() || !yearOk) showErrors = true
+                    else controller.createProject(meta(), aiAssist = true)
                 },
                 // Disabled while saving: repeated taps create one project only.
-                enabled = !busy, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f).height(52.dp).testTag("thesis_save_meta")
+                enabled = !busy, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 6.dp),
+                modifier = Modifier.weight(1.3f).height(52.dp).testTag("thesis_save_meta")
             ) {
                 if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                 else Icon(Icons.Default.Check, contentDescription = null)
-                Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.thesis_create))
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.thesis_create), maxLines = 1)
             }
         }
     }
 }
 
 @Composable
-private fun LabeledField(label: Int, value: String, tag: String, required: Boolean = false, error: Boolean = false, errorText: Int? = null, onChange: (String) -> Unit) {
+private fun FormHeader(label: Int) {
+    Text(stringResource(label), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 8.dp).semantics { heading() })
+}
+
+/** Date chosen with the system date picker (stored as yyyy-MM-dd); can be cleared. */
+@Composable
+private fun DateField(label: Int, value: String, tag: String, onChange: (String) -> Unit) {
+    val context = LocalContext.current
+    Column {
+        Text(stringResource(label), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(
+                onClick = {
+                    val c = java.util.Calendar.getInstance()
+                    Regex("""^(\d{4})-(\d{2})-(\d{2})$""").find(value)?.destructured?.let { (y, m, d) -> c.set(y.toInt(), m.toInt() - 1, d.toInt()) }
+                    android.app.DatePickerDialog(context, { _, y, m, d -> onChange(String.format(java.util.Locale.ROOT, "%04d-%02d-%02d", y, m + 1, d)) },
+                        c.get(java.util.Calendar.YEAR), c.get(java.util.Calendar.MONTH), c.get(java.util.Calendar.DAY_OF_MONTH)).show()
+                },
+                shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag(tag)
+            ) {
+                Icon(Icons.Outlined.Event, contentDescription = null)
+                Spacer(Modifier.width(10.dp))
+                Text(value.ifBlank { stringResource(R.string.thesis_choose_date) }, modifier = Modifier.weight(1f))
+            }
+            if (value.isNotBlank()) IconButton(onClick = { onChange("") }, modifier = Modifier.testTag("${tag}_clear")) {
+                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear))
+            }
+        }
+    }
+}
+
+@Composable
+private fun LabeledField(label: Int, value: String, tag: String, required: Boolean = false, error: Boolean = false, errorText: Int? = null, placeholder: String? = null, onChange: (String) -> Unit) {
     Column {
         Text(stringResource(label) + if (required) " *" else "", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))
         OutlinedTextField(
             value = value, onValueChange = onChange, singleLine = true, isError = error, shape = RoundedCornerShape(12.dp),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            placeholder = if (placeholder != null) ({ Text(placeholder) }) else null,
             supportingText = if (error && errorText != null) ({ Text(stringResource(errorText), modifier = Modifier.testTag("${tag}_error")) }) else null,
             textStyle = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content),
             modifier = Modifier.fillMaxWidth().testTag(tag)
@@ -470,6 +574,8 @@ private fun ThesisProjectWorkspace(host: ThesisHost) {
     var expanded by remember { mutableStateOf(setOf<String>()) }
     var renaming by remember { mutableStateOf<ThesisSection?>(null) }
     var deleting by remember { mutableStateOf<ThesisSection?>(null) }
+    var addingChapter by remember { mutableStateOf(false) }
+    var addingSubTo by remember { mutableStateOf<ThesisSection?>(null) }
     val projectId = state.projectId
     Column(Modifier.fillMaxSize()) {
         BlueTopBar(snapshot?.meta?.title.orEmpty(), onBack = { controller.back() }) {
@@ -513,7 +619,7 @@ private fun ThesisProjectWorkspace(host: ThesisHost) {
                     controller, snapshot, s, numbering, depth = 0,
                     expanded = s.id in expanded, expandedIds = expanded,
                     onToggle = { id -> expanded = if (id in expanded) expanded - id else expanded + id },
-                    onRename = { renaming = it }, onDelete = { deleting = it }
+                    onRename = { renaming = it }, onDelete = { deleting = it }, onAddSub = { addingSubTo = it }
                 )
             }
             if (hidden.isNotEmpty()) item {
@@ -534,11 +640,7 @@ private fun ThesisProjectWorkspace(host: ThesisHost) {
             }
         }
         Button(
-            onClick = {
-                val last = snapshot.children(null).lastOrNull { it.kind == SectionKind.CHAPTER }
-                    ?: snapshot.children(null).lastOrNull { it.kind == SectionKind.INTRODUCTION }
-                controller.direct(listOf(ThesisOp.AddSection(ThesisSection(ThesisStructure.newId("sec"), null, SectionKind.CHAPTER, "", 0), last?.id)), ChangeSource.STRUCTURE, "chapter")
-            },
+            onClick = { addingChapter = true },
             enabled = state.busy == null, shape = RoundedCornerShape(16.dp),
             modifier = Modifier.fillMaxWidth().padding(16.dp).height(56.dp).testTag("thesis_add_chapter")
         ) {
@@ -561,6 +663,17 @@ private fun ThesisProjectWorkspace(host: ThesisHost) {
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("thesis_delete_section_confirm")) { Text(stringResource(R.string.template_delete)) } },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.action_cancel)) } }
         )
+    }
+    if (addingChapter) TextInputDialog(stringResource(R.string.thesis_new_chapter_title), "", onDismiss = { addingChapter = false }) { title ->
+        addingChapter = false
+        controller.addChapter(title)
+    }
+    addingSubTo?.let { parent ->
+        TextInputDialog(stringResource(R.string.thesis_new_subsection_title), "", onDismiss = { addingSubTo = null }) { title ->
+            addingSubTo = null
+            controller.addSubsection(parent.id, title)
+            expanded = expanded + parent.id
+        }
     }
     if (deletingProject && projectId != null) DeleteProjectDialog(onDismiss = { deletingProject = false }) { deletingProject = false; controller.deleteProject(projectId) }
 }
@@ -628,7 +741,8 @@ private fun SectionCard(
     expandedIds: Set<String>,
     onToggle: (String) -> Unit,
     onRename: (ThesisSection) -> Unit,
-    onDelete: (ThesisSection) -> Unit
+    onDelete: (ThesisSection) -> Unit,
+    onAddSub: (ThesisSection) -> Unit
 ) {
     val state by controller.state.collectAsState()
     val idle = state.busy == null
@@ -674,11 +788,7 @@ private fun SectionCard(
                         if (index in 0 until siblings.lastIndex) SmallAction(Icons.Outlined.ArrowDownward, R.string.thesis_move_down, "thesis_down_${s.id}", idle) {
                             controller.direct(listOf(ThesisOp.MoveSection(s.id, s.parentId, siblings[index + 1].id)), ChangeSource.STRUCTURE, "reorder")
                         }
-                        if (s.kind.container) SmallAction(Icons.Default.Add, R.string.thesis_add_section, "thesis_add_sub_${s.id}", idle) {
-                            val kind = if (s.kind == SectionKind.SECTION) SectionKind.SUBSECTION else SectionKind.SECTION
-                            controller.direct(listOf(ThesisOp.AddSection(ThesisSection(ThesisStructure.newId("sec"), s.id, kind, "", 0), snapshot.children(s.id).lastOrNull()?.id)), ChangeSource.STRUCTURE, "section")
-                            if (!expanded) onToggle(s.id)
-                        }
+                        if (s.kind.container) SmallAction(Icons.Default.Add, R.string.thesis_add_section, "thesis_add_sub_${s.id}", idle) { onAddSub(s) }
                         if (!s.kind.generated) SmallAction(Icons.Default.CheckCircle, if (s.completed) R.string.thesis_mark_in_progress else R.string.thesis_mark_completed, "thesis_complete_${s.id}", idle) {
                             controller.setSectionCompleted(s.id, !s.completed)
                         }
@@ -689,7 +799,7 @@ private fun SectionCard(
                     }
                     children.forEach { c ->
                         SectionCard(controller, snapshot, c, numbering, depth = 1, expanded = c.id in expandedIds, expandedIds = expandedIds,
-                            onToggle = onToggle, onRename = onRename, onDelete = onDelete)
+                            onToggle = onToggle, onRename = onRename, onDelete = onDelete, onAddSub = onAddSub)
                     }
                 }
             }
@@ -720,31 +830,56 @@ private fun ThesisSectionEditor(host: ThesisHost) {
     val section = snapshot?.section(state.selectedSectionId)
     val context = LocalContext.current
     var value by remember(draft?.sectionId) { mutableStateOf(TextFieldValue(draft?.text.orEmpty())) }
-    // Text changed outside the field (image, AI result, save): show it, cursor at the end.
+    // Undo / redo of the text (typing is grouped by pauses).
+    val undo = remember(draft?.sectionId) { mutableStateListOf<TextFieldValue>() }
+    val redo = remember(draft?.sectionId) { mutableStateListOf<TextFieldValue>() }
+    var lastPush by remember(draft?.sectionId) { mutableStateOf(0L) }
+    // Text changed outside the field (image, table, AI result, save): show it, cursor at the end.
     LaunchedEffect(draft?.text) {
         val t = draft?.text ?: return@LaunchedEffect
         if (t != value.text) value = TextFieldValue(t, TextRange(t.length))
     }
     var menu by remember { mutableStateOf(false) }
+    var showInfo by remember { mutableStateOf(false) }
+    var headingMenu by remember { mutableStateOf(false) }
     var pickChat by remember { mutableStateOf(false) }
     var pendingImage by remember { mutableStateOf<Uri?>(null) }
+    var addingTable by remember { mutableStateOf(false) }
     var editingMedia by remember { mutableStateOf<String?>(null) }
     var confirmFormat by remember { mutableStateOf(false) }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? -> pendingImage = uri }
     val idle = state.busy == null
+    val language = snapshot?.meta?.language ?: "en"
     val title = if (snapshot != null && section != null) ThesisStructure.displayTitle(section, ThesisStructure.numbering(snapshot), snapshot.meta.language) else ""
 
-    fun insertAtCursor(text: String) {
-        val v = value
-        val start = minOf(v.selection.start, v.selection.end).coerceIn(0, v.text.length)
-        val end = maxOf(v.selection.start, v.selection.end).coerceIn(0, v.text.length)
-        val before = v.text.substring(0, start)
-        val after = v.text.substring(end)
-        val sepBefore = if (before.isEmpty() || before.endsWith("\n\n")) "" else if (before.endsWith("\n")) "\n" else "\n\n"
-        val sepAfter = if (after.isEmpty() || after.startsWith("\n")) "" else "\n\n"
-        val inserted = sepBefore + text.trim() + sepAfter
-        value = TextFieldValue(before + inserted + after, TextRange(before.length + inserted.length))
-        controller.updateDraft(value.text)
+    fun commit(new: TextFieldValue, group: Boolean = false) {
+        if (new.text != value.text) {
+            val now = System.currentTimeMillis()
+            if (!group || now - lastPush > 800) {
+                undo.add(value)
+                if (undo.size > 200) undo.removeAt(0)
+                lastPush = now
+            }
+            redo.clear()
+        }
+        value = new
+        if (new.text != draft?.text) controller.updateDraft(new.text)
+    }
+    fun applyOp(op: (EditorText) -> EditorText) {
+        val r = op(EditorText.of(value.text, value.selection.start, value.selection.end))
+        commit(TextFieldValue(r.text, TextRange(r.start, r.end)))
+    }
+    // Blocks go after the selection: selected text is never replaced by an insertion.
+    fun insertAtCursor(text: String) = applyOp { EditorOps.insertBlock(EditorText(it.text, it.end, it.end), text) }
+    fun heading(level: Int) {
+        val t = EditorText.of(value.text, value.selection.start, value.selection.end)
+        val lineStart = t.text.lastIndexOf('\n', (t.start - 1).coerceAtLeast(0)).let { if (t.start == 0 || it < 0) 0 else it + 1 }
+        val lineEnd = t.text.indexOf('\n', t.start).let { if (it < 0) t.text.length else it }
+        if (t.text.substring(lineStart, lineEnd).isBlank() && level > 0) {
+            // Empty line: start a new heading there.
+            val prefix = "#".repeat(level) + " "
+            commit(TextFieldValue(t.text.substring(0, lineStart) + prefix + t.text.substring(lineEnd), TextRange(lineStart + prefix.length)))
+        } else applyOp { EditorOps.setHeading(it, level) }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -766,28 +901,78 @@ private fun ThesisSectionEditor(host: ThesisHost) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             return@Column
         }
-        Column(Modifier.weight(1f).padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SaveStatus(saving = state.busy == com.example.thesis.ThesisBusy.SAVING, dirty = draft.dirty, onPrimary = false)
                 Spacer(Modifier.weight(1f))
-                Row(Modifier.clickable(enabled = idle) { controller.setSectionCompleted(section.id, !section.completed) }.testTag("thesis_section_completed"),
+                Row(Modifier.clickable(enabled = idle) { controller.setSectionCompleted(section.id, !section.completed) }.heightIn(min = 48.dp).testTag("thesis_section_completed"),
                     verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = section.completed, onCheckedChange = null)
                     Text(stringResource(R.string.thesis_status_completed), style = MaterialTheme.typography.labelLarge)
                 }
             }
+            // Section title and note (saved with the text).
+            TextButton(onClick = { showInfo = !showInfo }, modifier = Modifier.testTag("thesis_section_info_toggle")) {
+                Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
+                Text(stringResource(R.string.thesis_section_details))
+                Icon(if (showInfo) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null)
+            }
+            if (showInfo) {
+                OutlinedTextField(
+                    value = draft.title, onValueChange = { controller.updateDraftInfo(it, draft.description) }, singleLine = true,
+                    label = { Text(stringResource(R.string.thesis_section_title)) }, shape = RoundedCornerShape(12.dp),
+                    supportingText = if (section.kind == SectionKind.CHAPTER || section.kind == SectionKind.SECTION || section.kind == SectionKind.SUBSECTION) ({ Text(stringResource(R.string.thesis_section_title_hint)) }) else null,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content), modifier = Modifier.fillMaxWidth().testTag("thesis_section_title_field")
+                )
+                OutlinedTextField(
+                    value = draft.description, onValueChange = { controller.updateDraftInfo(draft.title, it) }, minLines = 2,
+                    label = { Text(stringResource(R.string.thesis_section_description)) }, shape = RoundedCornerShape(12.dp),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content), modifier = Modifier.fillMaxWidth().testTag("thesis_section_description")
+                )
+            }
             state.sectionHistory?.let { SectionHistoryCard(controller, it, onClose = { controller.selectSection(section.id) }) }
+            // Formatting toolbar.
+            Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), shape = RoundedCornerShape(14.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    ToolIcon(Icons.Filled.Undo, R.string.thesis_undo, "thesis_undo", undo.isNotEmpty()) {
+                        val prev = undo.removeAt(undo.lastIndex); redo.add(value); value = prev; controller.updateDraft(prev.text)
+                    }
+                    ToolIcon(Icons.Filled.Redo, R.string.thesis_redo, "thesis_redo", redo.isNotEmpty()) {
+                        val next = redo.removeAt(redo.lastIndex); undo.add(value); value = next; controller.updateDraft(next.text)
+                    }
+                    ToolDivider()
+                    ToolIcon(Icons.Filled.FormatBold, R.string.thesis_fmt_bold, "thesis_fmt_bold") { applyOp { EditorOps.toggleWrap(it, "**") } }
+                    ToolIcon(Icons.Filled.FormatItalic, R.string.thesis_fmt_italic, "thesis_fmt_italic") { applyOp { EditorOps.toggleWrap(it, "*") } }
+                    ToolIcon(Icons.Filled.FormatUnderlined, R.string.thesis_fmt_underline, "thesis_fmt_underline") { applyOp { EditorOps.toggleWrap(it, "__") } }
+                    ToolDivider()
+                    Box {
+                        ToolIcon(Icons.Filled.Title, R.string.thesis_add_heading, "thesis_fmt_heading") { headingMenu = true }
+                        DropdownMenu(expanded = headingMenu, onDismissRequest = { headingMenu = false }) {
+                            listOf(1 to R.string.thesis_heading_1, 2 to R.string.thesis_heading_2, 3 to R.string.thesis_heading_3, 0 to R.string.thesis_heading_normal).forEach { (lvl, label) ->
+                                MenuItem(label, "thesis_heading_$lvl") { headingMenu = false; heading(lvl) }
+                            }
+                        }
+                    }
+                    ToolIcon(Icons.Filled.FormatListBulleted, R.string.thesis_fmt_bullets, "thesis_fmt_bullets") { applyOp { EditorOps.toggleBullets(it) } }
+                    ToolIcon(Icons.Filled.FormatListNumbered, R.string.thesis_fmt_numbers, "thesis_fmt_numbers") { applyOp { EditorOps.toggleNumbers(it) } }
+                    ToolDivider()
+                    ToolIcon(Icons.Filled.FormatAlignLeft, R.string.thesis_align_start, "thesis_align_start") { applyOp { EditorOps.setAlign(it, "") } }
+                    ToolIcon(Icons.Filled.FormatAlignCenter, R.string.thesis_align_center, "thesis_align_center") { applyOp { EditorOps.setAlign(it, "center") } }
+                    ToolIcon(Icons.Filled.FormatAlignRight, R.string.thesis_align_end, "thesis_align_end") { applyOp { EditorOps.setAlign(it, "end") } }
+                    ToolIcon(Icons.Filled.FormatAlignJustify, R.string.thesis_align_justify, "thesis_align_justify") { applyOp { EditorOps.setAlign(it, "justify") } }
+                }
+            }
             OutlinedTextField(
                 value = value,
-                onValueChange = { value = it; controller.updateDraft(it.text) },
+                onValueChange = { commit(it, group = true) },
                 placeholder = { Text(stringResource(R.string.thesis_paste_placeholder)) },
                 textStyle = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content, lineHeight = 24.sp),
                 shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth().weight(1f).heightIn(min = 160.dp).testTag("thesis_editor_text")
+                modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp).testTag("thesis_editor_text")
             )
+            Text(stringResource(R.string.thesis_format_help), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (draft.media.isNotEmpty()) MediaStrip(state.assets, draft, onEdit = { editingMedia = it })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ContentAction(Icons.Outlined.Image, R.string.thesis_add_image, "thesis_add_image", idle) { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
                 ContentAction(Icons.Outlined.ContentPaste, R.string.thesis_paste_text, "thesis_paste_text", true) {
                     val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.primaryClip
                     val text = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
@@ -795,21 +980,29 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                     else insertAtCursor(text)
                 }
                 ContentAction(Icons.Outlined.Forum, R.string.thesis_insert_from_chat, "thesis_insert_from_chat", true) { pickChat = true }
+                ContentAction(Icons.Outlined.Image, R.string.thesis_add_image, "thesis_add_image", idle) { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
             }
-            AiToolbar(enabled = idle && value.text.isNotBlank()) { mode ->
-                controller.updateDraft(value.text)
-                controller.openAssistant(minOf(value.selection.start, value.selection.end), maxOf(value.selection.start, value.selection.end), mode)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ContentAction(Icons.Outlined.TableChart, R.string.thesis_insert_table, "thesis_insert_table", idle) { addingTable = true }
+                ContentAction(Icons.Filled.Title, R.string.thesis_add_heading, "thesis_add_heading", true) { headingMenu = true }
+                ContentAction(Icons.Filled.HorizontalRule, R.string.thesis_page_break, "thesis_page_break", true) { insertAtCursor(com.example.thesis.core.SectionText.pageBreakToken(language)) }
             }
         }
         HorizontalDivider()
-        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            FilledTonalButton(onClick = {
-                if (draft.dirty) controller.saveDraft(thenShow = ThesisScreen.PREVIEW) else controller.show(ThesisScreen.PREVIEW)
-            }, enabled = idle, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f).height(52.dp).testTag("thesis_editor_preview")) {
-                Icon(Icons.Outlined.Visibility, contentDescription = null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.thesis_tab_preview))
+        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(onClick = { controller.buildSectionPreview(section.id) }, enabled = idle, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 6.dp),
+                modifier = Modifier.weight(1f).height(52.dp).testTag("thesis_editor_preview")) {
+                Icon(Icons.Outlined.Visibility, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.thesis_preview_page), maxLines = 1)
             }
-            Button(onClick = { controller.saveDraft() }, enabled = idle && draft.dirty, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f).height(52.dp).testTag("thesis_save_changes")) {
-                Icon(Icons.Default.Save, contentDescription = null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.thesis_save_changes))
+            FilledTonalButton(onClick = {
+                controller.updateDraft(value.text)
+                controller.openAssistant(minOf(value.selection.start, value.selection.end), maxOf(value.selection.start, value.selection.end))
+            }, enabled = idle, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 6.dp), modifier = Modifier.weight(1f).height(52.dp).testTag("thesis_open_assistant")) {
+                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.thesis_ai_short), maxLines = 1)
+            }
+            Button(onClick = { controller.saveDraft() }, enabled = idle && draft.dirty, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 6.dp),
+                modifier = Modifier.weight(1f).height(52.dp).testTag("thesis_save_changes")) {
+                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.action_save), maxLines = 1)
             }
         }
     }
@@ -822,11 +1015,15 @@ private fun ThesisSectionEditor(host: ThesisHost) {
             controller.insertDraftImage({ resolver.openInputStream(uri) }, uri.lastPathSegment ?: "image", resolver.getType(uri) ?: "image/*", data, value.selection.end)
         }
     }
+    if (addingTable) TableGridDialog(null, onDismiss = { addingTable = false }) { data ->
+        addingTable = false
+        controller.updateDraft(value.text)
+        controller.insertDraftTable(data, value.selection.end)
+    }
     editingMedia?.let { token ->
         draft?.media?.get(token)?.let { m ->
-            MediaDataDialog(m.data, isImage = m.type == com.example.thesis.model.ElementType.IMAGE, onDismiss = { editingMedia = null }) { data ->
-                editingMedia = null; controller.updateDraftMedia(token, data)
-            }
+            if (m.type == com.example.thesis.model.ElementType.TABLE) TableGridDialog(m.data, onDismiss = { editingMedia = null }) { data -> editingMedia = null; controller.updateDraftMedia(token, data) }
+            else MediaDataDialog(m.data, isImage = true, onDismiss = { editingMedia = null }) { data -> editingMedia = null; controller.updateDraftMedia(token, data) }
         }
     }
     if (confirmFormat) {
@@ -841,6 +1038,77 @@ private fun ThesisSectionEditor(host: ThesisHost) {
 }
 
 @Composable
+private fun ToolIcon(icon: ImageVector, label: Int, tag: String, enabled: Boolean = true, onClick: () -> Unit) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.testTag(tag)) { Icon(icon, contentDescription = stringResource(label)) }
+}
+
+@Composable
+private fun ToolDivider() {
+    Box(Modifier.padding(horizontal = 2.dp).width(1.dp).height(24.dp).background(MaterialTheme.colorScheme.outlineVariant))
+}
+
+/** Creates or edits a table: rows and columns, header row and cells, caption. */
+@Composable
+private fun TableGridDialog(initial: ElementData?, onDismiss: () -> Unit, onSave: (ElementData) -> Unit) {
+    val startCols = initial?.tableHeader?.size?.takeIf { it > 0 } ?: 2
+    val startRows = initial?.tableRows?.size?.takeIf { it > 0 } ?: 2
+    var cols by remember { mutableIntStateOf(startCols) }
+    var rows by remember { mutableIntStateOf(startRows) }
+    var caption by remember { mutableStateOf(initial?.caption.orEmpty()) }
+    // Row 0 is the header row.
+    var cells by remember {
+        mutableStateOf(List(startRows + 1) { r -> List(startCols) { c -> (if (r == 0) initial?.tableHeader else initial?.tableRows?.getOrNull(r - 1))?.getOrNull(c).orEmpty() } })
+    }
+    fun resize(newRows: Int, newCols: Int) {
+        rows = newRows; cols = newCols
+        cells = List(newRows + 1) { r -> List(newCols) { c -> cells.getOrNull(r)?.getOrNull(c).orEmpty() } }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(if (initial == null) R.string.thesis_insert_table else R.string.thesis_edit_table)) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Stepper(R.string.thesis_table_rows, rows, 1, 30, "thesis_table_rows") { resize(it, cols) }
+                Stepper(R.string.thesis_table_columns, cols, 1, 8, "thesis_table_cols") { resize(rows, it) }
+                OutlinedTextField(caption, { caption = it }, label = { Text(stringResource(R.string.thesis_caption)) }, singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content), modifier = Modifier.fillMaxWidth().testTag("thesis_table_caption"))
+                Text(stringResource(R.string.thesis_table_header_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.horizontalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    cells.forEachIndexed { r, row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            row.forEachIndexed { c, v ->
+                                OutlinedTextField(
+                                    value = v, singleLine = true,
+                                    onValueChange = { nv -> cells = cells.mapIndexed { ri, rr -> if (ri == r) rr.mapIndexed { ci, cv -> if (ci == c) nv else cv } else rr } },
+                                    textStyle = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content, fontWeight = if (r == 0) FontWeight.Bold else FontWeight.Normal),
+                                    modifier = Modifier.width(110.dp).testTag("thesis_cell_${r}_$c")
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                onSave((initial ?: ElementData()).copy(caption = caption.trim(), tableHeader = cells.first().map { it.trim() }, tableRows = cells.drop(1).map { r -> r.map { it.trim() } }))
+            }, modifier = Modifier.testTag("thesis_table_save")) { Text(stringResource(if (initial == null) R.string.action_add else R.string.action_save)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } }
+    )
+}
+
+@Composable
+private fun Stepper(label: Int, value: Int, min: Int, max: Int, tag: String, onChange: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(label), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        IconButton(onClick = { onChange(value - 1) }, enabled = value > min, modifier = Modifier.testTag("${tag}_minus")) { Text("−", style = MaterialTheme.typography.titleLarge) }
+        Text("$value", style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("${tag}_value"))
+        IconButton(onClick = { onChange(value + 1) }, enabled = value < max, modifier = Modifier.testTag("${tag}_plus")) { Icon(Icons.Default.Add, contentDescription = null) }
+    }
+}
+
+@Composable
 private fun RowScope.ContentAction(icon: ImageVector, label: Int, tag: String, enabled: Boolean, onClick: () -> Unit) {
     OutlinedButton(
         onClick = onClick, enabled = enabled, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
@@ -849,37 +1117,6 @@ private fun RowScope.ContentAction(icon: ImageVector, label: Int, tag: String, e
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp))
             Text(stringResource(label), style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center, maxLines = 2)
-        }
-    }
-}
-
-/** Compact AI toolbar: each action opens the AI assistant with its result for review. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun AiToolbar(enabled: Boolean, onAction: (EditMode?) -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), shape = RoundedCornerShape(16.dp)) {
-        Column(Modifier.fillMaxWidth().padding(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.thesis_ai_tools), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                TextButton(onClick = { onAction(null) }, modifier = Modifier.testTag("thesis_open_assistant")) { Text(stringResource(R.string.thesis_ai_assistant)) }
-            }
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(
-                    Triple(EditMode.IMPROVE, Icons.Outlined.AutoFixHigh, R.string.thesis_ai_improve_text),
-                    Triple(EditMode.EXPAND, Icons.Outlined.UnfoldMore, R.string.thesis_ai_expand_content),
-                    Triple(EditMode.REWRITE, Icons.Outlined.Autorenew, R.string.thesis_ai_rewrite),
-                    Triple(EditMode.CORRECT, Icons.Outlined.Spellcheck, R.string.thesis_ai_correct_grammar),
-                    Triple(EditMode.ORGANIZE, Icons.Outlined.Reorder, R.string.thesis_ai_organize)
-                ).forEach { (mode, icon, label) ->
-                    OutlinedButton(onClick = { onAction(mode) }, enabled = enabled, shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp), modifier = Modifier.heightIn(min = 44.dp).testTag("thesis_ai_${mode.name}")) {
-                        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp))
-                        Text(stringResource(label), style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-            }
         }
     }
 }
@@ -933,6 +1170,7 @@ private fun ChatPickerDialog(host: ThesisHost, onDismiss: () -> Unit, onPick: (S
 
 // =================================================================== 5. AI assistant
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ThesisAiAssistant(host: ThesisHost) {
     val controller = host.thesis
@@ -943,6 +1181,7 @@ private fun ThesisAiAssistant(host: ThesisHost) {
     val providers by produceState<List<Pair<String, String>>?>(null) { value = try { listOfNotNull(host.aiProviderInfo()) } catch (e: Exception) { emptyList() } }
     val provider = providers?.firstOrNull()
     val idle = state.busy == null
+    var confirmReplace by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
         BlueTopBar(stringResource(R.string.thesis_ai_assistant), onBack = { controller.closeAssistant() })
         state.busy?.let { BusyBar(controller, it) }
@@ -955,18 +1194,17 @@ private fun ThesisAiAssistant(host: ThesisHost) {
                 Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                     Spacer(Modifier.width(12.dp))
-                    val p = provider
                     if (providers == null) CircularProgressIndicator(Modifier.size(20.dp))
-                    else if (p != null) Column {
-                        Text(stringResource(R.string.thesis_ai_provider, p.first), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        Text(stringResource(R.string.thesis_ai_model, p.second.ifBlank { "—" }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    else if (provider != null) Column {
+                        Text(stringResource(R.string.thesis_ai_provider, provider.first), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(R.string.thesis_ai_model, provider.second.ifBlank { "—" }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else Text(stringResource(R.string.thesis_ai_no_provider), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("thesis_ai_no_provider"))
                 }
             }
             Text(stringResource(if (assist.hasSelection) R.string.thesis_ai_selected_text else R.string.thesis_ai_whole_section), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
             Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), shape = RoundedCornerShape(12.dp)) {
                 Text(assist.source.ifBlank { stringResource(R.string.thesis_ai_empty_section) }, style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content),
-                    maxLines = 5, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().padding(10.dp))
+                    maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().padding(10.dp).testTag("thesis_ai_source"))
             }
             Text(stringResource(R.string.thesis_ai_request), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
             OutlinedTextField(
@@ -975,14 +1213,29 @@ private fun ThesisAiAssistant(host: ThesisHost) {
                 textStyle = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content), modifier = Modifier.fillMaxWidth().testTag("thesis_ai_instruction")
             )
             val canRun = idle && provider != null
-            Button(onClick = { controller.runAssistant(assist.mode?.takeIf { it != EditMode.GENERATE } ?: EditMode.IMPROVE, assist.instruction) },
-                enabled = canRun && assist.source.isNotBlank(), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().height(52.dp).testTag("thesis_ai_improve_selected")) {
+            val hasText = assist.source.isNotBlank()
+            Button(onClick = { controller.runAssistant(EditMode.IMPROVE, assist.instruction) }, enabled = canRun && hasText, shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp).testTag("thesis_ai_IMPROVE")) {
                 Icon(Icons.Default.AutoAwesome, contentDescription = null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.thesis_ai_improve_selected))
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(
+                    Triple(EditMode.EXPAND, Icons.Outlined.UnfoldMore, R.string.thesis_ai_expand_content),
+                    Triple(EditMode.REWRITE, Icons.Outlined.Autorenew, R.string.thesis_ai_rewrite),
+                    Triple(EditMode.CORRECT, Icons.Outlined.Spellcheck, R.string.thesis_ai_correct_grammar),
+                    Triple(EditMode.ORGANIZE, Icons.Outlined.Reorder, R.string.thesis_ai_organize)
+                ).forEach { (mode, icon, label) ->
+                    OutlinedButton(onClick = { controller.runAssistant(mode, assist.instruction) }, enabled = canRun && hasText, shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_ai_${mode.name}")) {
+                        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(stringResource(label))
+                    }
+                }
             }
             FilledTonalButton(onClick = { controller.runAssistant(EditMode.GENERATE, assist.instruction) }, enabled = canRun, shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth().height(52.dp).testTag("thesis_ai_generate")) {
                 Icon(Icons.Outlined.Edit, contentDescription = null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.thesis_ai_generate))
             }
+            Text(stringResource(R.string.thesis_ai_integrity), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             when {
                 assist.failed -> Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().testTag("thesis_ai_failed")) {
                     Text(stringResource(R.string.thesis_ai_failed), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
@@ -990,38 +1243,44 @@ private fun ThesisAiAssistant(host: ThesisHost) {
                 assist.unchanged -> Text(stringResource(R.string.thesis_ai_unchanged), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("thesis_ai_unchanged"))
             }
             assist.result?.let { result ->
-                Text(stringResource(R.string.thesis_ai_result), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                Card(Modifier.fillMaxWidth().testTag("thesis_ai_result"), shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f))) {
-                    Text(result, style = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content), modifier = Modifier.padding(12.dp))
-                }
+                Text(stringResource(R.string.thesis_ai_result_editable), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(
+                    value = result, onValueChange = { controller.setAssistResult(it) }, minLines = 4, shape = RoundedCornerShape(14.dp),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content), modifier = Modifier.fillMaxWidth().testTag("thesis_ai_result")
+                )
                 assist.warnings.forEach { Text("⚠ " + noteText(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) }
                 Text(stringResource(R.string.thesis_ai_review_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (assist.mode != EditMode.GENERATE && assist.source.isNotBlank()) {
-                    Button(onClick = { controller.insertAssistResult(replace = true) }, enabled = idle, shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = CompletedGreen, contentColor = Color.White),
-                        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("thesis_ai_replace")) {
-                        Icon(Icons.Default.Check, contentDescription = null); Spacer(Modifier.width(8.dp))
-                        Text(stringResource(if (assist.hasSelection) R.string.thesis_ai_replace_selection else R.string.thesis_ai_replace_section))
-                    }
-                }
-                FilledTonalButton(onClick = { controller.insertAssistResult(replace = false) }, enabled = idle, shape = RoundedCornerShape(14.dp),
+                Button(onClick = { controller.insertAssistResult(replace = false) }, enabled = idle && result.isNotBlank(), shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = CompletedGreen, contentColor = Color.White),
                     modifier = Modifier.fillMaxWidth().height(52.dp).testTag("thesis_ai_insert")) {
-                    Icon(Icons.Default.Add, contentDescription = null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.thesis_ai_insert))
+                    Icon(Icons.Default.Check, contentDescription = null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.thesis_ai_insert))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (hasText && assist.mode != EditMode.GENERATE) OutlinedButton(onClick = { confirmReplace = true }, enabled = idle && result.isNotBlank(), shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("thesis_ai_replace")) {
+                        Icon(Icons.Outlined.Autorenew, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.thesis_ai_replace_short), maxLines = 1)
+                    }
                     OutlinedButton(onClick = {
                         (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.setPrimaryClip(ClipData.newPlainText("thesis", result))
                         android.widget.Toast.makeText(context, context.getString(R.string.thesis_copied), android.widget.Toast.LENGTH_SHORT).show()
                     }, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("thesis_ai_copy")) {
-                        Icon(Icons.Outlined.ContentCopy, contentDescription = null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.thesis_ai_copy))
+                        Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.thesis_ai_copy_short), maxLines = 1)
                     }
                     OutlinedButton(onClick = { controller.closeAssistant() }, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("thesis_ai_discard")) {
-                        Icon(Icons.Default.Close, contentDescription = null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.thesis_ai_discard))
+                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.action_cancel), maxLines = 1)
                     }
                 }
             }
         }
+    }
+    if (confirmReplace) {
+        AlertDialog(
+            onDismissRequest = { confirmReplace = false },
+            title = { Text(stringResource(if (assist?.hasSelection == true) R.string.thesis_ai_replace_selection else R.string.thesis_ai_replace_section)) },
+            text = { Text(stringResource(R.string.thesis_ai_replace_confirm_text)) },
+            confirmButton = { Button(onClick = { confirmReplace = false; controller.insertAssistResult(replace = true) }, modifier = Modifier.testTag("thesis_ai_replace_confirm")) { Text(stringResource(R.string.thesis_ai_replace_short)) } },
+            dismissButton = { TextButton(onClick = { confirmReplace = false }) { Text(stringResource(R.string.action_cancel)) } }
+        )
     }
 }
 
@@ -1032,7 +1291,8 @@ private fun ThesisPreview(host: ThesisHost) {
     val controller = host.thesis
     val state by controller.state.collectAsState()
     val file = state.previewFile
-    LaunchedEffect(file == null) { if (file == null && controller.state.value.busy == null) controller.buildPreview() }
+    LaunchedEffect(file == null) { if (file == null && controller.state.value.busy == null && controller.state.value.previewSectionId == null) controller.buildPreview() }
+    val sectionPreview = state.previewSectionId?.let { id -> state.snapshot?.let { s -> s.section(id)?.let { ThesisStructure.displayTitle(it, ThesisStructure.numbering(s), s.meta.language) } } }
     val pages = remember(file) { file?.let { pageCount(it) } ?: 0 }.takeIf { it > 0 } ?: if (file != null) state.previewPages else 0
     var page by remember(file) { mutableIntStateOf(0) }
     var zoom by remember { mutableStateOf(1f) }
@@ -1040,7 +1300,7 @@ private fun ThesisPreview(host: ThesisHost) {
     val zoomOut = stringResource(R.string.thesis_zoom_out)
     val zoomIn = stringResource(R.string.thesis_zoom_in)
     Column(Modifier.fillMaxSize()) {
-        BlueTopBar(stringResource(R.string.thesis_preview_thesis), onBack = { controller.back() }) {
+        BlueTopBar(sectionPreview ?: stringResource(R.string.thesis_preview_thesis), onBack = { controller.back() }) {
             IconButton(onClick = { zoom = (zoom - 0.25f).coerceAtLeast(0.75f) }, modifier = Modifier.semantics { contentDescription = zoomOut }.testTag("thesis_zoom_out")) {
                 Text("−", style = MaterialTheme.typography.titleLarge)
             }
@@ -1073,6 +1333,14 @@ private fun ThesisPreview(host: ThesisHost) {
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("thesis_page_indicator")
         )
         state.lastExport?.let { Box(Modifier.padding(horizontal = 16.dp)) { ExportResultCard(host, it) } }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = { controller.show(ThesisScreen.PROJECT) }, modifier = Modifier.testTag("thesis_preview_back_workspace")) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.thesis_back_to_workspace))
+            }
+            Spacer(Modifier.weight(1f))
+            if (sectionPreview != null) TextButton(onClick = { controller.buildPreview() }, enabled = idle, modifier = Modifier.testTag("thesis_preview_whole")) { Text(stringResource(R.string.thesis_preview_whole)) }
+        }
         Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { controller.export("DOCX") }, enabled = idle, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f).height(52.dp).testTag("thesis_export_docx")) {
                 Icon(Icons.Outlined.Description, contentDescription = null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.thesis_export_word), maxLines = 1)

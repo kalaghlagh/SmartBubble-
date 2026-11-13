@@ -22,9 +22,15 @@ data class SectionDraft(
     /** Text when the section was opened or last saved (to show "unsaved changes"). */
     val savedText: String,
     /** A figure was inserted or its caption changed since the last save. */
-    val mediaChanged: Boolean = false
+    val mediaChanged: Boolean = false,
+    /** Section title and note as edited in the editor, and as saved. */
+    val title: String = "",
+    val description: String = "",
+    val savedTitle: String = "",
+    val savedDescription: String = ""
 ) {
-    val dirty: Boolean get() = text != savedText || mediaChanged
+    val infoChanged: Boolean get() = title != savedTitle || description != savedDescription
+    val dirty: Boolean get() = text != savedText || mediaChanged || infoChanged
 }
 
 /**
@@ -86,7 +92,10 @@ object SectionText {
             previous = e
         }
         val text = sb.toString()
-        return SectionDraft(sectionId, text, media, text)
+        val section = snapshot.section(sectionId)
+        val title = section?.title.orEmpty()
+        val description = section?.description.orEmpty()
+        return SectionDraft(sectionId, text, media, text, title = title, description = description, savedTitle = title, savedDescription = description)
     }
 
     /** Next free placeholder for a new figure or table in [draft]. */
@@ -198,6 +207,9 @@ object SectionText {
         }
         flushRun()
         ops.addAll(dataUpdates)
+        if (draft.infoChanged && snapshot.section(sectionId) != null) {
+            ops.add(ThesisOp.UpdateSection(sectionId, title = draft.title.trim().takeIf { it != draft.savedTitle }, description = draft.description.takeIf { it != draft.savedDescription }))
+        }
         return ops
     }
 }

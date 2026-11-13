@@ -437,4 +437,33 @@ class ThesisCoreTest {
         val sec = ThesisSection("x", null, SectionKind.CUSTOM, "X", 0, completed = true, description = "Notes")
         assertEquals(sec, ThesisCodec.sectionFromMap(ThesisCodec.sectionToMap(sec)))
     }
+
+    @Test
+    fun editorOps_toolbarCommands() {
+        val E = com.example.thesis.core.EditorOps
+        fun t(text: String, a: Int, b: Int = a) = com.example.thesis.core.EditorText.of(text, a, b)
+        // Bold around the selection (spaces stay outside), toggled off again.
+        val b = E.toggleWrap(t("The aquifer is deep.", 4, 12), "**")
+        assertEquals("The **aquifer** is deep.", b.text)
+        assertEquals("aquifer", b.selected)
+        assertEquals("The aquifer is deep.", E.toggleWrap(b, "**").text)
+        assertEquals("A *word* here", E.toggleWrap(t("A word here", 2, 6), "*").text)
+        assertEquals("A __word__ here", E.toggleWrap(t("A word here", 2, 6), "__").text)
+        // Headings and alignment on the current line.
+        val h = E.setHeading(t("Intro\n\nContext line", 9), 2)
+        assertEquals("Intro\n\n## Context line", h.text)
+        assertEquals("Intro\n\nContext line", E.setHeading(t(h.text, 10), 0).text)
+        assertEquals("## {center} Context line", E.setAlign(t("## Context line", 4), "center").text)
+        assertEquals("{justify} Text", E.setAlign(t("{center} Text", 0), "justify").text)
+        assertEquals("Text", E.setAlign(t("{end} Text", 2), "").text)
+        // Lists on the selected lines.
+        val bl = E.toggleBullets(t("one\ntwo\nthree", 0, 13))
+        assertEquals("- one\n- two\n- three", bl.text)
+        assertEquals("one\ntwo\nthree", E.toggleBullets(t(bl.text, 0, bl.text.length)).text)
+        assertEquals("1. one\n2. two", E.toggleNumbers(t("- one\n- two", 0, 11)).text)
+        // Blocks (tables, images, page breaks) become their own paragraph at the cursor.
+        val pb = E.insertBlock(t("First.Second.", 6), "[Page break]")
+        assertEquals("First.\n\n[Page break]\n\nSecond.", pb.text)
+        assertEquals("[Page break]", E.insertBlock(t("", 0), "[Page break]").text)
+    }
 }
