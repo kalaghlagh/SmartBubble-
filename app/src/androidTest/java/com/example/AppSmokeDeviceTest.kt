@@ -186,6 +186,16 @@ class AppSmokeDeviceTest {
     }
 
     @Test
+    fun apiKeys_areEncryptedWithTheAndroidKeystore_andReadBack() {
+        // The Android Keystore exists only on a device: the JVM tests cannot check this.
+        val key = "sk-device-test-0123456789abcdef"
+        val stored = com.example.core.security.KeystoreHelper.encrypt(key)
+        assertTrue("stored in plaintext", !stored.contains(key) && !stored.contains("0123456789abcdef"))
+        assertTrue(com.example.core.security.KeystoreHelper.isEncryptedValue(stored))
+        assertEquals(key, com.example.core.security.KeystoreHelper.decrypt(stored))
+    }
+
+    @Test
     fun thesis_newProject_editSaveReopen_previewAndExportDocxPdf() {
         language("en", "Thesis")
         tap("nav_thesis")
