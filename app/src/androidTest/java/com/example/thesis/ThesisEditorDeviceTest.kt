@@ -77,10 +77,21 @@ class ThesisEditorDeviceTest {
 
     private fun tap(tag: String) {
         await("node $tag") { exists(tag) }
-        val containers = compose.onAllNodes(hasScrollAction() and hasAnyDescendant(hasTestTag(tag)))
-        repeat(containers.fetchSemanticsNodes().size) { i -> try { containers[i].performScrollToNode(hasTestTag(tag)) } catch (e: Throwable) { } }
         val node = compose.onNodeWithTag(tag)
-        try { node.performScrollTo() } catch (e: AssertionError) { }
+        // Scroll it into view in every enclosing container, then check. The keyboard opens after a
+        // long press and shrinks the viewport while the editor keeps the caret visible, which can
+        // move the toolbar out again right after it was scrolled in (run #44: bounds all 0 = fully
+        // clipped, ime=true). So repeat until the layout has settled, up to 5 s.
+        fun bringIntoView() {
+            val containers = compose.onAllNodes(hasScrollAction() and hasAnyDescendant(hasTestTag(tag)))
+            repeat(containers.fetchSemanticsNodes().size) { i -> try { containers[i].performScrollToNode(hasTestTag(tag)) } catch (e: Throwable) { } }
+            try { node.performScrollTo() } catch (e: AssertionError) { }
+            compose.waitForIdle()
+        }
+        fun shown() = try { node.assertIsDisplayed(); true } catch (e: AssertionError) { false }
+        val deadline = System.currentTimeMillis() + 5_000
+        bringIntoView()
+        while (!shown() && System.currentTimeMillis() < deadline) { Thread.sleep(200); bringIntoView() }
         try { node.assertIsDisplayed() } catch (e: AssertionError) {
             val n = node.fetchSemanticsNode()
             val root = compose.onAllNodes(isRoot()).fetchSemanticsNodes().joinToString { it.boundsInRoot.toString() }
