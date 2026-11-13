@@ -81,7 +81,15 @@ class ThesisEditorDeviceTest {
         repeat(containers.fetchSemanticsNodes().size) { i -> try { containers[i].performScrollToNode(hasTestTag(tag)) } catch (e: Throwable) { } }
         val node = compose.onNodeWithTag(tag)
         try { node.performScrollTo() } catch (e: AssertionError) { }
-        node.assertIsDisplayed()
+        try { node.assertIsDisplayed() } catch (e: AssertionError) {
+            val n = node.fetchSemanticsNode()
+            val root = compose.onAllNodes(isRoot()).fetchSemanticsNodes().joinToString { it.boundsInRoot.toString() }
+            val ime = compose.activity.window.decorView.rootWindowInsets?.let {
+                androidx.core.view.WindowInsetsCompat.toWindowInsetsCompat(it).isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())
+            }
+            shot("not-displayed-$tag")
+            throw AssertionError("$tag not displayed: bounds=${n.boundsInRoot} roots=[$root] ime=$ime focus=${focusedWindow()}", e)
+        }
         node.performClick()
         compose.waitForIdle()
     }
@@ -117,22 +125,16 @@ class ThesisEditorDeviceTest {
     } catch (e: Exception) { "unknown ($e)" }
 
     /**
-     * Waits until the app window has the input focus. [closeForeign]: after 3 s, BACK is sent while
-     * another window holds the focus (a key goes to the focused window, never to the app here), so
-     * a system window left over (copied preview, system dialog) is closed. Which window it was is
-     * logged, so the logcat says what took the focus.
+     * Waits until the app window has the input focus again. Run #40 logcat: after each copy,
+     * SystemUI's "ClipboardOverlay" window (the copied-text preview) holds the focus until it
+     * times out (about 6 s after the last copy). A finger tap gives the focus back at once; Compose
+     * test input bypasses the window manager and does not. Nothing is dismissed here; on timeout
+     * the message names the window that has the focus.
      */
-    private fun awaitWindowFocus(step: String, closeForeign: Boolean = true) {
-        val start = System.currentTimeMillis()
-        var backs = 0
+    private fun awaitWindowFocus(step: String) {
+        val deadline = System.currentTimeMillis() + 20_000
         while (!compose.activity.hasWindowFocus()) {
-            val waited = System.currentTimeMillis() - start
-            if (waited > 20_000) throw AssertionError("app window has no focus: $step; focus: ${focusedWindow()}")
-            if (closeForeign && waited > 3_000 * (backs + 1) && backs < 3) {
-                android.util.Log.w("ThesisEditorDeviceTest", "no focus ($step), sending BACK to: ${focusedWindow()}")
-                InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-                backs++
-            }
+            if (System.currentTimeMillis() > deadline) throw AssertionError("app window has no focus: $step; focus: ${focusedWindow()}")
             Thread.sleep(100)
         }
         compose.waitForIdle()
@@ -196,14 +198,17 @@ class ThesisEditorDeviceTest {
 
     /** Runs a toolbar button and checks that no word of the text was lost. */
     private fun press(tag: String, before: () -> Unit) {
-        val wordsBefore = words(text)
         before()
+        val textBefore = text
+        val wordsBefore = words(textBefore)
         tap(tag)
         val after = text
         assertTrue("$tag lost text: before=$wordsBefore after=$after", words(after).containsAll(wordsBefore))
-        // Every marker is read as formatting: no stray "*" or "_" (the sample texts have none).
-        val plain = com.example.thesis.core.InlineFormat.plain(prefix.replace(after, ""))
-        assertTrue("$tag left stray markers: $after", !plain.contains('*') && !plain.contains('_'))
+        // The button adds no stray "*" / "_": every marker it writes is read as formatting. (Text
+        // typed over a selected formatted word can leave stray markers before the press, e.g.
+        // "* more*"; those are the typing's, and they must not grow.)
+        fun stray(t: String) = com.example.thesis.core.InlineFormat.plain(prefix.replace(t, "")).count { it == '*' || it == '_' }
+        assertTrue("$tag added stray markers: before=$textBefore after=$after", stray(after) <= stray(textBefore))
     }
 
     private val formatButtons = listOf(
@@ -237,6 +242,25 @@ class ThesisEditorDeviceTest {
         for (tag in formatButtons) press(tag) { tapInText() }
         for (level in listOf(1, 2, 3, 0)) press("thesis_heading_$level") { tapInText(); tap("thesis_fmt_heading") }
         shot("05-caret-only")
+    }
+
+    @Test
+    fun keyboardTyping_withoutAnyClipboardUse() {
+        // Ordinary typing with key events (through the window manager, like a hardware keyboard or
+        // the IME's key path), no copy or paste in this test.
+        openEditor()
+        tapInText()
+        awaitWindowFocus("before typing")
+        val ins = InstrumentationRegistry.getInstrumentation()
+        ins.sendStringSync("Hello world")
+        ins.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DEL)
+        ins.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DEL)
+        ins.sendStringSync("ld 123")
+        ins.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_ENTER)
+        ins.sendStringSync("second line")
+        compose.waitForIdle()
+        await("typed text") { text == "Hello world 123\nsecond line" }
+        assertTrue(vm.thesis.state.value.draft!!.dirty)
     }
 
     @Test
