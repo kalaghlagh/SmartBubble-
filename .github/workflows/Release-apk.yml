@@ -179,6 +179,7 @@ jobs:
           echo "== Results"; grep -E "^OK \(|^FAILURES|^Tests run|INSTRUMENTATION_STATUS: (class|test)=|INSTRUMENTATION_STATUS_CODE: -|Process crashed" "$d/instrument.txt" | head -300 || true
           # Full message and first frames of every failed test (the "stack=" block of am instrument).
           echo "== Failures"; awk '/INSTRUMENTATION_STATUS: stack=/{p=1;n=0} /INSTRUMENTATION_STATUS: (current|id|numtests)=/{p=0} p&&n<60{print;n++}' "$d/instrument.txt" | head -600 || true
+          echo "== Clipboard / editor / file events"; cat "$d/app-events.txt" 2>/dev/null | head -150 || true
           echo "== FATAL EXCEPTIONS"; cat "$d/fatal-exceptions.txt" 2>/dev/null | head -300 || true
 
       - name: Upload device test evidence (logcat, screenshots)
@@ -192,7 +193,8 @@ jobs:
       # Android lint: API calls above minSdk 24 (NewApi), wrong resources, missing translations and
       # other Android-only errors the JVM tests cannot see. Errors fail the run.
       - name: Android lint
-        if: ${{ inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true' }}
+        # Runs even when an earlier test step failed, so every run reports its lint errors too.
+        if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
         run: ./gradlew lintDebug --stacktrace
 
       - name: Summarize lint results

@@ -22,26 +22,104 @@ data class EditorText(val text: String, val start: Int, val end: Int) {
  */
 object EditorOps {
 
-    /** Wraps the selection in [marker] (or removes it when already wrapped); with no selection, inserts an empty pair. */
-    fun toggleWrap(t: EditorText, marker: String): EditorText {
-        val sel = t.selected
-        val before = t.text.substring(0, t.start)
-        val after = t.text.substring(t.end)
-        if (before.endsWith(marker) && after.startsWith(marker) && sel.isNotEmpty()) {
-            val text = before.removeSuffix(marker) + sel + after.removePrefix(marker)
-            return EditorText(text, t.start - marker.length, t.end - marker.length)
+    /** Character formatting of the toolbar. */
+    enum class Format { BOLD, ITALIC, UNDERLINE }
+
+    /** Toolbar marker ("**", "*", "__") to its format; kept for callers that name the marker. */
+    fun toggleWrap(t: EditorText, marker: String): EditorText = toggleFormat(t, when (marker) {
+        "**" -> Format.BOLD
+        "*" -> Format.ITALIC
+        "__" -> Format.UNDERLINE
+        else -> throw IllegalArgumentException("Unknown marker $marker")
+    })
+
+    // Start of a line that formatting never touches: heading, alignment and list markers.
+    private val LINE_PREFIX = Regex("""^(#{1,6}\s+)?(\{(center|end|justify)\}\s?)?([-•*]\s+|\d{1,3}[.)]\s+)?""")
+    // Lines that stand for a figure, table or page break ("[Figure 1]", "[Page break]").
+    private val PLACEHOLDER = Regex("""^\[[^\[\]\n]{1,60}]$""")
+
+    private fun has(c: InlineFormat.Cell, f: Format) = when (f) { Format.BOLD -> c.bold; Format.ITALIC -> c.italic; Format.UNDERLINE -> c.underline }
+    private fun with(c: InlineFormat.Cell, f: Format, on: Boolean) = when (f) {
+        Format.BOLD -> c.copy(bold = on); Format.ITALIC -> c.copy(italic = on); Format.UNDERLINE -> c.copy(underline = on)
+    }
+
+    /**
+     * Bold, italic or underline on the selected words, worked out on the visible characters (not on
+     * the markers next to the selection), so formats combine (***__word__***) and toggle off one by
+     * one. Whole words are formatted: the stored markup cannot mark part of a word in every
+     * combination. With only a caret, the word under the caret is formatted; outside any word
+     * nothing changes. Heading, alignment and list markers at the start of a line and placeholder
+     * lines are never formatted. The new markup is read back before it is used: if it would not
+     * give exactly the intended formatting, IllegalStateException is thrown and the caller keeps
+     * the text unchanged.
+     */
+    fun toggleFormat(t: EditorText, format: Format): EditorText {
+        val text = t.text
+        val r = lineRange(text, t.start, t.end)
+        val rangeEnd = r.last + 1
+        // Touched lines: [start, end) in text, end of the untouchable prefix, global cell indexes.
+        class Line(val start: Int, val end: Int, val prefixEnd: Int, val from: Int, val to: Int)
+        val cells = ArrayList<InlineFormat.Cell>()
+        val lines = ArrayList<Line>()
+        var ls = r.first
+        while (true) {
+            val le = text.indexOf('\n', ls).let { if (it < 0 || it > rangeEnd) rangeEnd else it }
+            val raw = text.substring(ls, le)
+            val prefix = if (PLACEHOLDER.matches(raw.trim())) raw.length else LINE_PREFIX.find(raw)?.value?.length ?: 0
+            val from = cells.size
+            InlineFormat.cells(raw.substring(prefix)).forEach { cells.add(it.copy(index = it.index + ls + prefix)) }
+            lines.add(Line(ls, le, ls + prefix, from, cells.size))
+            if (le >= rangeEnd) break
+            ls = le + 1
         }
-        if (sel.length >= 2 * marker.length && sel.startsWith(marker) && sel.endsWith(marker)) {
-            val inner = sel.substring(marker.length, sel.length - marker.length)
-            return EditorText(before + inner + after, t.start, t.start + inner.length)
+        fun ws(k: Int) = cells[k].ch.isWhitespace()
+        val chosen = BooleanArray(cells.size)
+        for (l in lines) {
+            val picked = if (t.start == t.end) {
+                // The word under the caret, on the caret's line: the visible character after the
+                // caret, else the one before it.
+                if (t.start < l.start || t.start > l.end) emptyList() else {
+                    val k = (l.from until l.to).firstOrNull { cells[it].index >= t.start } ?: l.to
+                    listOf(k, k - 1).filter { it in l.from until l.to && !ws(it) }.take(1)
+                }
+            } else (l.from until l.to).filter { cells[it].index >= t.start && cells[it].index < t.end && !ws(it) }
+            if (picked.isEmpty()) continue
+            // Grow to whole words, then join the words of this line into one range.
+            var a = picked.first(); while (a - 1 >= l.from && !ws(a - 1)) a--
+            var b = picked.last(); while (b + 1 < l.to && !ws(b + 1)) b++
+            for (k in a..b) chosen[k] = true
         }
-        // Keep spaces outside the markers ("**word** " not "**word **").
-        val lead = sel.length - sel.trimStart().length
-        val trail = sel.length - sel.trimEnd().length
-        val core = sel.trim()
-        val text = before + sel.substring(0, lead) + marker + core + marker + sel.substring(sel.length - trail) + after
-        val s = t.start + lead + marker.length
-        return EditorText(text, s, s + core.length)
+        if (chosen.none { it }) return t
+        val turnOn = !cells.indices.filter { chosen[it] && !ws(it) }.all { has(cells[it], format) }
+        val target = cells.mapIndexed { k, c -> if (chosen[k]) with(c, format, turnOn) else c }
+        // Rebuild the touched lines; other lines and the prefixes are copied as they are.
+        val sb = StringBuilder(text.substring(0, r.first))
+        var selStart = -1
+        var selEnd = -1
+        lines.forEachIndexed { li, l ->
+            if (li > 0) sb.append('\n')
+            sb.append(text, l.start, l.prefixEnd)
+            val mine = target.subList(l.from, l.to)
+            val body = InlineFormat.serialize(mine)
+            // Read back: the same characters, and every visible letter with the intended format
+            // (spaces at the edge of a run are written outside its markers).
+            val back = InlineFormat.cells(body)
+            val ok = back.size == mine.size && back.indices.all { k ->
+                back[k].ch == mine[k].ch && (mine[k].ch.isWhitespace() ||
+                    (back[k].bold == mine[k].bold && back[k].italic == mine[k].italic && back[k].underline == mine[k].underline))
+            }
+            check(ok) { "Formatting could not be written for this text" }
+            val base = sb.length
+            for (k in mine.indices) if (chosen[l.from + k]) {
+                val pos = base + back[k].index
+                if (selStart < 0) selStart = pos
+                selEnd = pos + 1
+            }
+            sb.append(body)
+        }
+        sb.append(text, rangeEnd, text.length)
+        val out = sb.toString()
+        return if (selStart < 0) EditorText.of(out, t.start, t.start) else EditorText(out, selStart, selEnd)
     }
 
     private fun lineRange(text: String, start: Int, end: Int): IntRange {

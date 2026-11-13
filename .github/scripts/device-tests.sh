@@ -22,6 +22,9 @@ for d in thesis-device app-device; do
 done
 grep -n -A80 "FATAL EXCEPTION" "$out/logcat.txt" > "$out/fatal-exceptions.txt" || true
 grep -n "AndroidRuntime\|System.err" "$out/logcat.txt" | head -400 > "$out/androidruntime.txt" || true
+# Clipboard access decisions of Android (e.g. "Denying clipboard access ... not in focus") and the
+# app's own editor / file messages, to explain a paste or open failure without the full logcat.
+grep -n -i "clipboard\|ThesisEditor\|DeliveryManager\|TestRunner: failed" "$out/logcat.txt" | head -300 > "$out/app-events.txt" || true
 if [ -s "$out/fatal-exceptions.txt" ]; then echo "::error::The app crashed during the device tests (see fatal-exceptions.txt)."; cat "$out/fatal-exceptions.txt"; fi
 if grep -q "FAILURES!!!\|INSTRUMENTATION_FAILED\|Process crashed" "$out/instrument.txt" || ! grep -q "^OK (" "$out/instrument.txt"; then
   echo "::error::Device tests failed."

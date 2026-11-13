@@ -217,7 +217,10 @@ class AppSmokeDeviceTest {
         await("reopened") { thesis.state.value.snapshot != null && thesis.state.value.busy == null }
         compose.runOnUiThread { thesis.selectSection(intro) }
         await("draft reloaded") { thesis.state.value.draft?.sectionId == intro }
-        assertEquals(body, thesis.state.value.draft!!.text)
+        // Saving splits the text into paragraphs (shown with a blank line between them): the
+        // lines, their formatting markers and their order are what must survive.
+        fun lines(t: String) = t.lines().filter { it.isNotBlank() }
+        assertEquals(lines(body), lines(thesis.state.value.draft!!.text))
 
         thesis.buildPreview()
         await("preview", 60_000) { thesis.state.value.busy == null && thesis.state.value.previewFile != null }
