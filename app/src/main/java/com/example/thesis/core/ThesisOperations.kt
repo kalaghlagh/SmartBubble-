@@ -23,7 +23,7 @@ sealed class ThesisOp {
     data class DeleteElement(val elementId: String) : ThesisOp()
     data class MoveElement(val elementId: String, val targetSectionId: String, val afterElementId: String?) : ThesisOp()
     data class AddSection(val section: ThesisSection, val afterSectionId: String?) : ThesisOp()
-    data class UpdateSection(val sectionId: String, val title: String? = null, val enabled: Boolean? = null) : ThesisOp()
+    data class UpdateSection(val sectionId: String, val title: String? = null, val enabled: Boolean? = null, val completed: Boolean? = null) : ThesisOp()
     data class MoveSection(val sectionId: String, val newParentId: String?, val afterSectionId: String?) : ThesisOp()
     data class DeleteSection(val sectionId: String) : ThesisOp()
     data class UpdateMeta(val meta: ThesisMeta) : ThesisOp()
@@ -124,7 +124,7 @@ object ThesisOperations {
         is ThesisOp.UpdateSection -> {
             s.section(op.sectionId) ?: throw ThesisOpException("Unknown section ${op.sectionId}")
             s.copy(sections = s.sections.map {
-                if (it.id == op.sectionId) it.copy(title = op.title ?: it.title, enabled = op.enabled ?: it.enabled) else it
+                if (it.id == op.sectionId) it.copy(title = op.title ?: it.title, enabled = op.enabled ?: it.enabled, completed = op.completed ?: it.completed) else it
             })
         }
         is ThesisOp.MoveSection -> {
@@ -173,7 +173,7 @@ object ThesisOperations {
             is ThesisOp.DeleteElement -> linkedMapOf("op" to "delete", "el" to op.elementId)
             is ThesisOp.MoveElement -> linkedMapOf("op" to "move", "el" to op.elementId, "sec" to op.targetSectionId, "after" to op.afterElementId)
             is ThesisOp.AddSection -> linkedMapOf("op" to "addSection", "section" to ThesisCodec.sectionToMap(op.section), "after" to op.afterSectionId)
-            is ThesisOp.UpdateSection -> linkedMapOf("op" to "updateSection", "sec" to op.sectionId, "title" to op.title, "on" to op.enabled)
+            is ThesisOp.UpdateSection -> linkedMapOf("op" to "updateSection", "sec" to op.sectionId, "title" to op.title, "on" to op.enabled, "done" to op.completed)
             is ThesisOp.MoveSection -> linkedMapOf("op" to "moveSection", "sec" to op.sectionId, "parent" to op.newParentId, "after" to op.afterSectionId)
             is ThesisOp.DeleteSection -> linkedMapOf("op" to "deleteSection", "sec" to op.sectionId)
             is ThesisOp.UpdateMeta -> linkedMapOf("op" to "meta", "meta" to ThesisCodec.metaToMap(op.meta))
@@ -189,7 +189,7 @@ object ThesisOperations {
             "delete" -> ThesisOp.DeleteElement(m["el"] as String)
             "move" -> ThesisOp.MoveElement(m["el"] as String, m["sec"] as String, m["after"] as? String)
             "addSection" -> ThesisOp.AddSection(ThesisCodec.sectionFromMap(Json.obj(m["section"])!!), m["after"] as? String)
-            "updateSection" -> ThesisOp.UpdateSection(m["sec"] as String, m["title"] as? String, m["on"] as? Boolean)
+            "updateSection" -> ThesisOp.UpdateSection(m["sec"] as String, m["title"] as? String, m["on"] as? Boolean, m["done"] as? Boolean)
             "moveSection" -> ThesisOp.MoveSection(m["sec"] as String, m["parent"] as? String, m["after"] as? String)
             "deleteSection" -> ThesisOp.DeleteSection(m["sec"] as String)
             "meta" -> ThesisOp.UpdateMeta(ThesisCodec.metaFromMap(Json.obj(m["meta"])))

@@ -69,12 +69,13 @@ object ThesisCodec {
     }
 
     fun sectionToMap(x: ThesisSection): Map<String, Any?> = linkedMapOf(
-        "id" to x.id, "parent" to x.parentId, "kind" to x.kind.name, "title" to x.title, "pos" to x.position, "on" to x.enabled
+        "id" to x.id, "parent" to x.parentId, "kind" to x.kind.name, "title" to x.title, "pos" to x.position, "on" to x.enabled, "done" to x.completed
     )
 
     fun sectionFromMap(m: Map<String, Any?>): ThesisSection = ThesisSection(
         id = s(m["id"]), parentId = m["parent"] as? String, kind = SectionKind.parse(m["kind"] as? String),
-        title = s(m["title"]), position = i(m["pos"]), enabled = (m["on"] as? Boolean) ?: true
+        title = s(m["title"]), position = i(m["pos"]), enabled = (m["on"] as? Boolean) ?: true,
+        completed = (m["done"] as? Boolean) ?: false
     )
 
     fun elementToMap(e: ThesisElement): Map<String, Any?> = linkedMapOf(

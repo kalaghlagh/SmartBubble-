@@ -636,6 +636,14 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     override fun continueThesisInChat(projectId: String, sectionId: String?) = enterThesisChat(projectId, sectionId)
     override fun openExportedDocument(document: DocumentEntity) = openDocument(document)
     override fun shareExportedDocument(document: DocumentEntity) = shareDocument(document)
+    override suspend fun aiProviderInfo(): Pair<String, String>? = withContext(Dispatchers.IO) {
+        database.providerDao().getDefaultProvider()?.let { it.name to it.modelName }
+    }
+    override suspend fun recentChatMessages(limit: Int): List<com.example.thesis.ui.ChatSnippet> = withContext(Dispatchers.IO) {
+        database.chatDao().getRecentChatMessages(limit)
+            .filter { it.attachedDocType != THESIS_PROPOSAL_CARD && it.content.isNotBlank() }
+            .map { com.example.thesis.ui.ChatSnippet(it.content, it.isUser, it.timestamp) }
+    }
 
     /**
      * Chat sends the following messages and images to [projectId] (until [exitThesisChat]);
@@ -765,6 +773,8 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         is ThesisMessage.Failed -> str(R.string.thesis_msg_failed)
         ThesisMessage.Deleted -> str(R.string.thesis_msg_deleted)
         ThesisMessage.NothingToFormat -> str(R.string.thesis_msg_nothing_to_format)
+        ThesisMessage.Saved -> str(R.string.thesis_msg_saved)
+        ThesisMessage.Renamed -> str(R.string.thesis_msg_renamed)
     }
 
     /** Copies an export into the Library folder and registers it (linked to the project). */

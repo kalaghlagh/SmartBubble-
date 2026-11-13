@@ -6,7 +6,11 @@ import com.example.thesis.model.ThesisSnapshot
 import java.util.Locale
 
 /** Kind of AI edit the user asked for. */
-enum class EditMode { CORRECT, IMPROVE, SHORTEN, EXPAND, REWRITE }
+enum class EditMode { CORRECT, IMPROVE, SHORTEN, EXPAND, REWRITE,
+    /** Reorders and structures the text into paragraphs and lists (same words, same facts). */
+    ORGANIZE,
+    /** Drafts new content for the section from the user's instruction (shown for review only). */
+    GENERATE }
 
 /** What a Chat message asks the Thesis Builder to do. */
 sealed class ThesisIntent {

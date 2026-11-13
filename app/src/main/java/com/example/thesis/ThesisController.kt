@@ -12,6 +12,9 @@ import com.example.thesis.ai.ThesisAiFormatException
 import com.example.thesis.core.DuplicateMatch
 import com.example.thesis.core.EditMode
 import com.example.thesis.core.NewElement
+import com.example.thesis.core.SectionDraft
+import com.example.thesis.core.SectionText
+import com.example.thesis.core.DraftMedia
 import com.example.thesis.core.ThesisCommandParser
 import com.example.thesis.core.ThesisContentSplitter
 import com.example.thesis.core.ThesisDiff
@@ -46,6 +49,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
@@ -55,10 +59,11 @@ import java.io.InputStream
 const val THESIS_PROPOSAL_CARD = "THESIS_PROPOSAL"
 
 /**
- * Screens of the Thesis Builder. PROJECT (overview), STRUCTURE, CHANGES, HISTORY and PREVIEW are
- * the tabs of an open project; SECTION is the content editor of one section.
+ * Screens of the Thesis Builder: HOME (projects), CREATE (new thesis), PROJECT (workspace with the
+ * section list), SECTION (section editor), AI (AI assistant for the open section) and PREVIEW.
+ * CHANGES, HISTORY and SETTINGS are opened from the workspace menu.
  */
-enum class ThesisScreen { HOME, CREATE, PROJECT, STRUCTURE, SECTION, CHANGES, HISTORY, PREVIEW, SETTINGS }
+enum class ThesisScreen { HOME, CREATE, PROJECT, SECTION, AI, PREVIEW, CHANGES, HISTORY, SETTINGS }
 
 /** A document exported and saved to the Library (opened or shared from the workspace). */
 data class ThesisExportResult(val format: String, val document: DocumentEntity, val notes: List<String>)
@@ -104,10 +109,33 @@ data class ThesisUiState(
     /** Section that Chat content goes to when a message names no destination (thesis mode). */
     val chatSectionId: String? = null,
     /** Revisions in which the open section changed (section history). */
-    val sectionHistory: List<ThesisRevisionEntity>? = null
+    val sectionHistory: List<ThesisRevisionEntity>? = null,
+    /** Text of the section open in the editor (saved with "Save changes"). */
+    val draft: SectionDraft? = null,
+    /** AI assistant request and result for the open section. */
+    val assist: AiAssist? = null
 )
 
 /** Messages for the user (localized by the UI). */
+/**
+ * One AI assistant request on the section being edited. [start]..[end] is the selected range of
+ * the draft ([start] == [end]: the whole section). The result is only shown: it changes the draft
+ * when the user inserts it, and the thesis when the user saves.
+ */
+data class AiAssist(
+    val source: String,
+    val start: Int,
+    val end: Int,
+    val mode: EditMode? = null,
+    val instruction: String = "",
+    val result: String? = null,
+    val warnings: List<String> = emptyList(),
+    val failed: Boolean = false,
+    val unchanged: Boolean = false
+) {
+    val hasSelection: Boolean get() = end > start
+}
+
 sealed class ThesisMessage {
     data class Created(val title: String) : ThesisMessage()
     data class Applied(val revision: Int) : ThesisMessage()
@@ -122,6 +150,8 @@ sealed class ThesisMessage {
     data class Failed(val what: String) : ThesisMessage()
     object Deleted : ThesisMessage()
     object NothingToFormat : ThesisMessage()
+    object Saved : ThesisMessage()
+    object Renamed : ThesisMessage()
 }
 
 /**
@@ -160,6 +190,11 @@ class ThesisController(
 
     val projects: StateFlow<List<ThesisProjectEntity>> = repository.observeProjects()
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Workspace progress (0..100) of every project, for the projects list. */
+    val projectProgress: StateFlow<Map<String, Int>> = projects
+        .mapLatest { list -> list.associate { p -> p.id to (try { ThesisStructure.progress(repository.snapshot(p.id)) } catch (e: Exception) { 0 }) } }
+        .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     private val projectIdFlow = MutableStateFlow<String?>(null)
     val revisions: StateFlow<List<ThesisRevisionEntity>> = projectIdFlow
@@ -221,19 +256,47 @@ class ThesisController(
         it.copy(screen = screen, compare = if (screen == ThesisScreen.HISTORY) it.compare else null, sectionHistory = if (screen == ThesisScreen.SECTION) it.sectionHistory else null)
     }
 
+    /**
+     * One level up: AI assistant -> editor -> workspace -> projects -> close. Leaving the editor
+     * saves unsaved text first (nothing typed is lost).
+     */
+    fun back() {
+        val st = _state.value
+        when (st.screen) {
+            ThesisScreen.HOME -> closeWorkspace()
+            ThesisScreen.CREATE -> show(ThesisScreen.HOME)
+            ThesisScreen.PROJECT -> show(ThesisScreen.HOME)
+            ThesisScreen.AI -> update { it.copy(screen = ThesisScreen.SECTION) }
+            ThesisScreen.SECTION -> if (st.draft?.dirty == true) saveDraft(thenShow = ThesisScreen.PROJECT) else update { it.copy(screen = ThesisScreen.PROJECT, draft = null, assist = null) }
+            else -> show(ThesisScreen.PROJECT)
+        }
+    }
+
     fun openProject(projectId: String, screen: ThesisScreen = ThesisScreen.PROJECT) {
         projectIdFlow.value = projectId
-        update { it.copy(projectId = projectId, workspaceOpen = true, screen = screen, previewFile = null, selectedSectionId = null) }
+        val same = _state.value.projectId == projectId
+        update { it.copy(projectId = projectId, workspaceOpen = true, screen = screen, previewFile = if (same) it.previewFile else null, selectedSectionId = null,
+            draft = if (same) it.draft else null, assist = null, lastExport = if (same) it.lastExport else null) }
         scope.launch { reload() }
     }
 
-    fun selectSection(sectionId: String) = update { it.copy(selectedSectionId = sectionId, screen = ThesisScreen.SECTION, sectionHistory = null) }
+    /** Opens the section editor with the section's saved text (an unsaved draft of it is kept). */
+    fun selectSection(sectionId: String) {
+        val st = _state.value
+        val snapshot = st.snapshot
+        val draft = st.draft?.takeIf { it.sectionId == sectionId } ?: snapshot?.let { SectionText.load(it, sectionId) }
+        update { it.copy(selectedSectionId = sectionId, screen = ThesisScreen.SECTION, sectionHistory = null, draft = draft, assist = null) }
+    }
 
     private suspend fun reload() {
         val id = _state.value.projectId ?: return
         val snapshot = repository.snapshot(id)
         val assets = repository.assets(id)
-        update { it.copy(snapshot = snapshot, assets = assets) }
+        update { st ->
+            // The editor was opened before the snapshot was loaded: load its text now.
+            val draft = st.draft ?: st.selectedSectionId?.takeIf { st.screen == ThesisScreen.SECTION }?.let { SectionText.load(snapshot, it) }
+            st.copy(snapshot = snapshot, assets = assets, draft = draft)
+        }
     }
 
     /**
@@ -264,7 +327,7 @@ class ThesisController(
         if (_state.value.chatProjectId == projectId) exitChatMode()
         if (_state.value.projectId == projectId) {
             projectIdFlow.value = null
-            update { it.copy(projectId = null, snapshot = null, screen = ThesisScreen.HOME, review = null, compare = null) }
+            update { it.copy(projectId = null, snapshot = null, screen = ThesisScreen.HOME, review = null, compare = null, draft = null, assist = null, lastExport = null) }
         }
         onMessage(ThesisMessage.Deleted)
     }
@@ -569,6 +632,151 @@ class ThesisController(
         onMessage(ThesisMessage.Rejected)
         note("thesis_note_rejected")
     }
+
+    // ------------------------------------------------------------------ section editor
+
+    fun updateDraft(text: String) = update { st -> st.copy(draft = st.draft?.copy(text = text)) }
+
+    /**
+     * Saves the editor text word for word: the Offline Formatting Agent splits it into paragraphs,
+     * headings, lists and tables; unchanged text keeps its elements; figures stay where their
+     * placeholder line is. One revision per save (history can restore any earlier one).
+     */
+    fun saveDraft(thenShow: ThesisScreen? = null) = launch(ThesisBusy.SAVING) {
+        val projectId = _state.value.projectId ?: return@launch
+        val draft = _state.value.draft ?: return@launch
+        val snapshot = repository.snapshot(projectId)
+        if (snapshot.section(draft.sectionId) == null) { onMessage(ThesisMessage.Failed("section")); return@launch }
+        val ops = SectionText.plan(snapshot, draft) { splitter.split(it) }
+        if (ops.isNotEmpty()) {
+            repository.applyDirect(projectId, ops, ChangeSource.USER, "section")
+            reload()
+        }
+        val saved = _state.value.snapshot ?: snapshot
+        update { st ->
+            val reloaded = SectionText.load(saved, draft.sectionId)
+            // Text typed while saving is kept as an unsaved change.
+            val current = st.draft
+            val keepTyping = current != null && current.sectionId == draft.sectionId && current.text != draft.text
+            st.copy(
+                draft = if (thenShow != null) null else if (keepTyping) reloaded.copy(text = current!!.text) else reloaded,
+                screen = thenShow ?: st.screen, previewFile = if (ops.isEmpty()) st.previewFile else null
+            )
+        }
+        onMessage(ThesisMessage.Saved)
+    }
+
+    /** Leaves the editor without saving (the user confirmed discarding the changes). */
+    fun discardDraft() = update { it.copy(draft = null, assist = null, screen = ThesisScreen.PROJECT) }
+
+    /**
+     * Imports a picked image into the project and inserts its placeholder (for example
+     * "[Figure 2]") at [at] in the editor text. It becomes part of the thesis when the user saves.
+     */
+    fun insertDraftImage(open: () -> InputStream?, name: String, mime: String, data: ElementData, at: Int) = launch(ThesisBusy.SAVING) {
+        val projectId = _state.value.projectId ?: return@launch
+        val asset = try { repository.importImage(projectId, open, name, mime) } catch (e: com.example.thesis.data.ThesisAssetException) {
+            onMessage(ThesisMessage.ImageFailed(e.reason.name)); return@launch
+        }
+        val assets = repository.assets(projectId)
+        update { st ->
+            val d = st.draft ?: return@update st
+            val language = st.snapshot?.meta?.language ?: "en"
+            val token = SectionText.nextToken(d, language, ElementType.IMAGE)
+            val pos = at.coerceIn(0, d.text.length)
+            val before = d.text.substring(0, pos).trimEnd('\n', ' ')
+            val after = d.text.substring(pos).trimStart('\n', ' ')
+            val text = listOf(before, token, after).filter { it.isNotEmpty() }.joinToString("\n\n")
+            st.copy(assets = assets, draft = d.copy(text = text, media = d.media + (token to DraftMedia(null, ElementType.IMAGE, data.copy(assetId = asset.id))), mediaChanged = true))
+        }
+    }
+
+    /** Changes the caption (and size) of a figure of the draft. */
+    fun updateDraftMedia(token: String, data: ElementData) = update { st ->
+        val d = st.draft ?: return@update st
+        val m = d.media[token] ?: return@update st
+        st.copy(draft = d.copy(media = d.media + (token to m.copy(data = data)), mediaChanged = true))
+    }
+
+    fun setSectionCompleted(sectionId: String, completed: Boolean) =
+        direct(listOf(ThesisOp.UpdateSection(sectionId, completed = completed)), ChangeSource.STRUCTURE, if (completed) "completed" else "reopened")
+
+    /** Renames a project from the projects list (a revision of that project). */
+    fun renameProject(projectId: String, title: String) = launch(ThesisBusy.SAVING) {
+        val t = title.trim()
+        if (t.isEmpty()) return@launch
+        val snapshot = repository.snapshot(projectId)
+        repository.applyDirect(projectId, listOf(ThesisOp.UpdateMeta(snapshot.meta.copy(title = t))), ChangeSource.USER, "rename")
+        if (_state.value.projectId == projectId) reload()
+        onMessage(ThesisMessage.Renamed)
+    }
+
+    // ------------------------------------------------------------------ AI assistant (section editor)
+
+    /** Opens the AI assistant on the selected text of the draft (or the whole section). */
+    fun openAssistant(start: Int, end: Int, mode: EditMode? = null) {
+        val d = _state.value.draft ?: return
+        val a = start.coerceIn(0, d.text.length)
+        val b = end.coerceIn(a, d.text.length)
+        val source = if (b > a) d.text.substring(a, b) else d.text
+        update { it.copy(screen = ThesisScreen.AI, assist = AiAssist(source, a, b)) }
+        if (mode != null) runAssistant(mode, "")
+    }
+
+    fun setAssistInstruction(text: String) = update { st -> st.copy(assist = st.assist?.copy(instruction = text)) }
+
+    /**
+     * Sends the text to the default provider through the central orchestrator. The result is only
+     * displayed; a failure leaves the user's text exactly as it was.
+     */
+    fun runAssistant(mode: EditMode, instruction: String) {
+        val a = _state.value.assist ?: return
+        if (mode != EditMode.GENERATE && a.source.isBlank()) return
+        update { st -> st.copy(assist = a.copy(mode = mode, instruction = instruction, result = null, warnings = emptyList(), failed = false, unchanged = false)) }
+        launch(ThesisBusy.ASKING_AI) {
+            try {
+                val snapshot = _state.value.snapshot ?: return@launch
+                val r = ai.edit(snapshot, mode, listOf("text" to a.source), instruction.ifBlank { defaultInstruction(mode) }, listener)
+                val text = r.edits["text"]
+                update { st -> st.copy(assist = st.assist?.copy(result = text, warnings = r.warnings.map { it.substringBefore(':') }.distinct(), unchanged = text == null)) }
+            } catch (e: CancellationException) {
+                update { st -> st.copy(assist = st.assist?.copy(failed = false)) }
+                throw e
+            } catch (e: Exception) {
+                update { st -> st.copy(assist = st.assist?.copy(failed = true)) }
+                throw e // reported by launch() as a message; the draft is untouched
+            }
+        }
+    }
+
+    private fun defaultInstruction(mode: EditMode) = when (mode) {
+        EditMode.GENERATE -> "Suggest content for this section."
+        else -> "Apply the task to the text."
+    }
+
+    /**
+     * Puts the AI result into the draft: [replace] replaces the selection (or the whole section),
+     * otherwise the result is inserted after it. Figures and tables whose placeholder the result
+     * dropped are kept at the end, so nothing is lost. The thesis changes only on "Save changes".
+     */
+    fun insertAssistResult(replace: Boolean) {
+        val st = _state.value
+        val a = st.assist ?: return
+        val result = a.result ?: return
+        val d = st.draft ?: return
+        val text = d.text
+        val newText = if (replace) {
+            val replaced = if (a.hasSelection && a.end <= text.length) text.substring(0, a.start) + result + text.substring(a.end) else result
+            val lost = d.media.keys.filter { token -> text.lines().any { it.trim() == token } && replaced.lines().none { it.trim() == token } }
+            if (lost.isEmpty()) replaced else replaced.trimEnd() + "\n\n" + lost.joinToString("\n\n")
+        } else {
+            val at = (if (a.hasSelection) a.end else text.length).coerceIn(0, text.length)
+            listOf(text.substring(0, at).trimEnd(), result.trim(), text.substring(at).trimStart()).filter { it.isNotEmpty() }.joinToString("\n\n")
+        }
+        update { it.copy(draft = d.copy(text = newText), assist = null, screen = ThesisScreen.SECTION) }
+    }
+
+    fun closeAssistant() = update { it.copy(assist = null, screen = ThesisScreen.SECTION) }
 
     // ------------------------------------------------------------------ section tools (workspace)
 
