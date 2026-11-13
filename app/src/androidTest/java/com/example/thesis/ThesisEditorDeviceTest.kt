@@ -109,10 +109,30 @@ class ThesisEditorDeviceTest {
      * seconds; Compose test input bypasses the window manager, so it would not give the focus
      * back as a finger does. Wait for the app window to have the focus again.
      */
-    private fun awaitWindowFocus(step: String) {
-        val deadline = System.currentTimeMillis() + 20_000
+    /** The window that has the input focus, from the window manager (for failure messages). */
+    private fun focusedWindow(): String = try {
+        val pfd = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("dumpsys window displays")
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(pfd).bufferedReader().readLines()
+            .filter { "mCurrentFocus" in it || "mFocusedApp" in it || "mFocusedWindow" in it }.joinToString(" | ") { it.trim() }
+    } catch (e: Exception) { "unknown ($e)" }
+
+    /**
+     * Waits until the app window has the input focus. [closeForeign]: after 3 s, BACK is sent while
+     * another window holds the focus (a key goes to the focused window, never to the app here), so
+     * a system window left over (copied preview, system dialog) is closed. Which window it was is
+     * logged, so the logcat says what took the focus.
+     */
+    private fun awaitWindowFocus(step: String, closeForeign: Boolean = true) {
+        val start = System.currentTimeMillis()
+        var backs = 0
         while (!compose.activity.hasWindowFocus()) {
-            if (System.currentTimeMillis() > deadline) throw AssertionError("app window has no focus: $step")
+            val waited = System.currentTimeMillis() - start
+            if (waited > 20_000) throw AssertionError("app window has no focus: $step; focus: ${focusedWindow()}")
+            if (closeForeign && waited > 3_000 * (backs + 1) && backs < 3) {
+                android.util.Log.w("ThesisEditorDeviceTest", "no focus ($step), sending BACK to: ${focusedWindow()}")
+                InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                backs++
+            }
             Thread.sleep(100)
         }
         compose.waitForIdle()
@@ -257,7 +277,8 @@ class ThesisEditorDeviceTest {
         compose.waitForIdle()
         setClipNoWait(ClipData.newPlainText("t", "Pasted right after copying"))
         systemTap("thesis_paste_text")
-        await("pasted after the focus came back", 20_000) { text.contains("Pasted right after copying") }
+        try { await("pasted after the focus came back", 20_000) { text.contains("Pasted right after copying") } }
+        catch (e: AssertionError) { throw AssertionError("not pasted; window focus: ${focusedWindow()}", e) }
         assertTrue("text lost: $text", text.contains("Before."))
     }
 
