@@ -808,4 +808,7 @@
     <string name="thesis_save_to_device">Save to device</string>
     <string name="thesis_saved_to_device">Saved to device</string>
     <string name="thesis_save_device_failed">The file could not be saved</string>
+    <string name="crash_report_title">The app closed unexpectedly</string>
+    <string name="crash_report_text">Error details from the last session. Copy them and send them to the developer. They contain no text you typed.</string>
+    <string name="crash_report_copy">Copy report</string>
 </resources>

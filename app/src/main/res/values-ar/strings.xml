@@ -808,4 +808,7 @@
     <string name="thesis_save_to_device">حفظ على الجهاز</string>
     <string name="thesis_saved_to_device">تم الحفظ على الجهاز</string>
     <string name="thesis_save_device_failed">تعذّر حفظ الملف</string>
+    <string name="crash_report_title">أُغلق التطبيق بشكل غير متوقع</string>
+    <string name="crash_report_text">تفاصيل الخطأ من الجلسة السابقة. انسخها وأرسلها إلى المطوّر. لا تحتوي على أي نص كتبته.</string>
+    <string name="crash_report_copy">نسخ التقرير</string>
 </resources>

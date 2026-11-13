@@ -808,4 +808,7 @@
     <string name="thesis_save_to_device">Enregistrer sur l\'appareil</string>
     <string name="thesis_saved_to_device">Enregistré sur l\'appareil</string>
     <string name="thesis_save_device_failed">Le fichier n\'a pas pu être enregistré</string>
+    <string name="crash_report_title">L’application s’est fermée de façon inattendue</string>
+    <string name="crash_report_text">Détails de l’erreur de la dernière session. Copiez-les et envoyez-les au développeur. Ils ne contiennent aucun texte saisi.</string>
+    <string name="crash_report_copy">Copier le rapport</string>
 </resources>
