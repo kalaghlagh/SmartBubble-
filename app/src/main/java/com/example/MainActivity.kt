@@ -14,6 +14,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import com.example.ui.AppNavTab
 import com.example.ui.SmartBubbleViewModel
 import com.example.ui.components.SmartBubbleBottomNavBar
@@ -74,7 +76,11 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
 
-            LaunchedEffect(snackBarMessage) {
+            // While the Thesis Builder workspace (a full-screen dialog) is open, it shows the
+            // messages itself: a snackbar here would be hidden behind it.
+            val thesisWorkspaceOpen by remember { viewModel.thesis.state.map { it.workspaceOpen }.distinctUntilChanged() }.collectAsState(false)
+            LaunchedEffect(snackBarMessage, thesisWorkspaceOpen) {
+                if (thesisWorkspaceOpen) return@LaunchedEffect
                 snackBarMessage?.let { msg ->
                     snackbarHostState.showSnackbar(msg)
                     viewModel.clearSnackBar()

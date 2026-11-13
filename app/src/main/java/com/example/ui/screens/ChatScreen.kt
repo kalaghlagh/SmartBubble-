@@ -526,8 +526,21 @@ fun ChatScreen(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
-                            TextButton(onClick = { viewModel.thesis.openProject(project.id) }) { Text(stringResource(R.string.thesis_workspace)) }
+                            TextButton(onClick = {
+                                val target = thesisState.chatSectionId
+                                viewModel.thesis.openProject(project.id)
+                                target?.let { viewModel.thesis.selectSection(it) }
+                            }, modifier = Modifier.testTag("thesis_open_workspace")) { Text(stringResource(R.string.thesis_workspace)) }
                             TextButton(onClick = { viewModel.exitThesisChat() }, modifier = Modifier.testTag("thesis_exit_chat")) { Text(stringResource(R.string.thesis_exit)) }
+                        }
+                        // Target section: content whose message names no destination is proposed there.
+                        val targetTitle = thesisState.chatSectionId?.let { id ->
+                            thesisState.snapshot?.let { snap ->
+                                snap.section(id)?.let { s -> com.example.thesis.core.ThesisStructure.displayTitle(s, com.example.thesis.core.ThesisStructure.numbering(snap), snap.meta.language) }
+                            }
+                        }
+                        if (targetTitle != null) {
+                            Text(stringResource(R.string.thesis_chat_target, targetTitle), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("thesis_chat_target"))
                         }
                         Text(stringResource(R.string.thesis_chat_hint), style = MaterialTheme.typography.bodySmall)
                         thesisState.busy?.let { com.example.thesis.ui.BusyBar(viewModel.thesis, it) }
