@@ -390,9 +390,13 @@ class AppSmokeDeviceTest {
         await("preview built", 90_000) { thesis.state.value.busy == null && thesis.state.value.previewFile != null && exists("thesis_page_0") }
         for (tag in listOf("thesis_export_docx", "thesis_export_pdf", "thesis_export_result", "thesis_export_section")) assertTrue("$tag on the preview", !exists(tag))
         val viewport = compose.onNodeWithTag("thesis_preview_viewport").fetchSemanticsNode().boundsInRoot
-        val pageBox = compose.onNodeWithTag("thesis_page_0").fetchSemanticsNode().boundsInRoot
-        assertTrue("page cut off sideways: page $pageBox viewport $viewport", pageBox.left >= viewport.left - 1 && pageBox.right <= viewport.right + 1)
-        assertTrue("page is not A4-shaped: $pageBox", Math.abs(pageBox.height / pageBox.width - 842f / 595f) < 0.03f)
+        // Unclipped layout size and position (boundsInRoot is clipped to what is visible: a page
+        // taller than the screen scrolls vertically, which is allowed; sideways it must fit).
+        val pageNode = compose.onNodeWithTag("thesis_page_0").fetchSemanticsNode()
+        val pageLeft = pageNode.positionInRoot.x
+        val pageRight = pageLeft + pageNode.size.width
+        assertTrue("page cut off sideways: $pageLeft..$pageRight, viewport $viewport", pageLeft >= viewport.left - 1 && pageRight <= viewport.right + 1)
+        assertTrue("page is not A4-shaped: ${pageNode.size}", Math.abs(pageNode.size.height.toFloat() / pageNode.size.width - 842f / 595f) < 0.03f)
         for (arrow in listOf("thesis_page_prev", "thesis_page_next")) {
             val a = compose.onNodeWithTag(arrow).fetchSemanticsNode().boundsInRoot
             assertTrue("$arrow covers the page area: $a viewport $viewport", a.top >= viewport.bottom - 1)
