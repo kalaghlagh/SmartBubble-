@@ -357,7 +357,8 @@ class AppSmokeDeviceTest {
         assertEquals(595 to 842, profile.pageWidthPt to profile.pageHeightPt)
         assertEquals("Times New Roman" to 12, profile.bodyFont to profile.baseFontSizePt)
         tap("nav_templates")
-        await("template card") { exists("template_format_${entity.id}") }
+        // The details are a child of the clickable card, whose semantics merge its children.
+        await("template card") { compose.onAllNodes(hasTestTag("template_format_${entity.id}"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
         shot("template-docx-formatting")
 
         // 2. New thesis with the template and a logo picked on the form (staged before the project exists).
