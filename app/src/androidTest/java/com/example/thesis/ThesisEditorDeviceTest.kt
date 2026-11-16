@@ -77,11 +77,30 @@ class ThesisEditorDeviceTest {
 
     private fun tap(tag: String) {
         await("node $tag") { exists(tag) }
-        val containers = compose.onAllNodes(hasScrollAction() and hasAnyDescendant(hasTestTag(tag)))
-        repeat(containers.fetchSemanticsNodes().size) { i -> try { containers[i].performScrollToNode(hasTestTag(tag)) } catch (e: Throwable) { } }
         val node = compose.onNodeWithTag(tag)
-        try { node.performScrollTo() } catch (e: AssertionError) { }
-        node.assertIsDisplayed()
+        // Scroll it into view in every enclosing container, then check. The keyboard opens after a
+        // long press and shrinks the viewport while the editor keeps the caret visible, which can
+        // move the toolbar out again right after it was scrolled in (run #44: bounds all 0 = fully
+        // clipped, ime=true). So repeat until the layout has settled, up to 5 s.
+        fun bringIntoView() {
+            val containers = compose.onAllNodes(hasScrollAction() and hasAnyDescendant(hasTestTag(tag)))
+            repeat(containers.fetchSemanticsNodes().size) { i -> try { containers[i].performScrollToNode(hasTestTag(tag)) } catch (e: Throwable) { } }
+            try { node.performScrollTo() } catch (e: AssertionError) { }
+            compose.waitForIdle()
+        }
+        fun shown() = try { node.assertIsDisplayed(); true } catch (e: AssertionError) { false }
+        val deadline = System.currentTimeMillis() + 5_000
+        bringIntoView()
+        while (!shown() && System.currentTimeMillis() < deadline) { Thread.sleep(200); bringIntoView() }
+        try { node.assertIsDisplayed() } catch (e: AssertionError) {
+            val n = node.fetchSemanticsNode()
+            val root = compose.onAllNodes(isRoot()).fetchSemanticsNodes().joinToString { it.boundsInRoot.toString() }
+            val ime = compose.activity.window.decorView.rootWindowInsets?.let {
+                androidx.core.view.WindowInsetsCompat.toWindowInsetsCompat(it).isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())
+            }
+            shot("not-displayed-$tag")
+            throw AssertionError("$tag not displayed: bounds=${n.boundsInRoot} roots=[$root] ime=$ime focus=${focusedWindow()}", e)
+        }
         node.performClick()
         compose.waitForIdle()
     }
@@ -96,11 +115,62 @@ class ThesisEditorDeviceTest {
 
     private fun clipboard() = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
 
-    private fun setClip(clip: ClipData?) {
+    private fun setClipNoWait(clip: ClipData?) {
         compose.runOnUiThread {
             if (clip != null) clipboard().setPrimaryClip(clip)
             else if (Build.VERSION.SDK_INT >= 28) clipboard().clearPrimaryClip()
         }
+        compose.waitForIdle()
+    }
+
+    /**
+     * Copying shows Android's "copied" preview, a separate window that takes the focus for a few
+     * seconds; Compose test input bypasses the window manager, so it would not give the focus
+     * back as a finger does. Wait for the app window to have the focus again.
+     */
+    /** The window that has the input focus, from the window manager (for failure messages). */
+    private fun focusedWindow(): String = try {
+        val pfd = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("dumpsys window displays")
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(pfd).bufferedReader().readLines()
+            .filter { "mCurrentFocus" in it || "mFocusedApp" in it || "mFocusedWindow" in it }.joinToString(" | ") { it.trim() }
+    } catch (e: Exception) { "unknown ($e)" }
+
+    /**
+     * Waits until the app window has the input focus again. Run #40 logcat: after each copy,
+     * SystemUI's "ClipboardOverlay" window (the copied-text preview) holds the focus until it
+     * times out (about 6 s after the last copy). A finger tap gives the focus back at once; Compose
+     * test input bypasses the window manager and does not. Nothing is dismissed here; on timeout
+     * the message names the window that has the focus.
+     */
+    private fun awaitWindowFocus(step: String) {
+        val deadline = System.currentTimeMillis() + 20_000
+        while (!compose.activity.hasWindowFocus()) {
+            if (System.currentTimeMillis() > deadline) throw AssertionError("app window has no focus: $step; focus: ${focusedWindow()}")
+            Thread.sleep(100)
+        }
+        compose.waitForIdle()
+    }
+
+    private fun setClip(clip: ClipData?) {
+        setClipNoWait(clip)
+        awaitWindowFocus("after setting the clipboard")
+    }
+
+    /** A tap through the window manager (as a finger): it also gives the focus to the app window. */
+    private fun systemTap(tag: String) {
+        await("node $tag") { exists(tag) }
+        try { compose.onNodeWithTag(tag).performScrollTo() } catch (e: AssertionError) { }
+        compose.waitForIdle()
+        val b = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+        val loc = IntArray(2)
+        compose.runOnUiThread { compose.activity.window.decorView.findViewById<android.view.View>(android.R.id.content).getLocationOnScreen(loc) }
+        val x = loc[0] + b.center.x
+        val y = loc[1] + b.center.y
+        val ui = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val t0 = android.os.SystemClock.uptimeMillis()
+        fun ev(action: Int, t: Long) = android.view.MotionEvent.obtain(t0, t, action, x, y, 0).apply { source = android.view.InputDevice.SOURCE_TOUCHSCREEN }
+        ui.injectInputEvent(ev(android.view.MotionEvent.ACTION_DOWN, t0), true)
+        ui.injectInputEvent(ev(android.view.MotionEvent.ACTION_UP, t0 + 60), true)
         compose.waitForIdle()
     }
 
@@ -134,19 +204,22 @@ class ThesisEditorDeviceTest {
     }
 
     // Heading, alignment and list markers at the start of a line are structure, not words.
-    private val prefix = Regex("""(?m)^(#{1,6}\s+)?(\{(center|end|justify)\}\s?)?([-•*]\s+|\d{1,3}[.)]\s+)?""")
+    private val prefix = Regex("""(?m)^(#{1,6}\s+)?([-•*]\s+|\d{1,3}[.)]\s+)?(\{(center|end|justify)\}\s?)?([-•*]\s+|\d{1,3}[.)]\s+)?""")
     private fun words(t: String) = Regex("[\\p{L}\\p{N}]+").findAll(prefix.replace(t, "")).map { it.value }.toList()
 
     /** Runs a toolbar button and checks that no word of the text was lost. */
     private fun press(tag: String, before: () -> Unit) {
-        val wordsBefore = words(text)
         before()
+        val textBefore = text
+        val wordsBefore = words(textBefore)
         tap(tag)
         val after = text
         assertTrue("$tag lost text: before=$wordsBefore after=$after", words(after).containsAll(wordsBefore))
-        // Every marker is read as formatting: no stray "*" or "_" (the sample texts have none).
-        val plain = com.example.thesis.core.InlineFormat.plain(prefix.replace(after, ""))
-        assertTrue("$tag left stray markers: $after", !plain.contains('*') && !plain.contains('_'))
+        // The button adds no stray "*" / "_": every marker it writes is read as formatting. (Text
+        // typed over a selected formatted word can leave stray markers before the press, e.g.
+        // "* more*"; those are the typing's, and they must not grow.)
+        fun stray(t: String) = com.example.thesis.core.InlineFormat.plain(prefix.replace(t, "")).count { it == '*' || it == '_' }
+        assertTrue("$tag added stray markers: before=$textBefore after=$after", stray(after) <= stray(textBefore))
     }
 
     private val formatButtons = listOf(
@@ -183,9 +256,29 @@ class ThesisEditorDeviceTest {
     }
 
     @Test
+    fun keyboardTyping_withoutAnyClipboardUse() {
+        // Ordinary typing with key events (through the window manager, like a hardware keyboard or
+        // the IME's key path), no copy or paste in this test.
+        openEditor()
+        tapInText()
+        awaitWindowFocus("before typing")
+        val ins = InstrumentationRegistry.getInstrumentation()
+        ins.sendStringSync("Hello world")
+        ins.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DEL)
+        ins.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DEL)
+        ins.sendStringSync("ld 123")
+        ins.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_ENTER)
+        ins.sendStringSync("second line")
+        compose.waitForIdle()
+        await("typed text") { text == "Hello world 123\nsecond line" }
+        assertTrue(vm.thesis.state.value.draft!!.dirty)
+    }
+
+    @Test
     fun formatting_afterTypingWithKeyEvents() {
         openEditor()
         tapInText()
+        awaitWindowFocus("before typing with key events")
         InstrumentationRegistry.getInstrumentation().sendStringSync("typed with keys")
         compose.waitForIdle()
         await("key text") { text.contains("typed with keys") }
@@ -207,6 +300,21 @@ class ThesisEditorDeviceTest {
         press("thesis_paste_text") { longPressFirstWord() }
         assertTrue("Arabic paste missing: $text", text.contains("نص ملصوق بالعربية\nمع سطر ثانٍ و emoji 🌍 et français é"))
         shot("07-arabic")
+    }
+
+    @Test
+    fun pasteRightAfterCopying_whileAndroidShowsTheCopiedPreview() {
+        // As on a phone: copy, then tap Paste Text at once. The "copied" preview window still has
+        // the focus when the tap arrives, so Android refuses the clipboard read at that moment;
+        // the editor waits for the focus and pastes then.
+        openEditor()
+        field().performTextInput("Before.")
+        compose.waitForIdle()
+        setClipNoWait(ClipData.newPlainText("t", "Pasted right after copying"))
+        systemTap("thesis_paste_text")
+        try { await("pasted after the focus came back", 20_000) { text.contains("Pasted right after copying") } }
+        catch (e: AssertionError) { throw AssertionError("not pasted; window focus: ${focusedWindow()}", e) }
+        assertTrue("text lost: $text", text.contains("Before."))
     }
 
     @Test

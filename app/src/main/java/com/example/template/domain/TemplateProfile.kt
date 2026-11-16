@@ -88,7 +88,44 @@ data class TemplateProfile(
     /** The template's text runs right to left (Arabic). */
     val rtl: Boolean = false,
     /** File name the user imported (for display). */
-    val sourceFileName: String = ""
+    val sourceFileName: String = "",
+    // ---- Formatting read from a Word template (layoutSource == "DOCX") by DocxTemplateAnalyzer.
+    // The Word export reuses the template package itself; these values drive the PDF export and
+    // the page preview. Defaults leave every other template unchanged.
+    /** Heading 3 size (0 = derived from the body size). */
+    val heading3SizePt: Int = 0,
+    /** Binding gutter (already added to [marginLeftPt]). */
+    val gutterPt: Int = 0,
+    /** The first page has its own header/footer ([firstHeaderText], [firstFooterText]). */
+    val differentFirstPage: Boolean = false,
+    /** Odd and even pages have different headers (kept in Word; the PDF uses the default header). */
+    val differentOddEven: Boolean = false,
+    val firstHeaderText: String = "",
+    val firstFooterText: String = "",
+    /** Image of the default header: "word/media/x.png|widthPt|heightPt|alignment" ("" = none). */
+    val headerImage: String = "",
+    val firstPageHasHeaderImage: Boolean = false,
+    /** Page borders "side:style:widthPt:spacePt:#color;..." ("" = none). */
+    val pageBorders: String = "",
+    /** "page" (border distance from the page edge) or "text" (from the text area). */
+    val pageBorderOffsetFrom: String = "text",
+    /** Font for Arabic and other complex scripts ("" = [bodyFont]). */
+    val complexScriptFont: String = "",
+    val firstLineIndentPt: Int = 0,
+    val spacingBeforePt: Int = 0,
+    /** Word page number format ("decimal", "upperRoman", ...; "" = decimal) and first number (0 = 1). */
+    val pageNumberFormat: String = "",
+    val pageNumberStart: Int = 0,
+    /** What the template body holds (reported; the thesis content replaces the template body). */
+    val templateTables: Int = 0,
+    val templateImages: Int = 0,
+    val templatePageBreaks: Int = 0,
+    val templateSections: Int = 0,
+    val templateFootnotes: Int = 0,
+    val templateHasLists: Boolean = false,
+    val templateHasCaptionStyle: Boolean = false,
+    /** Codes of template features that are not reproduced everywhere, ";"-separated. */
+    val extractionWarnings: String = ""
 ) {
     /** True for profiles measured on a PDF template. */
     val isPdfLayout: Boolean get() = layoutSource == "PDF"
@@ -156,6 +193,29 @@ data class TemplateProfile(
             map["pdfPageCount"] = pdfPageCount.toString()
             map["rtl"] = rtl.toString()
             map["sourceFileName"] = sourceFileName
+            map["heading3SizePt"] = heading3SizePt.toString()
+            map["gutterPt"] = gutterPt.toString()
+            map["differentFirstPage"] = differentFirstPage.toString()
+            map["differentOddEven"] = differentOddEven.toString()
+            map["firstHeaderText"] = firstHeaderText
+            map["firstFooterText"] = firstFooterText
+            map["headerImage"] = headerImage
+            map["firstPageHasHeaderImage"] = firstPageHasHeaderImage.toString()
+            map["pageBorders"] = pageBorders
+            map["pageBorderOffsetFrom"] = pageBorderOffsetFrom
+            map["complexScriptFont"] = complexScriptFont
+            map["firstLineIndentPt"] = firstLineIndentPt.toString()
+            map["spacingBeforePt"] = spacingBeforePt.toString()
+            map["pageNumberFormat"] = pageNumberFormat
+            map["pageNumberStart"] = pageNumberStart.toString()
+            map["templateTables"] = templateTables.toString()
+            map["templateImages"] = templateImages.toString()
+            map["templatePageBreaks"] = templatePageBreaks.toString()
+            map["templateSections"] = templateSections.toString()
+            map["templateFootnotes"] = templateFootnotes.toString()
+            map["templateHasLists"] = templateHasLists.toString()
+            map["templateHasCaptionStyle"] = templateHasCaptionStyle.toString()
+            map["extractionWarnings"] = extractionWarnings
         }
 
         return map.entries.joinToString(prefix = "{", postfix = "}", separator = ",") { (k, v) ->
@@ -231,7 +291,30 @@ data class TemplateProfile(
                     pdfTextStatus = map["pdfTextStatus"] ?: "",
                     pdfPageCount = map["pdfPageCount"]?.toIntOrNull() ?: 0,
                     rtl = map["rtl"]?.toBooleanStrictOrNull() ?: false,
-                    sourceFileName = map["sourceFileName"] ?: ""
+                    sourceFileName = map["sourceFileName"] ?: "",
+                    heading3SizePt = map["heading3SizePt"]?.toIntOrNull() ?: 0,
+                    gutterPt = map["gutterPt"]?.toIntOrNull() ?: 0,
+                    differentFirstPage = map["differentFirstPage"]?.toBooleanStrictOrNull() ?: false,
+                    differentOddEven = map["differentOddEven"]?.toBooleanStrictOrNull() ?: false,
+                    firstHeaderText = map["firstHeaderText"] ?: "",
+                    firstFooterText = map["firstFooterText"] ?: "",
+                    headerImage = map["headerImage"] ?: "",
+                    firstPageHasHeaderImage = map["firstPageHasHeaderImage"]?.toBooleanStrictOrNull() ?: false,
+                    pageBorders = map["pageBorders"] ?: "",
+                    pageBorderOffsetFrom = map["pageBorderOffsetFrom"] ?: "text",
+                    complexScriptFont = map["complexScriptFont"] ?: "",
+                    firstLineIndentPt = map["firstLineIndentPt"]?.toIntOrNull() ?: 0,
+                    spacingBeforePt = map["spacingBeforePt"]?.toIntOrNull() ?: 0,
+                    pageNumberFormat = map["pageNumberFormat"] ?: "",
+                    pageNumberStart = map["pageNumberStart"]?.toIntOrNull() ?: 0,
+                    templateTables = map["templateTables"]?.toIntOrNull() ?: 0,
+                    templateImages = map["templateImages"]?.toIntOrNull() ?: 0,
+                    templatePageBreaks = map["templatePageBreaks"]?.toIntOrNull() ?: 0,
+                    templateSections = map["templateSections"]?.toIntOrNull() ?: 0,
+                    templateFootnotes = map["templateFootnotes"]?.toIntOrNull() ?: 0,
+                    templateHasLists = map["templateHasLists"]?.toBooleanStrictOrNull() ?: false,
+                    templateHasCaptionStyle = map["templateHasCaptionStyle"]?.toBooleanStrictOrNull() ?: false,
+                    extractionWarnings = map["extractionWarnings"] ?: ""
                 )
             } catch (e: Exception) {
                 defaultProfile()

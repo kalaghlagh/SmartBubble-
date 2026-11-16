@@ -47,7 +47,7 @@ internal object TextTraits {
     const val TERMINAL = ".!?؟…;؛,،"
 
     fun isArabicLetter(c: Char) = c in '؀'..'ۿ' || c in 'ݐ'..'ݿ' || c in 'ࢠ'..'ࣿ' ||
-        c in 'ﭐ'..'﷿' || c in 'ﹰ'..'﻿'
+        c in 'ﭐ'..'﷿' || c in 'ﹰ'..'\uFEFF'
 
     fun hasArabic(text: String) = text.any { isArabicLetter(it) }
 

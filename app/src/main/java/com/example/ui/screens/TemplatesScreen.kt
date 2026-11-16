@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import com.example.ui.publishOnMain
+
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -266,7 +268,7 @@ fun TemplatesScreen(
                 items(filteredTemplates, key = { it.id }) { template ->
                     // First-page image of PDF templates (rendered on the device, cached).
                     val thumbnail by produceState<ImageBitmap?>(null, template.id, template.originalFilePath) {
-                        value = viewModel.templateThumbnail(template)?.asImageBitmap()
+                        publishOnMain(viewModel.templateThumbnail(template)?.asImageBitmap())
                     }
                     TemplateItemCard(
                         template = template,
@@ -355,7 +357,7 @@ fun TemplatesScreen(
     if (selectedPreviewTemplate != null) {
         val tmpl = selectedPreviewTemplate!!
         val previewThumbnail by produceState<ImageBitmap?>(null, tmpl.id) {
-            value = viewModel.templateThumbnail(tmpl)?.asImageBitmap()
+            publishOnMain(viewModel.templateThumbnail(tmpl)?.asImageBitmap())
         }
         TemplatePreviewDialog(
             template = tmpl,
@@ -589,6 +591,7 @@ fun TemplateItemCard(
                         modifier = Modifier.testTag("template_filename_${template.id}")
                     )
                 }
+                if (profile.layoutSource == "DOCX") TemplateFormatDetails(template.id, profile)
                 if (isPdf && profile.isImageOnlyPdf) {
                     Text(
                         text = stringResource(R.string.template_pdf_no_text_short),
@@ -796,4 +799,50 @@ private fun displayNameOf(context: Context, uri: Uri): String? = try {
     }
 } catch (e: Exception) {
     null
+}
+
+/**
+ * What was read from a Word template (page, margins, font, header, footer, border, ...) and what
+ * the PDF export and the preview cannot reproduce, so the user is never told more than is true.
+ */
+@Composable
+private fun TemplateFormatDetails(id: String, p: TemplateProfile) {
+    fun cm(pt: Int) = String.format(java.util.Locale.getDefault(), "%.1f", pt * 2.54 / 72)
+    val parts = buildList {
+        add(stringResource(R.string.template_fmt_page, cm(p.pageWidthPt), cm(p.pageHeightPt)))
+        add(stringResource(R.string.template_fmt_margins, listOf(p.marginTopPt, p.marginBottomPt, p.marginLeftPt, p.marginRightPt).joinToString("/") { cm(it) }))
+        add(stringResource(R.string.template_fmt_font, p.bodyFont, p.baseFontSizePt))
+        if (p.headerText.isNotBlank()) add(stringResource(R.string.template_fmt_header))
+        if (p.headerImage.isNotBlank()) add(stringResource(R.string.template_fmt_header_image))
+        if (p.footerText.isNotBlank()) add(stringResource(R.string.template_fmt_footer))
+        if (p.pageNumberPosition.isNotBlank()) add(stringResource(R.string.template_fmt_page_numbers))
+        if (p.pageBorders.isNotBlank()) add(stringResource(R.string.template_fmt_border))
+        if (p.differentFirstPage) add(stringResource(R.string.template_fmt_first_page))
+        if (p.rtl) add(stringResource(R.string.template_fmt_rtl))
+        if (p.templateTables > 0) add(stringResource(R.string.template_fmt_tables, p.templateTables))
+        if (p.templateImages > 0) add(stringResource(R.string.template_fmt_images, p.templateImages))
+    }
+    Text(
+        text = parts.joinToString(" · "),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.testTag("template_format_$id")
+    )
+    val warnings = p.extractionWarnings.split(';').filter { it.isNotBlank() }.map { w ->
+        when (w.substringBefore(':')) {
+            "odd_even_headers" -> stringResource(R.string.template_warn_odd_even)
+            "header_shapes" -> stringResource(R.string.template_warn_shapes)
+            "multiple_sections" -> stringResource(R.string.template_warn_sections, w.substringAfter(':').toIntOrNull() ?: 2)
+            "body_content" -> stringResource(R.string.template_warn_body)
+            "page_border_art" -> stringResource(R.string.template_warn_border_art)
+            "footnotes" -> stringResource(R.string.template_warn_footnotes)
+            else -> stringResource(R.string.template_warn_unreadable)
+        }
+    }
+    if (warnings.isNotEmpty()) Text(
+        text = stringResource(R.string.template_warn_title) + "\n" + warnings.joinToString("\n") { "• $it" },
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.tertiary,
+        modifier = Modifier.testTag("template_format_warnings_$id")
+    )
 }

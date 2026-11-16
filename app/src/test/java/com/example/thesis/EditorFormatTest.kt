@@ -93,6 +93,19 @@ class EditorFormatTest {
     }
 
     @Test
+    fun alignment_onListItems_keepsTheListMarkerFirst() {
+        // SectionText reads "- {end} item"; "{end} - item" was not read as a list item.
+        assertEquals("- {end} item", EditorOps.setAlign(t("- item", 3), "end").text)
+        assertEquals("2. {center} item", EditorOps.setAlign(t("2. item", 3), "center").text)
+        assertEquals("- {justify} item", EditorOps.setAlign(t("{end} - item", 3), "justify").text)
+        assertEquals("- item", EditorOps.setAlign(t("- {end} item", 3), "").text)
+        assertEquals("## {center} Title", EditorOps.setAlign(t("## Title", 3), "center").text)
+        // Bold on an aligned list item leaves both markers alone.
+        assertEquals("- {end} **item**", EditorOps.toggleFormat(t("- {end} item", 10), Format.BOLD).text)
+        assertEquals("- {end} item", EditorOps.toggleBullets(EditorOps.toggleBullets(t("- {end} item", 3))).text)
+    }
+
+    @Test
     fun arabicAndFrench_textIsKeptLetterForLetter() {
         val text = "المياه الجوفية مصدر أساسي. Une phrase française é."
         var e = sel(text, "الجوفية")

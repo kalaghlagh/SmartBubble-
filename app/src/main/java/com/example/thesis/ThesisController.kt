@@ -117,7 +117,9 @@ data class ThesisUiState(
     /** Text of the section open in the editor (saved with "Save changes"). */
     val draft: SectionDraft? = null,
     /** AI assistant request and result for the open section. */
-    val assist: AiAssist? = null
+    val assist: AiAssist? = null,
+    /** Logo chosen on the "New thesis" form, copied into app storage until the project exists. */
+    val pendingLogo: File? = null
 )
 
 /** Messages for the user (localized by the UI). */
@@ -178,6 +180,8 @@ data class ThesisNoteText(val code: String, val args: List<String> = emptyList()
  * to the default AI provider through [ai].
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+private const val PENDING_LOGO = "new_thesis_logo"
+
 class ThesisController(
     private val scope: CoroutineScope,
     private val repository: ThesisRepository,
@@ -330,7 +334,52 @@ class ThesisController(
                 formDraftFile?.takeIf { it.isFile }?.let { f -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.example.thesis.model.ThesisCodec.metaFromMap(com.example.ai.providers.Json.obj(com.example.ai.providers.Json.parse(f.readText()))) } }
             } catch (e: Exception) { null }
             if (draft != null) update { it.copy(formDraft = draft) }
+            val logo = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { pendingLogoDir.listFiles()?.firstOrNull { it.name.startsWith(PENDING_LOGO) && it.length() > 0 } }
+            if (logo != null) update { it.copy(pendingLogo = logo) }
         }
+    }
+
+    // A logo picked before the project exists is kept next to the saved form (survives restarts).
+    private val pendingLogoDir: File get() = formDraftFile?.parentFile ?: File(previewDir.parentFile, "thesis_pending")
+
+    /**
+     * Logo picked on the "New thesis" form: the image is copied at once (the picker's permission
+     * to read it ends with the screen) and becomes the project's logo when the project is created.
+     */
+    fun stagePendingLogo(open: () -> InputStream?, mime: String) = launch(ThesisBusy.SAVING) {
+        val ext = when { mime.contains("png") -> "png"; mime.contains("webp") -> "webp"; mime.contains("gif") -> "gif"; else -> "jpg" }
+        val staged = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            pendingLogoDir.mkdirs()
+            val target = File(pendingLogoDir, "$PENDING_LOGO.$ext")
+            val tmp = File(pendingLogoDir, "$PENDING_LOGO.tmp")
+            try {
+                val input = try { open() } catch (e: Exception) { null } ?: return@withContext null
+                var total = 0L
+                input.use { src -> tmp.outputStream().use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = src.read(buf)
+                        if (n < 0) break
+                        total += n
+                        if (total > 20L * 1024 * 1024) return@withContext null
+                        out.write(buf, 0, n)
+                    }
+                } }
+                if (total == 0L) return@withContext null
+                pendingLogoDir.listFiles()?.filter { it.name.startsWith("$PENDING_LOGO.") && it.name != tmp.name }?.forEach { it.delete() }
+                if (!tmp.renameTo(target)) return@withContext null
+                target
+            } finally {
+                tmp.delete()
+            }
+        }
+        if (staged == null) onMessage(ThesisMessage.ImageFailed("UNREADABLE")) else update { it.copy(pendingLogo = staged) }
+    }
+
+    fun clearPendingLogo() {
+        val f = _state.value.pendingLogo
+        update { it.copy(pendingLogo = null) }
+        if (f != null) scope.launch { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { f.delete() } }
     }
 
     /** "Save draft" on the New thesis form: keeps what was typed (nothing is created yet). */
@@ -354,6 +403,17 @@ class ThesisController(
 
     fun createProject(meta: ThesisMeta, aiAssist: Boolean) = launch(ThesisBusy.SAVING) {
         val id = repository.createProject(meta, aiAssist)
+        _state.value.pendingLogo?.takeIf { it.isFile }?.let { logo ->
+            val mime = when (logo.extension) { "png" -> "image/png"; "webp" -> "image/webp"; "gif" -> "image/gif"; else -> "image/jpeg" }
+            try {
+                val asset = repository.importImage(id, { logo.inputStream() }, "logo", mime)
+                repository.applyDirect(id, listOf(ThesisOp.UpdateMeta(repository.snapshot(id).meta.copy(logoAssetId = asset.id))), ChangeSource.IMAGE, "logo")
+            } catch (e: com.example.thesis.data.ThesisAssetException) {
+                onMessage(ThesisMessage.ImageFailed(e.reason.name))
+            }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { logo.delete() }
+            update { it.copy(pendingLogo = null) }
+        }
         formDraftFile?.let { f -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { f.delete() } }
         update { it.copy(formDraft = null) }
         onMessage(ThesisMessage.Created(meta.title))
@@ -391,6 +451,17 @@ class ThesisController(
         val meta = repository.snapshot(id).meta.copy(logoAssetId = asset.id)
         repository.applyDirect(id, listOf(ThesisOp.UpdateMeta(meta)), ChangeSource.IMAGE, "logo")
         reload()
+        update { it.copy(previewFile = null) }
+    }
+
+    /** Takes the logo off the cover (the image file stays in the project for the history). */
+    fun removeLogo() = launch(ThesisBusy.SAVING) {
+        val id = _state.value.projectId ?: return@launch
+        val meta = repository.snapshot(id).meta
+        if (meta.logoAssetId == null) return@launch
+        repository.applyDirect(id, listOf(ThesisOp.UpdateMeta(meta.copy(logoAssetId = null))), ChangeSource.IMAGE, "logo removed")
+        reload()
+        update { it.copy(previewFile = null) }
     }
 
     // ------------------------------------------------------------------ chat submissions
@@ -1018,6 +1089,9 @@ class ThesisController(
             update { it.copy(previewFile = file, screen = ThesisScreen.PREVIEW) }
         }
     }
+
+    /** Hides the export result in the workspace (the file stays in the Library). */
+    fun dismissExport() = update { it.copy(lastExport = null) }
 
     /** Exports DOCX or PDF and saves it to the Library (a new file every time; nothing is overwritten). */
     fun export(format: String) = launch(ThesisBusy.EXPORTING) {

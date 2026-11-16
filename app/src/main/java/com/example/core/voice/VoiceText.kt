@@ -25,7 +25,7 @@ object VoiceText {
     private val FRENCH_ACCENTS = "éèêëàâçùûîïôœ"
 
     private fun isArabicLetter(c: Char) =
-        c in '؀'..'ۿ' || c in 'ݐ'..'ݿ' || c in 'ﭐ'..'﷿' || c in 'ﹰ'..'﻿'
+        c in '؀'..'ۿ' || c in 'ݐ'..'ݿ' || c in 'ﭐ'..'﷿' || c in 'ﹰ'..'\uFEFF'
 
     /**
      * Detects whether [text] is Arabic, French or English so it is read with a matching voice.

@@ -130,6 +130,7 @@ class ThesisAndroidTest {
 
     private val ai = FakeAi()
     private val messages = CopyOnWriteArrayList<ThesisMessage>()
+    private val chatLoads = java.util.Collections.synchronizedList(mutableListOf<String>())
     private val notes = CopyOnWriteArrayList<ThesisChatNote>()
     private val exports = CopyOnWriteArrayList<ThesisExport>()
     private val feedback = MutableStateFlow<String?>(null)
@@ -158,8 +159,24 @@ class ThesisAndroidTest {
         override fun shareExportedDocument(document: DocumentEntity) { opened.add(document) }
         override suspend fun aiProviderInfo(): Pair<String, String>? = ai.provider?.let { it to "fake-model" }
         // Same path as the app (SmartBubbleViewModel): a blocking query on Dispatchers.IO.
-        override suspend fun recentChatMessages(limit: Int): List<ChatSnippet> = kotlinx.coroutines.withContext(Dispatchers.IO) {
-            db.chatDao().getRecentChatMessagesNow(limit).map { ChatSnippet(it.content, it.isUser, it.timestamp) }
+        override suspend fun recentChatMessages(limit: Int): List<ChatSnippet> {
+            // Each call is recorded (start, query done on which thread, result size, return): when
+            // the Insert from Chat dialog stays on its spinner (runs #30, #41), the timeout message
+            // shows whether the load never started, never finished, or finished without reaching
+            // the dialog.
+            val call = chatLoads.size
+            chatLoads.add("#$call start ${System.currentTimeMillis()} on ${Thread.currentThread().name}")
+            try {
+                val list = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    db.chatDao().getRecentChatMessagesNow(limit).map { ChatSnippet(it.content, it.isUser, it.timestamp) }
+                        .also { chatLoads.add("#$call queried ${it.size} at ${System.currentTimeMillis()} on ${Thread.currentThread().name}") }
+                }
+                chatLoads.add("#$call returned at ${System.currentTimeMillis()} on ${Thread.currentThread().name}")
+                return list
+            } catch (e: Throwable) {
+                chatLoads.add("#$call ended with $e at ${System.currentTimeMillis()}")
+                throw e
+            }
         }
     }
 
@@ -482,6 +499,7 @@ class ThesisAndroidTest {
         append("draft=${st.draft?.text?.replace("\n", "\\n")?.take(300)}\n")
         try { append(compose.onAllNodes(androidx.compose.ui.test.isRoot()).printToString(maxDepth = 60)) } catch (e: Throwable) { append("semantics tree unavailable: $e") }
         // Threads waiting in the database or in coroutines, to show where a load is blocked.
+        append("\nInsert from Chat loads (now ${System.currentTimeMillis()}): ${chatLoads.toList()}\n")
         append("\nthreads:\n")
         for ((t, frames) in Thread.getAllStackTraces()) {
             val text = frames.joinToString("\n") { "    at $it" }
@@ -889,12 +907,18 @@ class ThesisAndroidTest {
         await("completed shown") { controller.state.value.snapshot?.section(introId)?.completed == true }
         compose.onNodeWithTag("thesis_status_$introId", useUnmergedTree = true).assertTextEquals("Completed")
 
-        // Preview screen, then export from it (approved content only, saved to the Library).
+        // Preview screen: a document viewer only, with Return to Workspace and Full thesis; the
+        // export buttons and the export result are not on it.
         tap("thesis_workspace_menu")
         tap("thesis_menu_preview")
-        await("preview screen") { tagExists("thesis_export_docx") }
+        await("preview screen") { tagExists("thesis_preview_screen") && controller.state.value.busy == null }
         compose.onNodeWithTag("thesis_preview_back_workspace").assertExists()
+        compose.onNodeWithTag("thesis_preview_whole").assertExists()
+        for (tag in listOf("thesis_export_docx", "thesis_export_pdf", "thesis_export_result", "thesis_export_section")) assertFalse("$tag on the preview", tagExists(tag))
         runBlocking { idle() }
+        // Export from the workspace (approved content only, saved to the Library).
+        tap("thesis_preview_back_workspace")
+        await("workspace") { controller.state.value.screen == ThesisScreen.PROJECT && tagExists("thesis_export_docx") }
         tap("thesis_export_docx")
         await("export result", 20_000) { tagExists("thesis_export_result") }
         val doc = runBlocking { db.documentDao().getAllDocuments().first() }.single { it.projectId == id }
@@ -907,8 +931,15 @@ class ThesisAndroidTest {
         }
         tap("thesis_export_open")
         assertEquals(doc.id, host.opened.single().id)
+        // The export result stays in the workspace: opening the preview again does not show it.
+        tap("thesis_workspace_menu")
+        tap("thesis_menu_preview")
+        await("preview again") { tagExists("thesis_preview_screen") }
+        assertFalse("export result on the preview", tagExists("thesis_export_result"))
         tap("thesis_preview_back_workspace")
         await("workspace again") { controller.state.value.screen == ThesisScreen.PROJECT }
+        tap("thesis_export_dismiss")
+        await("result dismissed") { controller.state.value.lastExport == null && !tagExists("thesis_export_result") }
     }
 
     @Test
@@ -1080,5 +1111,74 @@ class ThesisAndroidTest {
         assertEquals(revisionsBefore, r1.revisions(id).map { it.number })
         assertEquals(ProposalStatus.PENDING.name, r1.proposal(pending.id)!!.status)
         db1.close()
+    }
+
+    /**
+     * University logo picked on the New thesis form (before the project exists): copied into
+     * app storage at once, attached to the project when it is created, still there after the
+     * app is closed and reopened, in the Word file, and removable.
+     */
+    @Test
+    fun logoPickedOnTheNewThesisForm_isKept_afterRestart_andExported(): Unit = runBlocking {
+        val dbFile = File(tmp.root, "logo.db")
+        val folder = tmp.newFolder("thesis-logo")
+        fun open() = Room.databaseBuilder(context, SmartBubbleDatabase::class.java, dbFile.path).allowMainThreadQueries().build()
+        val inspector: (File) -> Pair<Int, Int>? = { f -> if (f.length() > 8 && f.readBytes().take(4) == png.take(4)) 200 to 100 else null }
+        fun controller(d: SmartBubbleDatabase, r: ThesisRepository, preview: File) = ThesisController(scope, r, ai,
+            ThesisExporter(r, RoomTemplateRepository(d.templateDao()), tmp.newFolder(), pdfRenderer = { p, sn, a, f -> ThesisPdfRenderer(p).render(sn, a, f) }), preview,
+            onMessage = { messages.add(it) }, onChatNote = {}, onSaveToLibrary = { e, p -> saveToLibrary(e, p) })
+        val previewDir = tmp.newFolder("logo-preview")
+        var db1 = open()
+        var r1 = ThesisRepository(db1, folder, imageInspector = inspector)
+        var c = controller(db1, r1, previewDir)
+        // The picker's stream is read once; the copy is what the project uses.
+        var reads = 0
+        c.stagePendingLogo({ reads++; png.inputStream() }, "image/png")
+        val staged = withTimeout(10_000) { c.state.first { it.pendingLogo != null && it.busy == null } }.pendingLogo!!
+        assertEquals(1, reads)
+        assertTrue(staged.readBytes().contentEquals(png))
+        c.createProject(meta(), aiAssist = false)
+        val created = withTimeout(10_000) { c.state.first { it.snapshot != null && it.busy == null } }
+        val id = created.projectId!!
+        val logoId = created.snapshot!!.meta.logoAssetId
+        assertNotNull("logo not attached to the new project", logoId)
+        assertNull("the staged copy is used once", c.state.value.pendingLogo)
+        assertFalse(staged.exists())
+        db1.close()
+
+        // Closed and reopened: the logo reference and its file are still there.
+        db1 = open()
+        r1 = ThesisRepository(db1, folder, imageInspector = inspector)
+        c = controller(db1, r1, tmp.newFolder("logo-preview2"))
+        c.openProject(id)
+        val reopened = withTimeout(10_000) { c.state.first { it.snapshot != null && it.busy == null } }
+        assertEquals(logoId, reopened.snapshot!!.meta.logoAssetId)
+        val asset = r1.assets(id).single { it.id == logoId }
+        assertTrue(File(asset.path).readBytes().contentEquals(png))
+
+        // In the Word file: the original image bytes on the cover.
+        c.export("DOCX")
+        val docx = withTimeout(20_000) { c.state.first { it.lastExport != null && it.busy == null } }.lastExport!!.document
+        ZipFile(File(docx.filePath)).use { z ->
+            val media = z.entries().toList().filter { it.name.startsWith("word/media/") }
+            assertTrue("no image in the Word file", media.any { z.getInputStream(it).readBytes().contentEquals(png) })
+            assertTrue(z.getInputStream(z.getEntry("word/document.xml")).bufferedReader().readText().contains("<w:drawing>"))
+        }
+
+        // Removed: the cover has no logo any more (no empty placeholder).
+        c.removeLogo()
+        withTimeout(10_000) { c.state.first { it.busy == null && it.snapshot?.meta?.logoAssetId == null } }
+        assertNull(r1.snapshot(id).meta.logoAssetId)
+        db1.close()
+    }
+
+    /** Cancelling the form without saving it drops the picked logo. */
+    @Test
+    fun pendingLogo_clearedWhenRemoved(): Unit = runBlocking {
+        controller.stagePendingLogo({ png.inputStream() }, "image/png")
+        val staged = withTimeout(10_000) { controller.state.first { it.pendingLogo != null && it.busy == null } }.pendingLogo!!
+        controller.clearPendingLogo()
+        assertNull(controller.state.value.pendingLogo)
+        withTimeout(5_000) { while (staged.exists()) delay(20) }
     }
 }

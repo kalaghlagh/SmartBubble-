@@ -1,5 +1,6 @@
 package com.example.template.analysis
 
+import com.example.template.docx.DocxTemplateAnalyzer
 import com.example.template.domain.TemplateProfile
 import com.example.template.pdf.PdfTemplateAnalyzer
 import java.io.File
@@ -20,7 +21,7 @@ class TemplateAnalysisEngine {
         val name = userDefinedName?.ifBlank { null } ?: file.nameWithoutExtension.replace('_', ' ')
 
         return when (extension) {
-            "docx" -> analyzeDocx(file, templateId, name)
+            "docx" -> DocxTemplateAnalyzer.analyze(file, templateId, name, sourceFileName ?: file.name)
             "pptx" -> analyzePptx(file, templateId, name)
             "xlsx" -> analyzeXlsx(file, templateId, name)
             "pdf" -> analyzePdf(file, templateId, name, sourceFileName ?: file.name)
@@ -32,69 +33,6 @@ class TemplateAnalysisEngine {
                 )
             }
         }
-    }
-
-    private fun analyzeDocx(file: File, templateId: String, name: String): TemplateProfile {
-        var extractedFont = "Calibri"
-        var extractedColor = "#24D6E8"
-        var extractedSecondary = "#8665F7"
-        var extractedMarginTop = 54
-        var extractedMarginLeft = 54
-        var extractedHeader = ""
-
-        try {
-            ZipInputStream(FileInputStream(file)).use { zip ->
-                var entry = zip.nextEntry
-                while (entry != null) {
-                    if (entry.name.contains("styles.xml") || entry.name.contains("theme1.xml")) {
-                        val content = zip.bufferedReader(Charsets.UTF_8).readText()
-                        // Look for font name
-                        val fontRegex = Regex("""w:ascii="([^"]+)"""")
-                        fontRegex.find(content)?.let { match ->
-                            extractedFont = match.groupValues[1]
-                        }
-                        // Look for hex colors like srgbClr val="24D6E8" or w:color w:val="24D6E8"
-                        val colorRegex = Regex("""(?:srgbClr|color)\s+(?:w:)?val="([0-9A-Fa-f]{6})"""")
-                        val colors = colorRegex.findAll(content).map { "#${it.groupValues[1]}" }.toList()
-                        if (colors.isNotEmpty()) {
-                            extractedColor = colors.first()
-                        }
-                        if (colors.size > 1) {
-                            extractedSecondary = colors[1]
-                        }
-                    } else if (entry.name.contains("document.xml")) {
-                        val content = zip.bufferedReader(Charsets.UTF_8).readText()
-                        // Look for margins in twips (1440 twips = 1 inch = 72 pt, so 1 pt = 20 twips)
-                        val marginRegex = Regex("""w:pgMar\s+[^>]*w:top="(\d+)"""")
-                        marginRegex.find(content)?.let { match ->
-                            val twips = match.groupValues[1].toIntOrNull() ?: 1080
-                            extractedMarginTop = (twips / 20).coerceIn(36, 108)
-                        }
-                    }
-                    zip.closeEntry()
-                    entry = zip.nextEntry
-                }
-            }
-        } catch (e: Exception) {
-            // Graceful fallback to default corporate styling
-        }
-
-        return TemplateProfile(
-            templateId = templateId,
-            name = name,
-            originalFileType = "DOCX",
-            primaryColorHex = extractedColor,
-            secondaryColorHex = extractedSecondary,
-            headingFont = extractedFont,
-            bodyFont = extractedFont,
-            marginTopPt = extractedMarginTop,
-            marginBottomPt = extractedMarginTop,
-            marginLeftPt = extractedMarginLeft,
-            marginRightPt = extractedMarginLeft,
-            headerText = extractedHeader,
-            isAnalysisComplete = true,
-            extractedPropertiesSummary = "Extracted Typography ($extractedFont), Colors ($extractedColor, $extractedSecondary), Margins (${extractedMarginTop}pt)"
-        )
     }
 
     private fun analyzePptx(file: File, templateId: String, name: String): TemplateProfile {

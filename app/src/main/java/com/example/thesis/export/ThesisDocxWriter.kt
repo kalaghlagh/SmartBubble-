@@ -63,7 +63,7 @@ class ThesisDocxWriter {
 
         fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 
-        fun isArabic(text: String) = text.any { it in '؀'..'ۿ' || it in 'ݐ'..'ݿ' || it in 'ﭐ'..'﷿' || it in 'ﹰ'..'﻿' }
+        fun isArabic(text: String) = text.any { it in '؀'..'ۿ' || it in 'ݐ'..'ݿ' || it in 'ﭐ'..'﷿' || it in 'ﹰ'..'\uFEFF' }
 
         private fun hex(value: String, fallback: String = "000000"): String {
             val h = value.removePrefix("#").uppercase(Locale.ROOT)
