@@ -242,9 +242,17 @@ class AppSmokeDeviceTest {
         val pdf = File(thesis.state.value.lastExport!!.document.filePath)
         PdfRenderer(ParcelFileDescriptor.open(pdf, ParcelFileDescriptor.MODE_READ_ONLY)).use { r ->
             assertTrue("PDF has no pages", r.pageCount >= 1)
+            // The page size of the template this thesis uses: A4 (595 x 842 pt) with the built-in
+            // formatting, or the default Word template's own page (its PDF follows the Word export).
+            val resolved = runBlocking { com.example.thesis.export.ThesisTemplateResolver.resolve(com.example.offline.document.RoomTemplateRepository(vm.database.templateDao()), null) }
+            val expected = com.example.thesis.export.ThesisTemplateResolver.pdfProfile(resolved).let { p ->
+                (if (p.pageWidthPt > 0) p.pageWidthPt else 595) to (if (p.pageHeightPt > 0) p.pageHeightPt else 842)
+            }
+            android.util.Log.i("AppSmokeDeviceTest", "Thesis template: ${resolved.source} ${resolved.entity?.name}, page ${expected.first}x${expected.second}")
             r.openPage(0).use { p ->
-                // A4 in points (595 x 842), within rounding.
-                assertTrue("not A4: ${p.width}x${p.height}", p.width in 590..600 && p.height in 837..847)
+                assertTrue("page ${p.width}x${p.height}, template page ${expected.first}x${expected.second} (${resolved.source} ${resolved.entity?.name})",
+                    Math.abs(p.width - expected.first) <= 5 && Math.abs(p.height - expected.second) <= 5)
+                if (resolved.entity == null) assertTrue("not A4: ${p.width}x${p.height}", p.width in 590..600 && p.height in 837..847)
             }
             // Ink in the body of each page (the footer band with the page number is left out), on
             // a 2x render so a page holding a single heading still counts.
@@ -326,7 +334,8 @@ class AppSmokeDeviceTest {
     @Test
     fun thesis_universityTemplateAndLogo_inPreviewPdfAndDocx_previewIsAViewerOnly() {
         language("en", "Thesis")
-        val dir = File(context.cacheDir, "device-template-test").apply { deleteRecursively(); mkdirs() }
+        // Under generated_docs: the folder the app's FileProvider serves (as for the other imports).
+        val dir = File(context.filesDir, "generated_docs/device-template-test").apply { deleteRecursively(); mkdirs() }
         val blue = Color.rgb(0, 0, 200)
         val green = Color.rgb(0, 160, 0)
         val red = Color.rgb(255, 0, 0)

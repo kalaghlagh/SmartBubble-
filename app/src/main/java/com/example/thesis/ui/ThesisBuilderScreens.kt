@@ -1004,8 +1004,11 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                             val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.primaryClip
                             clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
                         } catch (e: Exception) { android.util.Log.w("ThesisEditor", "Clipboard could not be read", e); null }
+                        // Evidence for device tests and crash reports: lengths only, never the text.
+                        android.util.Log.i("ThesisEditor", "Paste Text: clipboard read, ${text?.length ?: -1} chars")
                         if (text.isNullOrBlank()) toast(R.string.thesis_clipboard_empty) else insertAtCursor(text)
                     }
+                    android.util.Log.i("ThesisEditor", "Paste Text tapped: windowFocus=${view.hasWindowFocus()}")
                     // Android 10+ lets only the focused window read the clipboard. Right after a copy,
                     // the system "copied" preview is a separate window that holds the focus, and the
                     // tap on this button arrives before the focus comes back: reading then returns
