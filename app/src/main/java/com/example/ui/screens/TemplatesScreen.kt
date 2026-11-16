@@ -235,20 +235,15 @@ fun TemplatesScreen(
             contentPadding = PaddingValues(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            pendingClassification?.let { pending -> item(key = "classify") { ClassificationCard(viewModel, pending) } }
             item(key = "library_header") {
                 Text(stringResource(R.string.st_library_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(horizontal = 16.dp))
             }
             item(key = "library_filters") { TemplateLibraryFilterRow(libraryFilter) { libraryFilter = it } }
+            pendingClassification?.let { pending -> item(key = "classify") { ClassificationCard(viewModel, pending) } }
             val query = searchQuery.trim()
-            if (libraryFilter == TemplateLibraryFilter.ALL && query.isEmpty()) {
-                items(TemplateCatalog.categories, key = { "cat_" + it.id }) { c ->
-                    Box(Modifier.padding(horizontal = 16.dp)) {
-                        CategoryCard(c, library.count { t -> c.subcategories.any { t.appliesTo(it.id) } }) { openCategory = c.id }
-                    }
-                }
-            } else if (libraryFilter != TemplateLibraryFilter.UPLOADED) {
+            if ((libraryFilter != TemplateLibraryFilter.ALL && libraryFilter != TemplateLibraryFilter.UPLOADED) ||
+                (libraryFilter == TemplateLibraryFilter.ALL && query.isNotEmpty())) {
                 val matches = library.filter { t ->
                     val byFilter = when (libraryFilter) {
                         TemplateLibraryFilter.BUILT_IN -> t.isBuiltIn
@@ -336,6 +331,18 @@ fun TemplatesScreen(
                                 viewModel.setNavTab(com.example.ui.AppNavTab.CHAT)
                             }
                         )
+                    }
+                }
+            }
+            // Categories of the library (built-in and uploaded templates by kind of document).
+            if (libraryFilter == TemplateLibraryFilter.ALL && query.isEmpty()) {
+                item(key = "categories_header") {
+                    Text(stringResource(R.string.st_categories), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp))
+                }
+                items(TemplateCatalog.categories, key = { "cat_" + it.id }) { c ->
+                    Box(Modifier.padding(horizontal = 16.dp)) {
+                        CategoryCard(c, library.count { t -> c.subcategories.any { t.appliesTo(it.id) } }) { openCategory = c.id }
                     }
                 }
             }

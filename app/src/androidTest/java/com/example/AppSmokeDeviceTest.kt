@@ -157,6 +157,7 @@ class AppSmokeDeviceTest {
         shot("templates-library")
         // The uploaded templates (the library also lists the built-in categories).
         tap("st_filter_uploaded")
+        await("only uploads listed") { !exists("st_category_reports") && !exists("categories_header") }
         shot("templates-list")
         for (t in imported) {
             tap("template_menu_${t.id}")
@@ -361,6 +362,7 @@ class AppSmokeDeviceTest {
         assertEquals("Times New Roman" to 12, profile.bodyFont to profile.baseFontSizePt)
         tap("nav_templates")
         tap("st_filter_uploaded")
+        await("only uploads listed") { !exists("st_category_reports") }
         // The details are a child of the clickable card, whose semantics merge its children.
         await("template card") { compose.onAllNodes(hasTestTag("template_format_${entity.id}"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
         shot("template-docx-formatting")
