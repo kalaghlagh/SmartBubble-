@@ -61,6 +61,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -1124,13 +1126,17 @@ class ThesisAndroidTest {
         val folder = tmp.newFolder("thesis-logo")
         fun open() = Room.databaseBuilder(context, SmartBubbleDatabase::class.java, dbFile.path).allowMainThreadQueries().build()
         val inspector: (File) -> Pair<Int, Int>? = { f -> if (f.length() > 8 && f.readBytes().take(4) == png.take(4)) 200 to 100 else null }
-        fun controller(d: SmartBubbleDatabase, r: ThesisRepository, preview: File) = ThesisController(scope, r, ai,
+        // Each controller has its own scope, stopped (and waited for) before its database is
+        // closed: a job still reading a closed database would fail on another thread and be
+        // reported against a later test.
+        fun controller(d: SmartBubbleDatabase, r: ThesisRepository, preview: File, sc: CoroutineScope) = ThesisController(sc, r, ai,
             ThesisExporter(r, RoomTemplateRepository(d.templateDao()), tmp.newFolder(), pdfRenderer = { p, sn, a, f -> ThesisPdfRenderer(p).render(sn, a, f) }), preview,
             onMessage = { messages.add(it) }, onChatNote = {}, onSaveToLibrary = { e, p -> saveToLibrary(e, p) })
         val previewDir = tmp.newFolder("logo-preview")
         var db1 = open()
         var r1 = ThesisRepository(db1, folder, imageInspector = inspector)
-        var c = controller(db1, r1, previewDir)
+        var scope1 = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        var c = controller(db1, r1, previewDir, scope1)
         // The picker's stream is read once; the copy is what the project uses.
         var reads = 0
         c.stagePendingLogo({ reads++; png.inputStream() }, "image/png")
@@ -1144,12 +1150,14 @@ class ThesisAndroidTest {
         assertNotNull("logo not attached to the new project", logoId)
         assertNull("the staged copy is used once", c.state.value.pendingLogo)
         assertFalse(staged.exists())
+        scope1.coroutineContext[Job]!!.cancelAndJoin()
         db1.close()
 
         // Closed and reopened: the logo reference and its file are still there.
         db1 = open()
         r1 = ThesisRepository(db1, folder, imageInspector = inspector)
-        c = controller(db1, r1, tmp.newFolder("logo-preview2"))
+        scope1 = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        c = controller(db1, r1, tmp.newFolder("logo-preview2"), scope1)
         c.openProject(id)
         val reopened = withTimeout(10_000) { c.state.first { it.snapshot != null && it.busy == null } }
         assertEquals(logoId, reopened.snapshot!!.meta.logoAssetId)
@@ -1169,6 +1177,7 @@ class ThesisAndroidTest {
         c.removeLogo()
         withTimeout(10_000) { c.state.first { it.busy == null && it.snapshot?.meta?.logoAssetId == null } }
         assertNull(r1.snapshot(id).meta.logoAssetId)
+        scope1.coroutineContext[Job]!!.cancelAndJoin()
         db1.close()
     }
 
