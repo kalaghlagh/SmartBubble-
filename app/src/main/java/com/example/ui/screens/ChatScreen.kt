@@ -9,6 +9,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -428,6 +430,14 @@ fun ChatScreen(
 
             // Messages List
             val docsById = remember(allDocs) { allDocs.associateBy { it.id } }
+            // Smart Templates: template picker for one generated document (the default is unchanged).
+            var pickTemplateFor by remember { mutableStateOf<DocumentEntity?>(null) }
+            pickTemplateFor?.let { doc ->
+                TemplatePickerDialog(viewModel, doc.documentKind, doc.fileType, doc.templateId, onDismiss = { pickTemplateFor = null }) { id ->
+                    pickTemplateFor = null
+                    viewModel.changeDocumentTemplate(doc, id)
+                }
+            }
             LazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -465,6 +475,29 @@ fun ChatScreen(
                             onClick = { viewModel.thesis.openReview(msg.attachedDocId) },
                             modifier = Modifier.testTag("thesis_review_${msg.attachedDocId}")
                         ) { Text(stringResource(R.string.thesis_review_changes)) }
+                    }
+                    // Smart Templates: the kind of document and template, Change template and Regenerate.
+                    if (attachedDoc != null && attachedDoc.documentKind != null && attachedDoc.contentJson != null) {
+                        SmartDocumentActions(
+                            doc = attachedDoc,
+                            templateName = viewModel.templateDisplayName(attachedDoc.templateId),
+                            kindName = viewModel.templateKindName(attachedDoc.documentKind),
+                            onChangeTemplate = { pickTemplateFor = attachedDoc },
+                            onRegenerate = if (attachedDoc.sourceRequest != null) ({ viewModel.regenerateDocument(attachedDoc) }) else null
+                        )
+                    }
+                    // Smart Templates: the choices of a clarification question.
+                    val note = msg.orchestratorNote
+                    if (!msg.isUser && note != null && note.startsWith("smart-clarify|") && msg.id == messages.lastOrNull()?.id) {
+                        val parts = note.split('|', limit = 3)
+                        val request = parts.getOrNull(2).orEmpty()
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(start = 42.dp).horizontalScroll(rememberScrollState())) {
+                            parts.getOrNull(1)?.split(',')?.filter { it.isNotBlank() }?.forEach { id ->
+                                OutlinedButton(onClick = { viewModel.resolveClarification(request, id) }, modifier = Modifier.testTag("smart_choice_$id")) {
+                                    Text(viewModel.templateKindName(id))
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -1724,4 +1757,21 @@ private fun Context.findActivity(): Activity? {
         current = current.baseContext
     }
     return null
+}
+
+/** Template line of a Smart Templates document with "Change template" and "Regenerate". */
+@Composable
+private fun SmartDocumentActions(doc: DocumentEntity, templateName: String, kindName: String, onChangeTemplate: () -> Unit, onRegenerate: (() -> Unit)?) {
+    Column(Modifier.padding(start = 42.dp).testTag("smart_doc_actions_${doc.id}")) {
+        Text("$kindName · " + stringResource(R.string.st_card_template, templateName), style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("smart_doc_template_${doc.id}"))
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = onChangeTemplate, modifier = Modifier.testTag("smart_change_template_${doc.id}")) {
+                Text(stringResource(if (doc.templateId == null) R.string.st_choose_template else R.string.st_change_template))
+            }
+            if (onRegenerate != null) TextButton(onClick = onRegenerate, modifier = Modifier.testTag("smart_regenerate_${doc.id}")) {
+                Text(stringResource(R.string.st_regenerate))
+            }
+        }
+    }
 }

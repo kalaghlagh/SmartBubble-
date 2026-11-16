@@ -34,8 +34,27 @@ data class ResolvedThesisTemplate(
  */
 object ThesisTemplateResolver {
 
-    suspend fun resolve(repository: TemplateRepository, templateId: String?): ResolvedThesisTemplate {
+    /** Smart Templates subcategory of a thesis level. */
+    fun subcategoryOf(level: String?): String? = when (level) {
+        "LICENCE" -> "academic.licence"
+        "MASTER" -> "academic.master"
+        "DOCTORATE" -> "academic.phd"
+        else -> null
+    }
+
+    /**
+     * @param level the thesis level ("LICENCE", "MASTER", "DOCTORATE"): without a template of its
+     *   own, the thesis uses the Smart Templates default of its level, then of "Theses and academic
+     *   documents", before the older default Word/PDF template.
+     */
+    suspend fun resolve(repository: TemplateRepository, templateId: String?, level: String? = null): ResolvedThesisTemplate {
         val notes = ArrayList<String>()
+        val chosen = templateId ?: repository.smartDefault(listOfNotNull(subcategoryOf(level), "academic"))
+        // A built-in Smart Templates style (academic formatting drawn from its profile).
+        com.example.smarttemplates.BuiltInTemplates.byId(chosen)?.takeIf { it.kind == com.example.smarttemplates.OutputKind.DOCUMENT }?.let { b ->
+            return ResolvedThesisTemplate(ThesisTemplate.Profile(b.profile, b.id), null,
+                if (templateId != null) TemplateSource.EXPLICIT else TemplateSource.DEFAULT, notes)
+        }
         fun use(entity: TemplateEntity, source: TemplateSource): ResolvedThesisTemplate? {
             val profile = TemplateProfile.fromJson(entity.profileJson)
             return when (entity.fileType.uppercase()) {
@@ -62,6 +81,10 @@ object ThesisTemplateResolver {
                     null
                 }
             }
+        }
+        // The Smart Templates default of the thesis level or of the academic category (uploaded template).
+        if (templateId == null && chosen != null) {
+            repository.findById(chosen)?.let { e -> use(e, TemplateSource.DEFAULT)?.let { return it } }
         }
         if (templateId != null) {
             val explicit = repository.findById(templateId)
@@ -129,7 +152,7 @@ class ThesisExporter(
     suspend fun export(projectId: String, format: String, fileName: String? = null, part: (ThesisSnapshot) -> ThesisSnapshot = { it }): ThesisExport {
         val snapshot = part(repository.snapshot(projectId))
         val assets = repository.assets(projectId)
-        val resolved = ThesisTemplateResolver.resolve(templates, snapshot.meta.templateId)
+        val resolved = ThesisTemplateResolver.resolve(templates, snapshot.meta.templateId, snapshot.meta.level.name)
         outputDir.mkdirs()
         val ext = if (format == "PDF") "pdf" else "docx"
         val out = if (fileName != null) File(outputDir, fileName) else DocumentFileNames.createUniqueFile(outputDir, snapshot.meta.title.ifBlank { "Thesis" }, ext)

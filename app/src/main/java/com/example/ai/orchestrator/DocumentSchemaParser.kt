@@ -46,7 +46,8 @@ class DocumentSchemaException(message: String) : Exception(message)
  */
 object DocumentSchemaParser {
 
-    data class Result(val document: ParsedDocument, val warnings: List<String>)
+    /** [rawJson]: the validated JSON object, kept so the document can be rendered again (other template, PDF) without a new AI request. */
+    data class Result(val document: ParsedDocument, val warnings: List<String>, val rawJson: String = "")
 
     private const val MAX_SHEET_NAME = 31
     private val INVALID_SHEET_CHARS = Regex("""[\[\]:*?/\\]""")
@@ -55,11 +56,15 @@ object DocumentSchemaParser {
     fun parse(rawText: String, format: DocumentFormat, documentDate: String = ""): Result {
         val root = Json.extractObject(rawText)
             ?: throw DocumentSchemaException("The response is not a JSON object.")
-        return when (format) {
-            DocumentFormat.DOCX, DocumentFormat.PDF -> parseWord(root, documentDate)
+        val result = when (format) {
+            DocumentFormat.DOCX, DocumentFormat.PDF -> parseWord(root, (root["document_date"] as? String)?.takeIf { it.isNotBlank() } ?: documentDate)
             DocumentFormat.PPTX -> parsePresentation(root)
             DocumentFormat.XLSX -> parseSpreadsheet(root)
         }
+        // The date the document was written is kept with its content (rendering it again later
+        // must not change it).
+        val kept = if (documentDate.isNotEmpty() && root["document_date"] == null) root + ("document_date" to documentDate) else root
+        return result.copy(rawJson = Json.write(kept))
     }
 
     private fun text(value: Any?): String = when (value) {
@@ -97,12 +102,27 @@ object DocumentSchemaParser {
             )
         }.filter { it.heading.isNotEmpty() || it.paragraphs.isNotEmpty() || it.bulletPoints.isNotEmpty() || it.table != null }
         if (sections.isEmpty()) throw DocumentSchemaException("\"sections\" must contain at least one section with content.")
+        val letter = Json.obj(root["letter"])?.let { l ->
+            com.example.document.model.LetterParts(
+                sender = strings(l["sender"]),
+                recipient = strings(l["recipient"]),
+                place = text(l["place"]),
+                date = text(l["date"]).ifEmpty { date },
+                subject = text(l["subject"]),
+                salutation = text(l["salutation"]),
+                closing = text(l["closing"]),
+                signatureName = text(l["signature_name"]),
+                signatureTitle = text(l["signature_title"]),
+                showTitle = l["show_title"] == true
+            )
+        }
         val model = WordDocumentModel(
             title = title,
             subtitle = text(root["subtitle"]),
             organization = "",
             date = date,
-            sections = sections
+            sections = sections,
+            letter = letter
         )
         return Result(ParsedDocument.Word(model, plainTextOf(model)), warnings.distinct())
     }

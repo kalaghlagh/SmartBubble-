@@ -10,10 +10,13 @@ interface TemplateRepository {
     suspend fun findById(id: String): TemplateEntity?
     suspend fun defaultFor(templateType: String): TemplateEntity?
     suspend fun all(): List<TemplateEntity>
+
+    /** Smart Templates default of the first of [scopes] (subcategory or category ids) that has one. */
+    suspend fun smartDefault(scopes: List<String>): String? = null
 }
 
 /** [TemplateRepository] over the app's Room template table. */
-class RoomTemplateRepository(private val dao: TemplateDao) : TemplateRepository {
+class RoomTemplateRepository(private val dao: TemplateDao, private val smart: com.example.data.db.SmartTemplateDao? = null) : TemplateRepository {
     override suspend fun findById(id: String): TemplateEntity? = dao.getTemplateById(id)
 
     override suspend fun defaultFor(templateType: String): TemplateEntity? = when (templateType) {
@@ -24,6 +27,11 @@ class RoomTemplateRepository(private val dao: TemplateDao) : TemplateRepository 
     }
 
     override suspend fun all(): List<TemplateEntity> = dao.getAllTemplatesOnce()
+
+    override suspend fun smartDefault(scopes: List<String>): String? {
+        val defaults = smart?.defaults()?.associate { it.scopeId to it.templateId } ?: return null
+        return scopes.firstNotNullOfOrNull { defaults[it] }
+    }
 }
 
 /** Why a PDF template cannot be used for a format. */

@@ -217,6 +217,12 @@ internal fun ThesisTemplatePicker(host: ThesisHost, selected: String?, onSelect:
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip(selected = selected == null, onClick = { onSelect(null) }, label = { Text(stringResource(R.string.thesis_template_default)) },
             modifier = Modifier.testTag("thesis_template_default"))
+        // Built-in academic templates of the Smart Templates library.
+        com.example.smarttemplates.BuiltInTemplates.forCategory("academic").forEach { b ->
+            FilterChip(selected = selected == b.id, onClick = { onSelect(b.id) },
+                label = { Text(stringResource(com.example.ui.SmartTemplateStrings.builtInName(b.id)), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                modifier = Modifier.testTag("thesis_template_${b.id}"))
+        }
         usable.forEach { t: TemplateEntity ->
             FilterChip(selected = selected == t.id, onClick = { onSelect(t.id) },
                 label = { Text("${t.name} (${t.fileType})", maxLines = 1, overflow = TextOverflow.Ellipsis) }, modifier = Modifier.testTag("thesis_template_${t.id}"))
