@@ -65,6 +65,8 @@ class SmartTemplatesFlowTest {
 
     @Before
     fun setUp() {
+        // Plain HTTP only to this local server (the app itself accepts https only).
+        com.example.ai.providers.AiHttp.allowLoopbackHttpForTests = true
         db = Room.inMemoryDatabaseBuilder(context, SmartBubbleDatabase::class.java).allowMainThreadQueries().build()
         service = SmartTemplateService(db)
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
@@ -88,6 +90,7 @@ class SmartTemplatesFlowTest {
 
     @After
     fun tearDown() {
+        com.example.ai.providers.AiHttp.allowLoopbackHttpForTests = false
         server.stop(0)
         db.close()
     }
