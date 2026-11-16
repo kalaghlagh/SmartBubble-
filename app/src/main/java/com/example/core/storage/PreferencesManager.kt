@@ -38,6 +38,31 @@ class PreferencesManager(private val context: Context) {
         val KEY_ACTIVE_CONVERSATION_ID = stringPreferencesKey("active_conversation_id")
         // One-time sample data seeding marker (never reset, so deleted samples are never recreated)
         val KEY_SAMPLE_DATA_SEEDED = booleanPreferencesKey("sample_data_seeded_v1")
+        // Smart Templates
+        val KEY_AUTO_FORMAT = booleanPreferencesKey("smart_templates_auto_format")
+        val KEY_DOCUMENT_LANGUAGE = stringPreferencesKey("smart_templates_document_language") // "auto", "ar", "fr", "en"
+        val KEY_DOCUMENT_FORMAT = stringPreferencesKey("smart_templates_document_format") // "DOCX", "PDF"
+    }
+
+    /** Smart Templates: apply the default template of the detected kind of document (default on). */
+    val autoFormat: Flow<Boolean> = context.dataStore.data.map { it[KEY_AUTO_FORMAT] ?: true }
+
+    suspend fun setAutoFormat(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_AUTO_FORMAT] = enabled }
+    }
+
+    /** Language of generated documents: "auto" (the language of the request), "ar", "fr" or "en". */
+    val documentLanguage: Flow<String> = context.dataStore.data.map { it[KEY_DOCUMENT_LANGUAGE] ?: "auto" }
+
+    suspend fun setDocumentLanguage(language: String) {
+        context.dataStore.edit { it[KEY_DOCUMENT_LANGUAGE] = language }
+    }
+
+    /** Output of letters, reports, requests and theses when no format is asked for: "DOCX" or "PDF". */
+    val documentFormat: Flow<String> = context.dataStore.data.map { it[KEY_DOCUMENT_FORMAT] ?: "DOCX" }
+
+    suspend fun setDocumentFormat(format: String) {
+        context.dataStore.edit { it[KEY_DOCUMENT_FORMAT] = format }
     }
 
     val userName: Flow<String> = context.dataStore.data.map { prefs ->

@@ -220,3 +220,38 @@ interface ConversationDao {
     @Query("DELETE FROM conversations")
     suspend fun deleteAllConversations()
 }
+
+/** Smart Templates: default template per subcategory/category, and favorites. */
+@Dao
+interface SmartTemplateDao {
+    @Query("SELECT * FROM template_defaults")
+    fun observeDefaults(): Flow<List<com.example.data.model.TemplateDefaultEntity>>
+
+    @Query("SELECT * FROM template_defaults")
+    suspend fun defaults(): List<com.example.data.model.TemplateDefaultEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun setDefault(entry: com.example.data.model.TemplateDefaultEntity)
+
+    @Query("DELETE FROM template_defaults WHERE scopeId = :scopeId")
+    suspend fun clearDefault(scopeId: String)
+
+    /** Defaults that pointed at a template that was deleted. */
+    @Query("DELETE FROM template_defaults WHERE templateId = :templateId")
+    suspend fun clearDefaultsOf(templateId: String)
+
+    @Query("SELECT * FROM template_favorites")
+    fun observeFavorites(): Flow<List<com.example.data.model.TemplateFavoriteEntity>>
+
+    @Query("SELECT * FROM template_favorites")
+    suspend fun favorites(): List<com.example.data.model.TemplateFavoriteEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun addFavorite(entry: com.example.data.model.TemplateFavoriteEntity)
+
+    @Query("DELETE FROM template_favorites WHERE templateId = :templateId")
+    suspend fun removeFavorite(templateId: String)
+
+    @Query("UPDATE templates SET categoryId = :categoryId, subcategoryId = :subcategoryId WHERE id = :templateId")
+    suspend fun classify(templateId: String, categoryId: String?, subcategoryId: String?)
+}

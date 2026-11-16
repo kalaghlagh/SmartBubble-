@@ -10,7 +10,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *  - v1 (63883c4): documents, templates (without fileSize), knowledge_sources, chat_messages
  *  - v2 (150fc6a): templates.fileSize added, ai_providers added, KnowledgeSourceEntity removed
  *  - v3 (5651cb0): conversations added
- *  - v4: Thesis Builder tables added (current schema)
+ *  - v4: Thesis Builder tables added
+ *  - v5: Thesis Builder section/project columns
+ *  - v6: Smart Templates (template classification, defaults, favorites, document content) (current schema)
  *
  * Rules for future schema changes:
  *  1. Bump the @Database version.
@@ -136,6 +138,24 @@ object SmartBubbleMigrations {
         }
     }
 
+    /**
+     * v5 -> v6 (Smart Templates): category and subcategory of uploaded templates, default
+     * template per subcategory/category, favorites, and what a generated document was made from
+     * (its kind, structured content, request and language). Only additions; nothing is removed.
+     */
+    val MIGRATION_5_6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `templates` ADD COLUMN `categoryId` TEXT")
+            db.execSQL("ALTER TABLE `templates` ADD COLUMN `subcategoryId` TEXT")
+            db.execSQL("ALTER TABLE `documents` ADD COLUMN `documentKind` TEXT")
+            db.execSQL("ALTER TABLE `documents` ADD COLUMN `contentJson` TEXT")
+            db.execSQL("ALTER TABLE `documents` ADD COLUMN `sourceRequest` TEXT")
+            db.execSQL("ALTER TABLE `documents` ADD COLUMN `documentLanguage` TEXT")
+            db.execSQL("CREATE TABLE IF NOT EXISTS `template_defaults` (`scopeId` TEXT NOT NULL, `templateId` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`scopeId`))")
+            db.execSQL("CREATE TABLE IF NOT EXISTS `template_favorites` (`templateId` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`templateId`))")
+        }
+    }
+
     /** Every migration, in order. Always pass this to the database builder. */
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
 }
