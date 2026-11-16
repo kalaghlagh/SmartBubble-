@@ -416,6 +416,8 @@ private fun ThesisCreateScreen(host: ThesisHost) {
     var coSupervisor by remember { mutableStateOf(initial?.coSupervisor.orEmpty()) }
     var academicYear by remember { mutableStateOf(initial?.academicYear.orEmpty()) }
     var submissionDate by remember { mutableStateOf(initial?.submissionDate.orEmpty()) }
+    var templateId by remember { mutableStateOf(initial?.templateId) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     var language by remember {
         mutableStateOf(initial?.language?.takeIf { l -> languages.any { it.first == l } }
             ?: host.defaultContentLanguage.takeIf { l -> languages.any { it.first == l } } ?: "en")
@@ -427,7 +429,7 @@ private fun ThesisCreateScreen(host: ThesisHost) {
         title = title.trim(), level = level, language = language, studentName = student.trim(), university = university.trim(),
         faculty = faculty.trim(), department = department.trim(), specialization = specialization.trim(), supervisor = supervisor.trim(),
         coSupervisor = coSupervisor.trim(), academicYear = academicYear.trim(), subtitle = subtitle.trim(), studentId = studentId.trim(),
-        submissionDate = submissionDate
+        submissionDate = submissionDate, templateId = templateId
     )
     val anything = listOf(title, subtitle, specialization, university, faculty, department, student, studentId, supervisor, coSupervisor, academicYear, submissionDate).any { it.isNotBlank() }
     Column(Modifier.fillMaxSize()) {
@@ -465,11 +467,20 @@ private fun ThesisCreateScreen(host: ThesisHost) {
             DateField(R.string.thesis_field_submission_date, submissionDate, "thesis_field_submission_date") { submissionDate = it }
             FormHeader(R.string.thesis_form_language)
             LanguagePicker(language) { language = it }
+            FormHeader(R.string.thesis_form_logo_template)
+            ThesisLogoPicker(state.pendingLogo?.path, busy,
+                onPick = { uri, mime -> controller.stagePendingLogo({ context.contentResolver.openInputStream(uri) }, mime) },
+                onRemove = { controller.clearPendingLogo() })
+            ThesisTemplatePicker(host, templateId) { templateId = it }
             Text(stringResource(R.string.thesis_required_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         HorizontalDivider()
         Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilledTonalButton(onClick = { controller.back() }, enabled = !busy, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 6.dp),
+            FilledTonalButton(onClick = {
+                // A logo picked on a form that is neither saved nor created is not kept.
+                if (controller.state.value.formDraft == null) controller.clearPendingLogo()
+                controller.back()
+            }, enabled = !busy, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 6.dp),
                 modifier = Modifier.weight(1f).height(52.dp).testTag("thesis_cancel_meta")) {
                 Text(stringResource(R.string.action_cancel), maxLines = 1)
             }
@@ -611,7 +622,8 @@ private fun ThesisProjectWorkspace(host: ThesisHost) {
         val hidden = top.filter { !it.enabled }
         LazyColumn(Modifier.weight(1f).testTag("thesis_structure"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item { ProgressRow(ThesisStructure.progress(snapshot), Modifier.padding(bottom = 4.dp)) }
-            state.lastExport?.let { e -> item { ExportResultCard(host, e) } }
+            item { ExportSection(controller, state.busy == null) }
+            state.lastExport?.let { e -> item { ExportResultCard(host, e, onDismiss = { controller.dismissExport() }) } }
             if (proposals.isNotEmpty()) item {
                 Card(Modifier.fillMaxWidth().clickable { controller.show(ThesisScreen.CHANGES) }.testTag("thesis_pending_banner"),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
@@ -1339,21 +1351,26 @@ private fun ThesisPreview(host: ThesisHost) {
     val sectionPreview = state.previewSectionId?.let { id -> state.snapshot?.let { s -> s.section(id)?.let { ThesisStructure.displayTitle(it, ThesisStructure.numbering(s), s.meta.language) } } }
     val pages = remember(file) { file?.let { pageCount(it) } ?: 0 }.takeIf { it > 0 } ?: if (file != null) state.previewPages else 0
     var page by remember(file) { mutableIntStateOf(0) }
+    // 1 = the whole page width fits the screen; more zooms in (the page then scrolls sideways).
     var zoom by remember { mutableStateOf(1f) }
     val idle = state.busy == null
     val zoomOut = stringResource(R.string.thesis_zoom_out)
     val zoomIn = stringResource(R.string.thesis_zoom_in)
-    Column(Modifier.fillMaxSize()) {
+    // A document viewer only: exporting is done from the workspace, so nothing covers the page.
+    Column(Modifier.fillMaxSize().testTag("thesis_preview_screen")) {
         BlueTopBar(sectionPreview ?: stringResource(R.string.thesis_preview_thesis), onBack = { controller.back() }) {
-            IconButton(onClick = { zoom = (zoom - 0.25f).coerceAtLeast(0.75f) }, modifier = Modifier.semantics { contentDescription = zoomOut }.testTag("thesis_zoom_out")) {
+            IconButton(onClick = { zoom = (zoom - 0.5f).coerceAtLeast(1f) }, enabled = zoom > 1f, modifier = Modifier.semantics { contentDescription = zoomOut }.testTag("thesis_zoom_out")) {
                 Text("−", style = MaterialTheme.typography.titleLarge)
             }
-            IconButton(onClick = { zoom = (zoom + 0.25f).coerceAtMost(2.5f) }, modifier = Modifier.semantics { contentDescription = zoomIn }.testTag("thesis_zoom_in")) {
+            IconButton(onClick = { zoom = (zoom + 0.5f).coerceAtMost(3f) }, enabled = zoom < 3f, modifier = Modifier.semantics { contentDescription = zoomIn }.testTag("thesis_zoom_in")) {
                 Text("+", style = MaterialTheme.typography.titleLarge)
             }
         }
         state.busy?.let { BusyBar(controller, it) }
-        Box(Modifier.weight(1f).fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            Modifier.weight(1f).fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)).testTag("thesis_preview_viewport"),
+            contentAlignment = Alignment.Center
+        ) {
             when {
                 file == null -> Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
                     Text(stringResource(R.string.thesis_preview_hint), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium)
@@ -1361,39 +1378,72 @@ private fun ThesisPreview(host: ThesisHost) {
                     Button(onClick = { controller.buildPreview() }, enabled = idle, modifier = Modifier.testTag("thesis_preview_build")) { Text(stringResource(R.string.thesis_preview_generate)) }
                 }
                 pages == 0 -> Text(stringResource(R.string.thesis_preview_unavailable), textAlign = TextAlign.Center, modifier = Modifier.padding(24.dp).testTag("thesis_preview_unavailable"))
-                else -> Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(horizontal = 56.dp, vertical = 16.dp),
-                    contentAlignment = Alignment.TopCenter) {
-                    Surface(shadowElevation = 4.dp, color = Color.White) { PdfPage(file, page.coerceIn(0, pages - 1), zoom) }
+                else -> {
+                    // The page is sized from the space available: at zoom 1 the whole A4 page is
+                    // as wide as the screen (minus a small margin), proportions kept, never cropped.
+                    val pageWidth = (maxWidth - 24.dp) * zoom
+                    val hScroll = rememberScrollState()
+                    Box(
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).then(if (zoom > 1f) Modifier.horizontalScroll(hScroll) else Modifier)
+                            .padding(12.dp),
+                        contentAlignment = Alignment.TopCenter
+                    ) {
+                        Surface(shadowElevation = 4.dp, color = Color.White) { PdfPage(file, page.coerceIn(0, pages - 1), pageWidth) }
+                    }
                 }
             }
-            if (file != null && pages > 0) {
-                PageArrow(Icons.AutoMirrored.Filled.KeyboardArrowLeft, R.string.action_previous_page, "thesis_page_prev", page > 0, Modifier.align(Alignment.CenterStart)) { page-- }
-                PageArrow(Icons.AutoMirrored.Filled.KeyboardArrowRight, R.string.action_next_page, "thesis_page_next", page < pages - 1, Modifier.align(Alignment.CenterEnd)) { page++ }
-            }
         }
-        Text(
-            if (pages > 0) stringResource(R.string.thesis_page_slash, page + 1, pages) else "",
-            style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("thesis_page_indicator")
-        )
-        state.lastExport?.let { Box(Modifier.padding(horizontal = 16.dp)) { ExportResultCard(host, it) } }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { controller.show(ThesisScreen.PROJECT) }, modifier = Modifier.testTag("thesis_preview_back_workspace")) {
+        // Page navigation under the page (it never covers the text).
+        if (file != null && pages > 0) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            PageArrow(Icons.AutoMirrored.Filled.KeyboardArrowLeft, R.string.action_previous_page, "thesis_page_prev", page > 0, Modifier) { page-- }
+            Text(
+                stringResource(R.string.thesis_page_slash, page + 1, pages),
+                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f).testTag("thesis_page_indicator")
+            )
+            PageArrow(Icons.AutoMirrored.Filled.KeyboardArrowRight, R.string.action_next_page, "thesis_page_next", page < pages - 1, Modifier) { page++ }
+        }
+        HorizontalDivider()
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = { controller.show(ThesisScreen.PROJECT) }, shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("thesis_preview_back_workspace")) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp))
-                Text(stringResource(R.string.thesis_back_to_workspace))
+                Text(stringResource(R.string.thesis_back_to_workspace), maxLines = 2, textAlign = TextAlign.Center)
             }
-            Spacer(Modifier.weight(1f))
-            if (sectionPreview != null) TextButton(onClick = { controller.buildPreview() }, enabled = idle, modifier = Modifier.testTag("thesis_preview_whole")) { Text(stringResource(R.string.thesis_preview_whole)) }
+            // Full thesis: shown always; when the whole thesis is already shown it has nothing to do.
+            Button(onClick = { controller.buildPreview() }, enabled = idle && sectionPreview != null, shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("thesis_preview_whole")) {
+                Text(stringResource(R.string.thesis_preview_whole), maxLines = 2, textAlign = TextAlign.Center)
+            }
         }
-        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = { controller.export("DOCX") }, enabled = idle, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f).height(52.dp).testTag("thesis_export_docx")) {
-                Icon(Icons.Outlined.Description, contentDescription = null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.thesis_export_word), maxLines = 1)
+    }
+}
+
+/** Word and PDF export of the whole thesis, in the workspace (not on the preview). */
+@Composable
+private fun ExportSection(controller: ThesisController, idle: Boolean) {
+    Card(Modifier.fillMaxWidth().testTag("thesis_export_section"), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.thesis_export_section), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { controller.show(ThesisScreen.PREVIEW) }, enabled = idle, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 6.dp),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("thesis_open_preview")) {
+                    Icon(Icons.Outlined.Visibility, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp))
+                    Text(stringResource(R.string.thesis_preview_page), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Button(onClick = { controller.export("DOCX") }, enabled = idle, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 6.dp),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("thesis_export_docx")) {
+                    Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp))
+                    Text("Word", maxLines = 1)
+                }
+                Button(onClick = { controller.export("PDF") }, enabled = idle, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 6.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935), contentColor = Color.White),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("thesis_export_pdf")) {
+                    Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp))
+                    Text("PDF", maxLines = 1)
+                }
             }
-            Button(onClick = { controller.export("PDF") }, enabled = idle, shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935), contentColor = Color.White),
-                modifier = Modifier.weight(1f).height(52.dp).testTag("thesis_export_pdf")) {
-                Icon(Icons.Outlined.PictureAsPdf, contentDescription = null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.thesis_export_pdf_short), maxLines = 1)
-            }
+            Text(stringResource(R.string.thesis_export_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

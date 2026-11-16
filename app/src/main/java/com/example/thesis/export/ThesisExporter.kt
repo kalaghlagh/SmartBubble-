@@ -5,6 +5,7 @@ import com.example.data.model.TemplateEntity
 import com.example.document.DocumentFileValidator
 import com.example.offline.document.TemplateRepository
 import com.example.offline.document.TemplateSource
+import com.example.template.docx.DocxTemplateAnalyzer
 import com.example.template.domain.TemplateProfile
 import com.example.thesis.data.ThesisRepository
 import com.example.thesis.model.ThesisAsset
@@ -40,7 +41,13 @@ object ThesisTemplateResolver {
             return when (entity.fileType.uppercase()) {
                 "DOCX" -> {
                     val file = File(entity.originalFilePath)
-                    if (file.isFile && file.length() > 0) ResolvedThesisTemplate(ThesisTemplate.DocxFile(file, profile, entity.name), entity, source, notes)
+                    if (file.isFile && file.length() > 0) {
+                        // Templates imported before the full Word analysis existed are read again.
+                        val full = if (profile.layoutSource == "DOCX") profile else DocxTemplateAnalyzer.analyze(file, entity.id, entity.name).copy(
+                            useTemplateLayout = profile.useTemplateLayout, keepTemplateContent = profile.keepTemplateContent,
+                            sourceFileName = profile.sourceFileName.ifBlank { file.name })
+                        ResolvedThesisTemplate(ThesisTemplate.DocxFile(file, full, entity.name), entity, source, notes)
+                    }
                     else {
                         notes.add("file_missing:${entity.name}")
                         ResolvedThesisTemplate(ThesisTemplate.Profile(profile.copy(layoutSource = ""), entity.name), entity, source, notes)
@@ -67,16 +74,37 @@ object ThesisTemplateResolver {
         return ResolvedThesisTemplate(ThesisTemplate.Profile(ThesisDocxWriter.builtInProfile(), null), null, TemplateSource.BUILT_IN, notes)
     }
 
-    /** Profile used for PDF output and the page preview. */
+    /**
+     * Profile used for PDF output and the page preview (one profile for both, so the preview is
+     * the PDF). A Word template gives the page setup, margins, header, footer, page borders,
+     * header image and text styles read from its file; a missing value falls back to the
+     * built-in academic formatting.
+     */
     fun pdfProfile(resolved: ResolvedThesisTemplate): TemplateProfile {
-        val p = resolved.template.profile
-        if (resolved.template is ThesisTemplate.Profile) return p
-        // A Word template's profile: margins, fonts and colors extracted at import; academic defaults otherwise.
-        val base = ThesisDocxWriter.builtInProfile()
-        return base.copy(
-            bodyFont = p.bodyFont, headingFont = p.headingFont, marginTopPt = p.marginTopPt, marginBottomPt = p.marginBottomPt,
-            marginLeftPt = p.marginLeftPt, marginRightPt = p.marginRightPt, primaryColorHex = p.primaryColorHex,
-            headingColorHex = p.primaryColorHex, tableHeaderBgHex = p.tableHeaderBgHex, tableBorderHex = p.tableBorderHex
+        val t = resolved.template
+        val p = t.profile
+        if (t !is ThesisTemplate.DocxFile) return p
+        if (p.layoutSource != "DOCX") {
+            val base = ThesisDocxWriter.builtInProfile()
+            return base.copy(
+                bodyFont = p.bodyFont, headingFont = p.headingFont, marginTopPt = p.marginTopPt, marginBottomPt = p.marginBottomPt,
+                marginLeftPt = p.marginLeftPt, marginRightPt = p.marginRightPt, primaryColorHex = p.primaryColorHex,
+                headingColorHex = p.primaryColorHex, tableHeaderBgHex = p.tableHeaderBgHex, tableBorderHex = p.tableBorderHex
+            )
+        }
+        // The header image is drawn from a copy next to the template file (made once).
+        val image = p.headerImage.split('|')
+        val headerImage = if (image.size == 4 && image[0].isNotEmpty()) {
+            val ext = image[0].substringAfterLast('.', "png").lowercase().take(5)
+            val copy = File(t.file.parentFile, t.file.nameWithoutExtension + "_header." + ext)
+            if (!copy.isFile) DocxTemplateAnalyzer.partBytes(t.file, image[0])?.let { bytes -> runCatching { copy.writeBytes(bytes) } }
+            if (copy.isFile) listOf(copy.absolutePath, image[1], image[2], image[3]).joinToString("|") else ""
+        } else ""
+        return p.copy(
+            headerImage = headerImage,
+            lineSpacing = p.lineSpacing.takeIf { it > 0f } ?: 1.15f,
+            // Like the Word export, which adds a numbered footer to a template without a footer.
+            pageNumberPosition = p.pageNumberPosition.ifEmpty { if (p.footerText.isBlank()) "footer-center" else "" }
         )
     }
 }

@@ -267,4 +267,182 @@ class AppSmokeDeviceTest {
         assertNotNull(thesis.state.value.lastExport)
         assertTrue("crash report written", CrashLog.read(context) == null)
     }
+
+    // ------------------------------------------------------------------ template, logo, preview
+
+    private fun png(w: Int, h: Int, color: Int, file: File): File {
+        val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { eraseColor(color) }
+        FileOutputStream(file).use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        b.recycle()
+        return file
+    }
+
+    /**
+     * A university template as Word writes it: A4, a header with a blue logo image and a line of
+     * text, a footer with a PAGE field, a red page border measured from the page edge.
+     */
+    private fun universityTemplate(out: File, headerLogo: File): File {
+        val ns = """xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture""""
+        val parts = linkedMapOf(
+            "[Content_Types].xml" to """<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/>""" +
+                """<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>""" +
+                """<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>""",
+            "_rels/.rels" to """<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>""",
+            "word/document.xml" to """<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document $ns><w:body><w:p><w:r><w:t>Template body</w:t></w:r></w:p>""" +
+                """<w:sectPr><w:headerReference w:type="default" r:id="rId10"/><w:footerReference w:type="default" r:id="rId11"/><w:pgSz w:w="11906" w:h="16838"/>""" +
+                """<w:pgMar w:top="1701" w:right="1134" w:bottom="1418" w:left="1418" w:header="567" w:footer="567" w:gutter="0"/>""" +
+                """<w:pgBorders w:offsetFrom="page"><w:top w:val="single" w:sz="24" w:space="20" w:color="FF0000"/><w:left w:val="single" w:sz="24" w:space="20" w:color="FF0000"/><w:bottom w:val="single" w:sz="24" w:space="20" w:color="FF0000"/><w:right w:val="single" w:sz="24" w:space="20" w:color="FF0000"/></w:pgBorders></w:sectPr></w:body></w:document>""",
+            "word/_rels/document.xml.rels" to """<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>""" +
+                """<Relationship Id="rId10" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rId11" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>""",
+            "word/styles.xml" to """<?xml version="1.0" encoding="UTF-8"?><w:styles $ns><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:jc w:val="both"/><w:spacing w:after="120" w:line="360" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr></w:style></w:styles>""",
+            "word/header1.xml" to """<?xml version="1.0" encoding="UTF-8"?><w:hdr $ns><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing><wp:inline><wp:extent cx="1143000" cy="571500"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rIdLogo"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>""" +
+                """<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>UNIVERSITY HEADER TEST</w:t></w:r></w:p></w:hdr>""",
+            "word/_rels/header1.xml.rels" to """<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdLogo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/univ.png"/></Relationships>""",
+            "word/footer1.xml" to """<?xml version="1.0" encoding="UTF-8"?><w:ftr $ns><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:ftr>"""
+        )
+        java.util.zip.ZipOutputStream(FileOutputStream(out)).use { z ->
+            for ((name, xml) in parts) { z.putNextEntry(java.util.zip.ZipEntry(name)); z.write(xml.toByteArray(Charsets.UTF_8)); z.closeEntry() }
+            z.putNextEntry(java.util.zip.ZipEntry("word/media/univ.png")); z.write(headerLogo.readBytes()); z.closeEntry()
+        }
+        return out
+    }
+
+    /** Pixels of [page] (rendered at 1 px per point) close to [color], inside [area] (fractions of the page). */
+    private fun countColor(pdf: File, page: Int, color: Int, area: android.graphics.RectF = android.graphics.RectF(0f, 0f, 1f, 1f)): Int =
+        PdfRenderer(ParcelFileDescriptor.open(pdf, ParcelFileDescriptor.MODE_READ_ONLY)).use { r ->
+            r.openPage(page).use { p ->
+                val bmp = Bitmap.createBitmap(p.width, p.height, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) }
+                p.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                var n = 0
+                for (y in (area.top * bmp.height).toInt() until (area.bottom * bmp.height).toInt()) for (x in (area.left * bmp.width).toInt() until (area.right * bmp.width).toInt()) {
+                    val c = bmp.getPixel(x, y)
+                    if (Math.abs(Color.red(c) - Color.red(color)) < 50 && Math.abs(Color.green(c) - Color.green(color)) < 50 && Math.abs(Color.blue(c) - Color.blue(color)) < 50) n++
+                }
+                bmp.recycle()
+                n
+            }
+        }
+
+    @Test
+    fun thesis_universityTemplateAndLogo_inPreviewPdfAndDocx_previewIsAViewerOnly() {
+        language("en", "Thesis")
+        val dir = File(context.cacheDir, "device-template-test").apply { deleteRecursively(); mkdirs() }
+        val blue = Color.rgb(0, 0, 200)
+        val green = Color.rgb(0, 160, 0)
+        val red = Color.rgb(255, 0, 0)
+        val template = universityTemplate(File(dir, "university-template.docx"), png(120, 60, blue, File(dir, "univ.png")))
+        val logo = png(200, 100, green, File(dir, "logo.png"))
+
+        // 1. Imported through the real import path: the formatting is read from the Word file.
+        val before = runBlocking { vm.allTemplates.first() }.map { it.id }.toSet()
+        vm.importTemplateFromUri(FileProvider.getUriForFile(context, context.packageName + ".fileprovider", template), "University template", template.name)
+        await("template imported", 30_000) { runBlocking { vm.allTemplates.first() }.any { it.id !in before && it.fileType == "DOCX" } }
+        val entity = runBlocking { vm.allTemplates.first() }.first { it.id !in before && it.fileType == "DOCX" }
+        val profile = com.example.template.domain.TemplateProfile.fromJson(entity.profileJson)
+        assertEquals("DOCX", profile.layoutSource)
+        assertEquals("UNIVERSITY HEADER TEST", profile.headerText)
+        assertEquals("{PAGE}", profile.footerText)
+        assertTrue(profile.headerImage, profile.headerImage.startsWith("word/media/univ.png|90|45|center"))
+        assertTrue(profile.pageBorders, profile.pageBorders.contains("top:single:3.0:20:#FF0000"))
+        assertEquals("page", profile.pageBorderOffsetFrom)
+        assertEquals(595 to 842, profile.pageWidthPt to profile.pageHeightPt)
+        assertEquals("Times New Roman" to 12, profile.bodyFont to profile.baseFontSizePt)
+        tap("nav_templates")
+        await("template card") { exists("template_format_${entity.id}") }
+        shot("template-docx-formatting")
+
+        // 2. New thesis with the template and a logo picked on the form (staged before the project exists).
+        tap("nav_thesis")
+        val thesis = vm.thesis
+        thesis.stagePendingLogo({ logo.inputStream() }, "image/png")
+        await("logo staged") { thesis.state.value.pendingLogo != null && thesis.state.value.busy == null }
+        thesis.createProject(ThesisMeta("Template and logo test", AcademicLevel.MASTER, "fr", studentName = "Étudiant Test", university = "Université de Test", templateId = entity.id), aiAssist = false)
+        await("project created") { thesis.state.value.snapshot != null && thesis.state.value.busy == null && thesis.state.value.screen == com.example.thesis.ThesisScreen.PROJECT }
+        val logoId = thesis.state.value.snapshot!!.meta.logoAssetId
+        assertNotNull("logo not attached", logoId)
+        val projectId = thesis.state.value.projectId!!
+        val intro = thesis.state.value.snapshot!!.sections.first { it.kind == SectionKind.INTRODUCTION }.id
+        compose.runOnUiThread { thesis.selectSection(intro) }
+        await("editor") { thesis.state.value.draft != null }
+        compose.runOnUiThread { thesis.updateDraft((1..40).joinToString("\n") { "Paragraphe $it du mémoire, avec assez de texte pour remplir plusieurs pages du document." }) }
+        tap("thesis_save_changes")
+        await("saved") { thesis.state.value.busy == null && thesis.state.value.draft?.dirty == false }
+
+        // Closed and reopened: the logo is still the project's logo, its file still there.
+        compose.runOnUiThread { thesis.closeWorkspace(); thesis.openProject(projectId) }
+        await("reopened") { thesis.state.value.snapshot != null && thesis.state.value.busy == null && thesis.state.value.screen == com.example.thesis.ThesisScreen.PROJECT }
+        assertEquals(logoId, thesis.state.value.snapshot!!.meta.logoAssetId)
+        assertTrue(File(thesis.state.value.assets.single { it.id == logoId }.path).isFile)
+
+        // 3. Preview from the workspace: a viewer only (no export buttons or export card), the
+        // whole page width inside the viewport, navigation under the page, page counter right.
+        tap("thesis_open_preview")
+        await("preview built", 90_000) { thesis.state.value.busy == null && thesis.state.value.previewFile != null && exists("thesis_page_0") }
+        for (tag in listOf("thesis_export_docx", "thesis_export_pdf", "thesis_export_result", "thesis_export_section")) assertTrue("$tag on the preview", !exists(tag))
+        val viewport = compose.onNodeWithTag("thesis_preview_viewport").fetchSemanticsNode().boundsInRoot
+        val pageBox = compose.onNodeWithTag("thesis_page_0").fetchSemanticsNode().boundsInRoot
+        assertTrue("page cut off sideways: page $pageBox viewport $viewport", pageBox.left >= viewport.left - 1 && pageBox.right <= viewport.right + 1)
+        assertTrue("page is not A4-shaped: $pageBox", Math.abs(pageBox.height / pageBox.width - 842f / 595f) < 0.03f)
+        for (arrow in listOf("thesis_page_prev", "thesis_page_next")) {
+            val a = compose.onNodeWithTag(arrow).fetchSemanticsNode().boundsInRoot
+            assertTrue("$arrow covers the page area: $a viewport $viewport", a.top >= viewport.bottom - 1)
+        }
+        val pages = thesis.state.value.previewPages.takeIf { it > 0 } ?: PdfRenderer(ParcelFileDescriptor.open(thesis.state.value.previewFile!!, ParcelFileDescriptor.MODE_READ_ONLY)).use { it.pageCount }
+        assertTrue("expected several pages, got $pages", pages >= 3)
+        assertTrue(textShown("Page 1 / $pages"))
+        shot("thesis-preview-viewer-page1")
+        tap("thesis_page_next")
+        await("page 2") { textShown("Page 2 / $pages") && exists("thesis_page_1") }
+        shot("thesis-preview-viewer-page2")
+        // The preview is the PDF: template and logo are drawn in it.
+        val previewPdf = thesis.state.value.previewFile!!
+        assertTrue("logo missing on the preview cover", countColor(previewPdf, 0, green, android.graphics.RectF(0.3f, 0f, 0.7f, 0.4f)) > 500)
+        assertTrue("header image missing in the preview", countColor(previewPdf, 1, blue, android.graphics.RectF(0.3f, 0f, 0.7f, 0.15f)) > 500)
+        tap("thesis_preview_back_workspace")
+        await("workspace") { thesis.state.value.screen == com.example.thesis.ThesisScreen.PROJECT && thesis.state.value.projectId == projectId }
+
+        // Full thesis from a one-section preview.
+        compose.runOnUiThread { thesis.buildSectionPreview(intro) }
+        await("section preview", 60_000) { thesis.state.value.busy == null && thesis.state.value.previewSectionId == intro && exists("thesis_page_0") }
+        tap("thesis_preview_whole")
+        await("whole thesis", 90_000) { thesis.state.value.busy == null && thesis.state.value.previewSectionId == null && thesis.state.value.previewFile != null }
+        tap("thesis_preview_back_workspace")
+        await("workspace 2") { thesis.state.value.screen == com.example.thesis.ThesisScreen.PROJECT }
+
+        // 4. PDF export: logo on the cover, the template's header image and red border on the pages.
+        tap("thesis_export_pdf")
+        await("pdf", 90_000) { thesis.state.value.busy == null && thesis.state.value.lastExport?.format == "PDF" }
+        val pdf = File(thesis.state.value.lastExport!!.document.filePath)
+        assertTrue("logo missing on the PDF cover", countColor(pdf, 0, green, android.graphics.RectF(0.3f, 0f, 0.7f, 0.4f)) > 500)
+        for (page in listOf(0, 2)) {
+            assertTrue("header image missing on PDF page ${page + 1}", countColor(pdf, page, blue, android.graphics.RectF(0.3f, 0f, 0.7f, 0.15f)) > 500)
+            // Border lines 20 pt from each edge, 3 pt wide.
+            assertTrue("left border missing on page ${page + 1}", countColor(pdf, page, red, android.graphics.RectF(0f, 0.1f, 0.06f, 0.9f)) > 300)
+            assertTrue("top border missing on page ${page + 1}", countColor(pdf, page, red, android.graphics.RectF(0.1f, 0f, 0.9f, 0.04f)) > 300)
+        }
+        shot("thesis-workspace-after-pdf")
+        tap("thesis_export_dismiss")
+        await("result dismissed") { thesis.state.value.lastExport == null }
+
+        // 5. Word export: the template package (header with its image, border) and the logo on the cover.
+        tap("thesis_export_docx")
+        await("docx", 90_000) { thesis.state.value.busy == null && thesis.state.value.lastExport?.format == "DOCX" }
+        ZipFile(File(thesis.state.value.lastExport!!.document.filePath)).use { z ->
+            val xml = z.getInputStream(z.getEntry("word/document.xml")).bufferedReader().readText()
+            assertTrue("page border lost", xml.contains("w:pgBorders"))
+            assertTrue("template header lost", z.entries().toList().any { it.name.startsWith("word/header") && z.getInputStream(it).bufferedReader().readText().contains("UNIVERSITY HEADER TEST") })
+            val media = z.entries().toList().filter { it.name.startsWith("word/media/") }.map { z.getInputStream(it).readBytes() }
+            assertTrue("logo missing in the Word file", media.any { it.contentEquals(logo.readBytes()) })
+            assertTrue("template header image missing in the Word file", media.any { it.contentEquals(File(dir, "univ.png").readBytes()) })
+            assertTrue("Paragraphe 40 du mémoire" in xml)
+        }
+
+        // 6. The logo can be removed: none on the cover afterwards (no empty placeholder).
+        compose.runOnUiThread { thesis.removeLogo() }
+        await("logo removed") { thesis.state.value.busy == null && thesis.state.value.snapshot?.meta?.logoAssetId == null }
+        compose.runOnUiThread { thesis.export("PDF") }
+        await("pdf without logo", 90_000) { thesis.state.value.busy == null && thesis.state.value.lastExport?.format == "PDF" && thesis.state.value.lastExport!!.document.filePath != pdf.path }
+        assertEquals(0, countColor(File(thesis.state.value.lastExport!!.document.filePath), 0, green))
+        assertTrue("crash report written", CrashLog.read(context) == null)
+    }
 }

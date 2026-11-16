@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -206,6 +207,54 @@ fun BusyBar(controller: ThesisController, busy: ThesisBusy) {
 
 // ------------------------------------------------------------------ metadata form (create / settings)
 
+/** Template choice of a thesis: the default template, or a Word/PDF template from My Templates. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun ThesisTemplatePicker(host: ThesisHost, selected: String?, onSelect: (String?) -> Unit) {
+    val templates by host.templateList.collectAsState()
+    val usable = templates.filter { it.fileType.equals("DOCX", true) || it.fileType.equals("PDF", true) }
+    Text(stringResource(R.string.thesis_field_template), style = MaterialTheme.typography.labelLarge)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(selected = selected == null, onClick = { onSelect(null) }, label = { Text(stringResource(R.string.thesis_template_default)) },
+            modifier = Modifier.testTag("thesis_template_default"))
+        usable.forEach { t: TemplateEntity ->
+            FilterChip(selected = selected == t.id, onClick = { onSelect(t.id) },
+                label = { Text("${t.name} (${t.fileType})", maxLines = 1, overflow = TextOverflow.Ellipsis) }, modifier = Modifier.testTag("thesis_template_${t.id}"))
+        }
+    }
+    Text(stringResource(R.string.thesis_template_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/**
+ * University logo: a thumbnail of the chosen image with Change and Remove, or an Add button.
+ * [path] is the stored copy of the image (never the picker's temporary URI).
+ */
+@Composable
+internal fun ThesisLogoPicker(path: String?, busy: Boolean, onPick: (Uri, String) -> Unit, onRemove: () -> Unit) {
+    val context = LocalContext.current
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
+        if (uri != null) onPick(uri, context.contentResolver.getType(uri) ?: "image/png")
+    }
+    Text(stringResource(R.string.thesis_field_logo), style = MaterialTheme.typography.labelLarge)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (path != null) {
+            Surface(shape = RoundedCornerShape(8.dp), color = Color.White, shadowElevation = 1.dp) {
+                ThesisImageThumb(path, Modifier.size(72.dp).padding(4.dp).testTag("thesis_logo_thumb"), maxPx = 240)
+            }
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            OutlinedButton(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = !busy,
+                modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_logo_pick")) {
+                Text(stringResource(if (path == null) R.string.thesis_add_logo else R.string.thesis_change_logo))
+            }
+            if (path != null) TextButton(onClick = onRemove, enabled = !busy, modifier = Modifier.testTag("thesis_logo_remove")) {
+                Text(stringResource(R.string.thesis_remove_logo), color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+    Text(stringResource(R.string.thesis_logo_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ThesisMetaForm(
@@ -219,11 +268,9 @@ internal fun ThesisMetaForm(
     header: @Composable () -> Unit = {},
     onSave: (ThesisMeta, Boolean) -> Unit
 ) {
-    val templates by host.templateList.collectAsState()
     var meta by remember(initial) { mutableStateOf(initial ?: ThesisMeta("", language = host.defaultContentLanguage.takeIf { it in listOf("ar", "fr", "en") } ?: "en")) }
     var ai by remember(initial) { mutableStateOf(initialAi) }
     var titleError by remember { mutableStateOf(false) }
-    val usable = templates.filter { it.fileType.equals("DOCX", true) || it.fileType.equals("PDF", true) }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             header()
@@ -253,15 +300,7 @@ internal fun ThesisMetaForm(
                     FilterChip(selected = meta.language == code, onClick = { meta = meta.copy(language = code) }, label = { Text(name) }, modifier = Modifier.testTag("thesis_lang_$code"))
                 }
             }
-            Text(stringResource(R.string.thesis_field_template), style = MaterialTheme.typography.labelLarge)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = meta.templateId == null, onClick = { meta = meta.copy(templateId = null) }, label = { Text(stringResource(R.string.thesis_template_default)) })
-                usable.forEach { t: TemplateEntity ->
-                    FilterChip(selected = meta.templateId == t.id, onClick = { meta = meta.copy(templateId = t.id) },
-                        label = { Text("${t.name} (${t.fileType})", maxLines = 1, overflow = TextOverflow.Ellipsis) }, modifier = Modifier.testTag("thesis_template_${t.id}"))
-                }
-            }
-            Text(stringResource(R.string.thesis_template_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ThesisTemplatePicker(host, meta.templateId) { meta = meta.copy(templateId = it) }
             field(R.string.thesis_field_subtitle, meta.subtitle, "thesis_field_subtitle") { meta = meta.copy(subtitle = it) }
             field(R.string.thesis_field_student, meta.studentName, "thesis_field_student") { meta = meta.copy(studentName = it) }
             field(R.string.thesis_field_student_id, meta.studentId, "thesis_field_student_id") { meta = meta.copy(studentId = it) }
@@ -305,7 +344,7 @@ internal fun ThesisMetaForm(
 
 /** Shown only after the file was written and saved to the Library. */
 @Composable
-internal fun ExportResultCard(host: ThesisHost, e: ThesisExportResult) {
+internal fun ExportResultCard(host: ThesisHost, e: ThesisExportResult, onDismiss: (() -> Unit)? = null) {
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val mime = if (e.format == "PDF") "application/pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -322,7 +361,13 @@ internal fun ExportResultCard(host: ThesisHost, e: ThesisExportResult) {
     }
     Card(Modifier.fillMaxWidth().testTag("thesis_export_result"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))) {
         Column(Modifier.padding(12.dp)) {
-            Text(stringResource(R.string.thesis_export_saved, e.format, e.document.title), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.Top) {
+                Text(stringResource(R.string.thesis_export_saved, e.format, e.document.title), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f))
+                if (onDismiss != null) IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp).testTag("thesis_export_dismiss")) {
+                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close), modifier = Modifier.size(18.dp))
+                }
+            }
             e.notes.distinct().forEach { Text(noteText(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = { host.openExportedDocument(e.document) }, modifier = Modifier.testTag("thesis_export_open")) { Text(stringResource(R.string.thesis_open_file)) }
@@ -757,14 +802,18 @@ internal fun pageCount(file: File): Int = try {
 
 /** One page rendered on demand. */
 @Composable
-internal fun PdfPage(file: File, index: Int, zoom: Float) {
-    val widthPx = (700 * zoom).toInt()
+internal fun PdfPage(file: File, index: Int, width: androidx.compose.ui.unit.Dp) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    // Rendered at the displayed size (capped for memory on small devices).
+    val widthPx = with(density) { width.roundToPx() }.coerceIn(200, 2400)
     val bitmap by produceState<ImageBitmap?>(null, file, index, widthPx) {
         publishOnMain(withContext(Dispatchers.IO) { TemplateThumbnails.renderPage(file, index, widthPx)?.asImageBitmap() })
     }
     val b = bitmap
-    if (b == null) Box(Modifier.width((300 * zoom).dp).height((420 * zoom).dp).background(Color.White), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp)) }
-    else Image(b, contentDescription = stringResource(R.string.thesis_page_n, index + 1), modifier = Modifier.width((340 * zoom).dp).testTag("thesis_page_$index"), contentScale = ContentScale.FillWidth)
+    // A4 proportions while the page is drawn, so the layout does not jump.
+    if (b == null) Box(Modifier.width(width).height(width * 1.414f).background(Color.White), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp)) }
+    else Image(b, contentDescription = stringResource(R.string.thesis_page_n, index + 1),
+        modifier = Modifier.width(width).aspectRatio(b.width.toFloat() / b.height.coerceAtLeast(1)).testTag("thesis_page_$index"), contentScale = ContentScale.Fit)
 }
 
 // ------------------------------------------------------------------ settings
@@ -778,9 +827,7 @@ internal fun ThesisSettingsScreen(host: ThesisHost) {
     val project = projects.firstOrNull { it.id == state.projectId } ?: return
     var deleting by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val logoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
-        if (uri != null) controller.importLogo({ context.contentResolver.openInputStream(uri) }, "logo", context.contentResolver.getType(uri) ?: "image/png")
-    }
+    val logoPath = snapshot.meta.logoAssetId?.let { id -> state.assets.firstOrNull { it.id == id }?.path }
     ThesisMetaForm(
         host = host,
         initial = snapshot.meta,
@@ -789,10 +836,10 @@ internal fun ThesisSettingsScreen(host: ThesisHost) {
         saveLabel = R.string.action_save,
         onCancel = { controller.show(ThesisScreen.PROJECT) },
         header = {
+            ThesisLogoPicker(logoPath, state.busy != null,
+                onPick = { uri, mime -> controller.importLogo({ context.contentResolver.openInputStream(uri) }, "logo", mime) },
+                onRemove = { controller.removeLogo() })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { logoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
-                    Text(stringResource(if (snapshot.meta.logoAssetId == null) R.string.thesis_add_logo else R.string.thesis_change_logo))
-                }
                 OutlinedButton(onClick = { deleting = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("thesis_settings_delete")) {
                     Text(stringResource(R.string.thesis_delete_project))
                 }
@@ -800,8 +847,9 @@ internal fun ThesisSettingsScreen(host: ThesisHost) {
         }
     ) { meta, ai ->
         if (ai != project.aiAssist) controller.setAiAssist(ai)
-        // The logo is changed by its own button; keep the stored one.
-        val updated = meta.copy(logoAssetId = snapshot.meta.logoAssetId)
+        // The logo is changed by its own buttons; keep the stored one (read now, not when the
+        // screen was drawn: a logo picked on this screen is already saved).
+        val updated = meta.copy(logoAssetId = controller.state.value.snapshot?.meta?.logoAssetId)
         if (updated != snapshot.meta) controller.updateMeta(updated)
         controller.show(ThesisScreen.PROJECT)
     }

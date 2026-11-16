@@ -21,6 +21,7 @@ import com.example.thesis.model.SectionKind
 import com.example.ui.AppNavTab
 import com.example.ui.SmartBubbleViewModel
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -194,10 +195,14 @@ class ThesisAppFlowTest {
         tap("thesis_continue_$projectId")
         await("workspace reopened") { exists("thesis_structure") && vm.thesis.state.value.snapshot?.elementsOf(intro)?.size == 2 }
 
-        // Export DOCX from the preview screen: a real file in the Library with the content.
+        // The preview is a viewer only; DOCX is exported from the workspace: a real file in the
+        // Library with the content.
         tap("thesis_workspace_menu")
         tap("thesis_menu_preview")
-        await("preview screen") { exists("thesis_export_docx") && vm.thesis.state.value.busy == null }
+        await("preview screen") { exists("thesis_preview_screen") && vm.thesis.state.value.busy == null }
+        assertFalse("export button on the preview", exists("thesis_export_docx"))
+        tap("thesis_preview_back_workspace")
+        await("workspace") { exists("thesis_export_docx") && vm.thesis.state.value.busy == null }
         tap("thesis_export_docx")
         await("exported", 30_000) { vm.thesis.state.value.lastExport != null }
         val doc = vm.thesis.state.value.lastExport!!.document

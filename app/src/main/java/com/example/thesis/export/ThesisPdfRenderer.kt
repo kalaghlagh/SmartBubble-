@@ -13,6 +13,7 @@ import android.text.Layout
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.StaticLayout
+import android.text.style.LeadingMarginSpan
 import android.text.style.StyleSpan
 import android.text.style.UnderlineSpan
 import android.text.TextPaint
@@ -84,16 +85,25 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
     }
 
     /** Pages of headings, figures and tables found by the measuring pass. */
-    private class Positions(val headings: MutableList<Pair<String, Int>> = ArrayList(), val figures: MutableList<Pair<String, Int>> = ArrayList(), val tables: MutableList<Pair<String, Int>> = ArrayList())
+    private class Positions(val headings: MutableList<Pair<String, Int>> = ArrayList(), val figures: MutableList<Pair<String, Int>> = ArrayList(), val tables: MutableList<Pair<String, Int>> = ArrayList()) {
+        var pageCount = 0
+        var logoDrawn = false
+    }
+
+    /** True when the last [render] drew the cover logo. */
+    var logoDrawn = false
+        private set
 
     /** @return number of pages */
     fun render(snapshot: ThesisSnapshot, assets: List<ThesisAsset>, output: File): Int {
         val numbering = ThesisStructure.numbering(snapshot)
         val measured = Positions()
-        pass(snapshot, assets.associateBy { it.id }, numbering, null, measured, null)
+        measured.pageCount = pass(snapshot, assets.associateBy { it.id }, numbering, null, measured, null)
         val doc = PdfDocument()
         try {
-            val pages = pass(snapshot, assets.associateBy { it.id }, numbering, doc, Positions(), measured)
+            val drawn = Positions()
+            val pages = pass(snapshot, assets.associateBy { it.id }, numbering, doc, drawn, measured)
+            logoDrawn = drawn.logoDrawn
             FileOutputStream(output).use { doc.writeTo(it) }
             return pages
         } finally {
@@ -111,13 +121,20 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
     ): Int {
         val lang = snapshot.meta.language
         val rtl = snapshot.meta.rtl
-        val body = paint(layout.bodySize, layout.bodyFont, false, layout.textColor)
+        val bodyFace = if (rtl && profile.complexScriptFont.isNotBlank()) profile.complexScriptFont else layout.bodyFont
+        val body = paint(layout.bodySize, bodyFace, false, layout.textColor)
         val title = paint(layout.titleSize + 6, layout.headingFont, true, layout.headingColor)
-        val headings = (0..3).map { paint((layout.titleSize - it * 2.5f).coerceAtLeast(layout.bodySize + 1), layout.headingFont, layout.headingBold, layout.headingColor) }
+        val headingSizes = listOf(layout.titleSize, layout.headingSize, profile.heading3SizePt.toFloat().takeIf { it > 0f } ?: (layout.headingSize - 1.5f), layout.headingSize - 2.5f)
+            .mapIndexed { i, v -> if (profile.layoutSource == "DOCX") v.coerceAtLeast(layout.bodySize) else (layout.titleSize - i * 2.5f).coerceAtLeast(layout.bodySize + 1) }
+        val headings = headingSizes.map { paint(it, layout.headingFont, layout.headingBold, layout.headingColor) }
         val caption = paint(layout.bodySize - 1, layout.bodyFont, false, layout.textColor, italic = true)
         val cell = paint(layout.bodySize * 0.92f, layout.bodyFont, false, layout.textColor)
         val cellBold = paint(layout.bodySize * 0.92f, layout.bodyFont, true, layout.textColor)
         val footer = paint(9f, layout.bodyFont, false, layout.textColor)
+        val headerPaint = paint(layout.headerSize.coerceAtLeast(layout.bodySize - 2f), bodyFace, false, layout.textColor)
+        val decor = PageDecor.from(profile, layout)
+        // A header taller than the top margin pushes the text down, as in Word.
+        val bodyTop = maxOf(layout.marginTop, decor.headerBottom(headerPaint) + 6f)
         val fill = Paint().apply { style = Paint.Style.FILL }
         val stroke = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 0.75f; color = color(layout.tableBorder, Color.GRAY) }
         val width = layout.contentWidth.toInt()
@@ -131,11 +148,7 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
 
         fun finish() {
             val c = canvas
-            if (c != null && !coverPage) {
-                val n = pageNo.toString()
-                val w = footer.measureText(n)
-                c.drawText(n, (layout.pageWidth - w) / 2, layout.pageHeight - layout.footerBaseline, footer)
-            }
+            if (c != null) decor.draw(c, pageNo, known?.pageCount ?: 0, coverPage, headerPaint, footer)
             page?.let { doc?.finishPage(it) }
         }
 
@@ -148,16 +161,12 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
                 page = doc.startPage(PdfDocument.PageInfo.Builder(layout.pageWidth, layout.pageHeight, pageNo).create())
                 canvas = page!!.canvas
                 layout.backgroundColor?.let { bg -> fill.color = color(bg, Color.WHITE); canvas!!.drawRect(0f, 0f, layout.pageWidth.toFloat(), layout.pageHeight.toFloat(), fill) }
-                if (layout.headerText.isNotBlank()) {
-                    val w = footer.measureText(layout.headerText)
-                    canvas!!.drawText(layout.headerText, PdfProfileLayout.xFor(layout.headerAlignment, w, layout), layout.headerBaseline, footer)
-                }
             }
-            y = layout.marginTop
+            y = bodyTop
         }
 
         fun block(sl: StaticLayout, x: Float, after: Float) {
-            val fresh = layout.contentBottom - layout.marginTop
+            val fresh = layout.contentBottom - bodyTop
             if (PdfPagination.shouldMoveWholeBlockToNextPage(sl.height.toFloat(), layout.contentBottom - y, fresh)) newPage()
             val count = sl.lineCount
             if (count > 0) {
@@ -199,7 +208,7 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
             val asset = e.data.assetId?.let { assets[it] }
             val w = width * e.data.widthPercent.coerceIn(10, 100) / 100f
             val ratio = if (asset != null && asset.width > 0) asset.height.toFloat() / asset.width else 0.75f
-            val h = (w * ratio).coerceAtMost(layout.contentBottom - layout.marginTop - 40f)
+            val h = (w * ratio).coerceAtMost(layout.contentBottom - bodyTop - 40f)
             val drawW = if (w * ratio > h) h / ratio else w
             if (y + h > layout.contentBottom) newPage()
             val x = when (e.data.align) {
@@ -257,7 +266,25 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
             when (section.kind) {
                 SectionKind.COVER -> {
                     val m = snapshot.meta
-                    y = layout.marginTop + 20f
+                    y = bodyTop + 20f
+                    // The university logo, centered above the institution lines (aspect ratio kept).
+                    m.logoAssetId?.let { assets[it] }?.let { logo ->
+                        val maxW = width * 0.3f
+                        val maxH = 100f
+                        val ratio = if (logo.width > 0 && logo.height > 0) logo.height.toFloat() / logo.width else 1f
+                        var w = maxW
+                        var h = w * ratio
+                        if (h > maxH) { h = maxH; w = h / ratio }
+                        val x = layout.marginLeft + (width - w) / 2
+                        canvas?.let { c ->
+                            File(logo.path).takeIf { it.isFile }?.let { decodeScaled(it, (w * 3).toInt()) }?.let { bmp ->
+                                c.drawBitmap(bmp, null, RectF(x, y, x + w, y + h), bitmapPaint)
+                                bmp.recycle()
+                            }
+                        }
+                        record.logoDrawn = true
+                        y += h + 16f
+                    }
                     listOf(m.university, m.faculty, m.department).filter { it.isNotBlank() }.forEach { text(it, headings[3], "center", 4f) }
                     y += 60f
                     text(ThesisLabels.get(lang, m.level.name), body, "center", 6f)
@@ -300,7 +327,15 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
                         val ta = e.data.textAlign
                         when (e.type) {
                             ElementType.HEADING -> text(t, headings[(level + e.data.headingLevel.coerceAtLeast(1) - 1).coerceIn(0, 3)], ta.ifEmpty { "start" }, 8f)
-                            ElementType.PARAGRAPH -> text(t, body, ta.ifEmpty { layout.bodyAlignment })
+                            ElementType.PARAGRAPH -> {
+                                if (profile.spacingBeforePt > 0 && y > bodyTop) y += profile.spacingBeforePt.coerceAtMost(48)
+                                val indent = profile.firstLineIndentPt.coerceIn(0, 144)
+                                val align = ta.ifEmpty { layout.bodyAlignment }
+                                if (indent > 0 && align != "center") {
+                                    val sp = SpannableStringBuilder(styled(t)).apply { setSpan(LeadingMarginSpan.Standard(indent, 0), 0, length, Spanned.SPAN_INCLUSIVE_INCLUSIVE) }
+                                    block(staticLayout(sp, body, width, align), layout.marginLeft, layout.paragraphSpacing)
+                                } else text(t, body, align)
+                            }
                             ElementType.REFERENCE -> text(t, body, ta.ifEmpty { "start" }, 6f)
                             ElementType.LIST_ITEM -> text((if (e.data.ordered) e.data.marker.ifBlank { "•" } else "•") + "  " + t, body, "start", 3f, layout.listIndent * (1 + e.data.headingLevel.coerceIn(0, 3)))
                             ElementType.IMAGE -> {
