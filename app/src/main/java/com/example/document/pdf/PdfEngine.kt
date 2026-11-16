@@ -28,8 +28,9 @@ class PdfEngine {
             outputFile.parentFile?.mkdirs()
         }
 
-        // A PDF template: follow its measured page layout and styles.
-        if (template.isPdfLayout) {
+        // A PDF template, a built-in Smart Templates style or a Word template whose page setup,
+        // header, footer, borders and styles were read: follow that layout.
+        if (template.isPdfLayout || template.isBuiltInStyle || template.layoutSource == "DOCX") {
             PdfProfileRenderer(template).render(model, outputFile)
             return outputFile
         }

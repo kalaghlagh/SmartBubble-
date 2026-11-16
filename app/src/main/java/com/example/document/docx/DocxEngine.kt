@@ -42,8 +42,9 @@ class DocxEngine {
             outputFile.parentFile?.mkdirs()
         }
 
-        // 0. A PDF template: its measured style is reproduced (the PDF file itself is not used).
-        if (template.isPdfLayout) {
+        // 0. A PDF template (its measured style; the PDF file itself is not used) or a built-in
+        // Smart Templates style: drawn from the profile values.
+        if (template.isPdfLayout || template.isBuiltInStyle) {
             PdfProfileDocxWriter.write(model, outputFile, template)
             return EngineResult(outputFile, templateApplied = false)
         }
