@@ -87,6 +87,8 @@ class OcrDeviceTest {
         val r = recall(expected, text)
         val line = "OCR $case: recall=${"%.2f".format(r)} text=${text.replace('\n', ' ').take(300)}"
         Log.i("OcrDeviceTest", line)
+        // Also in the instrumentation output, so the CI log carries the measured results.
+        InstrumentationRegistry.getInstrumentation().sendStatus(2, android.os.Bundle().apply { putString("ocr_result", line) })
         results.append(line).append('\n')
         File(dir, "results.txt").appendText(line + "\n")
         assertTrue("$case: only ${"%.0f".format(r * 100)}% of the words recognized: $text", r >= minimum)

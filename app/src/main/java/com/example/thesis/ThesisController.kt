@@ -11,6 +11,8 @@ import com.example.thesis.ai.ThesisAi
 import com.example.thesis.ai.ThesisAiFormatException
 import com.example.thesis.core.DuplicateMatch
 import com.example.thesis.core.EditMode
+import com.example.thesis.core.ExtractionInsertMode
+import com.example.thesis.core.ExtractionToThesis
 import com.example.thesis.core.NewElement
 import com.example.thesis.core.SectionDraft
 import com.example.thesis.core.SectionText
@@ -119,7 +121,33 @@ data class ThesisUiState(
     /** AI assistant request and result for the open section. */
     val assist: AiAssist? = null,
     /** Logo chosen on the "New thesis" form, copied into app storage until the project exists. */
-    val pendingLogo: File? = null
+    val pendingLogo: File? = null,
+    /** Content being extracted from images or PDFs for the open section ("Extract from Image/PDF"). */
+    val extraction: ExtractionReview? = null
+)
+
+/** Extractor provided by the app (on-device OCR and PDF reading): sources, language mode, progress. */
+typealias Extractor = suspend (List<com.example.extraction.ExtractionSource>, String, (Int, Int) -> Unit) -> com.example.extraction.ExtractedDocument
+
+/**
+ * An extraction started from a section: where its content goes ([sectionId] and the cursor
+ * position at the start), progress, and the extracted document the user reviews and corrects.
+ */
+data class ExtractionReview(
+    val sectionId: String,
+    val cursor: Int,
+    val sources: List<com.example.extraction.ExtractionSource>,
+    val languageCode: String,
+    val running: Boolean = true,
+    val page: Int = 0,
+    val total: Int = 0,
+    val document: com.example.extraction.ExtractedDocument? = null,
+    /** Pages the user corrected (a new recognition of them asks first). */
+    val editedPages: Set<Int> = emptySet(),
+    /** Page being read again, if any. */
+    val retryingPage: Int? = null,
+    /** "ocr_unavailable", "failed", "no_text" or null. */
+    val error: String? = null
 )
 
 /** Messages for the user (localized by the UI). */
@@ -161,6 +189,11 @@ enum class AssistInsert {
 }
 
 sealed class ThesisMessage {
+    /** Extracted content can only go to the section the extraction was started from. */
+    object ExtractionWrongSection : ThesisMessage()
+    /** Nothing to insert with the chosen option (for example no table). */
+    object ExtractionNothing : ThesisMessage()
+    object ExtractionFailed : ThesisMessage()
     data class Created(val title: String) : ThesisMessage()
     data class Applied(val revision: Int) : ThesisMessage()
     object Rejected : ThesisMessage()
@@ -1001,6 +1034,111 @@ class ThesisController(
     }
 
     fun closeAssistant() = update { it.copy(assist = null, screen = ThesisScreen.SECTION) }
+
+    // ------------------------------------------------------------------ extraction from images / PDFs
+
+    private var extractionJob: Job? = null
+
+    /**
+     * Starts extracting [sources] for the open section; the editor stays usable meanwhile. The
+     * content goes to this section only, at [cursor] or as the user chooses after reviewing it.
+     */
+    fun startExtraction(sources: List<com.example.extraction.ExtractionSource>, languageCode: String, cursor: Int, extract: Extractor) {
+        val d = _state.value.draft ?: return
+        if (sources.isEmpty()) return
+        extractionJob?.cancel()
+        update { it.copy(extraction = ExtractionReview(d.sectionId, cursor, sources, languageCode)) }
+        extractionJob = scope.launch {
+            try {
+                val doc = extract(sources, languageCode) { page, total ->
+                    update { st -> st.copy(extraction = st.extraction?.copy(page = page, total = total)) }
+                }
+                update { st -> st.copy(extraction = st.extraction?.copy(running = false, document = doc,
+                    error = if (doc.pages.all { it.isEmpty }) "no_text" else null)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: com.example.ocr.OcrUnavailableException) {
+                update { st -> st.copy(extraction = st.extraction?.copy(running = false, error = "ocr_unavailable")) }
+            } catch (e: Exception) {
+                update { st -> st.copy(extraction = st.extraction?.copy(running = false, error = "failed")) }
+            }
+        }
+    }
+
+    /** Stops a running extraction and closes the review (nothing is inserted). */
+    fun cancelExtraction() {
+        extractionJob?.cancel()
+        extractionJob = null
+        update { it.copy(extraction = null) }
+    }
+
+    /** The user corrected a block (null removes it). */
+    fun updateExtractedBlock(pageIndex: Int, blockIndex: Int, block: com.example.extraction.ExtractedBlock?) = update { st ->
+        val x = st.extraction ?: return@update st
+        val doc = x.document ?: return@update st
+        val pages = doc.pages.map { p ->
+            if (p.index != pageIndex) p else p.copy(blocks = p.blocks.toMutableList().also { list ->
+                if (blockIndex in list.indices) { if (block == null) list.removeAt(blockIndex) else list[blockIndex] = block }
+            })
+        }
+        st.copy(extraction = x.copy(document = doc.copy(pages = pages), editedPages = x.editedPages + pageIndex))
+    }
+
+    /**
+     * Reads one page again with another language mode; the other pages and their corrections are
+     * kept. The UI asks before replacing a page the user corrected.
+     */
+    fun retryExtractedPage(pageIndex: Int, languageCode: String, extract: Extractor) {
+        val x = _state.value.extraction ?: return
+        val page = x.document?.pages?.firstOrNull { it.index == pageIndex } ?: return
+        val src = x.sources.getOrNull(page.sourceIndex) ?: return
+        val one = if (src.isPdf) src.copy(pages = setOf(page.sourcePage ?: 0)) else src
+        update { st -> st.copy(extraction = st.extraction?.copy(retryingPage = pageIndex)) }
+        extractionJob = scope.launch {
+            try {
+                val again = extract(listOf(one), languageCode) { _, _ -> }.pages.firstOrNull()
+                    ?.copy(index = pageIndex, sourceIndex = page.sourceIndex, sourcePage = page.sourcePage)
+                update { st ->
+                    val cur = st.extraction ?: return@update st
+                    val doc = cur.document ?: return@update st
+                    st.copy(extraction = cur.copy(retryingPage = null, editedPages = cur.editedPages - pageIndex,
+                        document = if (again == null) doc else doc.copy(pages = doc.pages.map { if (it.index == pageIndex) again else it })))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                update { st -> st.copy(extraction = st.extraction?.copy(retryingPage = null)) }
+                onMessage(ThesisMessage.ExtractionFailed)
+            }
+        }
+    }
+
+    /**
+     * Inserts the reviewed content into the section the extraction was started from, in the
+     * unsaved draft (the thesis changes on "Save changes"). Never into another section.
+     */
+    fun insertExtraction(mode: ExtractionInsertMode, pages: Set<Int>? = null) {
+        val st = _state.value
+        val x = st.extraction ?: return
+        val doc = x.document ?: return
+        val d = st.draft
+        if (d == null || d.sectionId != x.sectionId) { onMessage(ThesisMessage.ExtractionWrongSection); return }
+        val language = st.snapshot?.meta?.language ?: "en"
+        val chosen = if (pages == null) doc else doc.copy(pages = doc.pages.filter { it.index in pages })
+        // Placeholders for the new tables, after the draft's own.
+        var probe = d
+        val insertion = ExtractionToThesis.build(chosen, mode) { _ ->
+            val token = SectionText.nextToken(probe, language, ElementType.TABLE)
+            probe = probe.copy(media = probe.media + (token to DraftMedia(null, ElementType.TABLE, ElementData())))
+            token
+        }
+        if (insertion.text.isBlank()) { onMessage(ThesisMessage.ExtractionNothing); return }
+        val text = ExtractionToThesis.place(d.text, x.cursor, insertion, mode)
+        update {
+            it.copy(extraction = null, draft = d.copy(text = text, media = d.media + insertion.media, mediaChanged = d.mediaChanged || insertion.media.isNotEmpty()))
+        }
+        extractionJob = null
+    }
 
     // ------------------------------------------------------------------ section tools (workspace)
 
