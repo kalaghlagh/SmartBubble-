@@ -1,47 +1,11 @@
 package com.example.extraction
 
 /**
- * Decisions of the OCR pass that do not need the engine: which reading of a line to keep, which
- * text rows of the image were missed, and which recovered lines repeat text already read.
+ * Decisions of the OCR pass that do not need the engine: which text rows of the image were
+ * missed, which recovered lines repeat text already read, and which digit-only words another
+ * reading found as letters.
  */
 object OcrDecisions {
-
-    /** The line should be read again with the Arabic model alone. */
-    fun needsArabicReread(line: TextLine, pageModelArabicFirst: Boolean): Boolean {
-        val script = ScriptDetector.classify(line.text)
-        if (script != Script.ARABIC && script != Script.MIXED) return false
-        if (ScriptDetector.suspiciousLatinInArabic(line)) return true
-        // With another model first, every Arabic line is checked; with Arabic first, only weak ones.
-        return !pageModelArabicFirst || (line.confidence ?: 0f) < 0.8f
-    }
-
-    /** A Latin line read with low confidence by the multi-language pass is read again with French and English only. */
-    fun needsLatinReread(line: TextLine): Boolean =
-        ScriptDetector.classify(line.text) == Script.LATIN && (line.confidence ?: 0f) < 0.7f
-
-    private fun hasTrustedLatin(line: TextLine): Boolean =
-        line.words.any { w -> ScriptDetector.count(w.text).let { it.latin >= 2 && it.arabic == 0 } && (w.confidence ?: 0f) >= 0.85f } &&
-            !ScriptDetector.suspiciousLatinInArabic(line)
-
-    /**
-     * Keeps [candidate] (the line read again) or [original]. Decided by confidence and script
-     * consistency, never by length: a longer reading is not a better one.
-     */
-    fun choose(original: TextLine, candidate: TextLine?, arabicExpected: Boolean): TextLine {
-        if (candidate == null || candidate.text.isBlank()) return original
-        val oc = original.confidence ?: 0f
-        val cc = candidate.confidence ?: 0f
-        if (arabicExpected) {
-            val oShare = ScriptDetector.count(original.text).arabicShare
-            val cShare = ScriptDetector.count(candidate.text).arabicShare
-            // Real Latin terms read with high confidence are not traded for an all-Arabic reading.
-            if (hasTrustedLatin(original) && ScriptDetector.count(candidate.text).latin == 0) return original
-            if (cc >= oc - 0.03f && cShare >= oShare - 0.05) return candidate
-            if (ScriptDetector.suspiciousLatinInArabic(original) && cc >= 0.55f && cShare >= oShare) return candidate
-            return original
-        }
-        return if (cc > oc + 0.05f) candidate else original
-    }
 
     /**
      * Rows of text on the image ([bands], from the ink profile) that no recognized line covers:
@@ -78,5 +42,26 @@ object OcrDecisions {
     fun insertionIndex(lines: List<TextLine>, top: Float): Int {
         val i = lines.indexOfFirst { it.box.top > top }
         return if (i < 0) lines.size else i
+    }
+
+    private fun digitsOnly(t: String) = t.any { it.isDigit() } && t.none { it.isLetter() }
+
+    /**
+     * Word by word, a reading that found letters where the kept reading has only digits (an
+     * Arabic word read "2890", a Latin term read "665") replaces that word: words are matched by
+     * position on the page, and the replacing word must be confident enough. Digits read the same
+     * way are never touched, nothing is added. Returns the line and the number of replaced words.
+     */
+    fun fuseWords(kept: TextLine, others: List<TextLine>, minConfidence: Float = 0.5f): Pair<TextLine, Int> {
+        var replaced = 0
+        val words = kept.words.map { w ->
+            if (!digitsOnly(w.text)) return@map w
+            val match = others.flatMap { it.words }.filter { o ->
+                o.box.horizontalOverlap(w.box) > 0.5f && o.box.verticalOverlap(w.box) > 0.3f &&
+                    o.text.any { it.isLetter() } && (o.confidence ?: 0f) >= minConfidence
+            }.maxByOrNull { it.confidence ?: 0f }
+            if (match == null) w else { replaced++; match.copy(box = w.box) }
+        }
+        return (if (replaced == 0) kept else kept.copy(words = words)) to replaced
     }
 }

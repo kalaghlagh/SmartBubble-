@@ -321,6 +321,32 @@ jobs:
           path: ${{ env.DEBUG_DIR }}
           if-no-files-found: error
 
+      # Size of what users download: the debug APK (all ABIs) and the App Bundle, for this commit
+      # and for main, with the native libraries and OCR models they carry. Report only.
+      - name: APK and App Bundle size (this commit vs. main)
+        if: ${{ always() && steps.build_debug.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          report() {
+            local label="$1" dir="$2"
+            local apk aab
+            apk=$(ls "$dir"/app/build/outputs/apk/debug/*.apk | head -1)
+            aab=$(ls "$dir"/app/build/outputs/bundle/debug/*.aab | head -1)
+            echo "SIZE $label apk_bytes=$(stat -c %s "$apk") aab_bytes=$(stat -c %s "$aab")"
+            for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+              n=$(unzip -lv "$apk" "lib/$abi/*" 2>/dev/null | awk '/^ *[0-9]/ && NF>=8 {c+=$3} END {print c+0}')
+              echo "SIZE $label apk lib/$abi compressed_bytes=$n"
+            done
+            unzip -lv "$apk" "lib/arm64-v8a/*" "assets/paddleocr/*" "assets/tessdata/*" 2>/dev/null | awk '/^ *[0-9]/ && NF>=8 && $8 !~ /\/$/ {print "SIZE '"$label"' entry " $8 " uncompressed=" $1 " stored=" $3}'
+          }
+          ./gradlew --quiet bundleDebug
+          report "this-commit" "."
+          git fetch --quiet --depth=1 origin main
+          git worktree add --quiet "$RUNNER_TEMP/base" FETCH_HEAD
+          (cd "$RUNNER_TEMP/base" && ./gradlew --quiet assembleDebug bundleDebug) && report "main-$(git rev-parse --short FETCH_HEAD)" "$RUNNER_TEMP/base"
+
       # One overview of the run in the job summary: APK, every check, failed tests and lint errors.
       - name: CI summary
         if: ${{ always() }}

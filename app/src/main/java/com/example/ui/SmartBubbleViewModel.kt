@@ -73,6 +73,7 @@ import com.example.ocr.OcrLanguage
 import com.example.ocr.OcrUnavailableException
 import com.example.ocr.PageImageLoader
 import com.example.ocr.ScannedDocumentStructureReconstructor
+import com.example.ocr.toScannedPage
 import com.example.document.model.ScannedPageData
 import com.example.document.model.ScannedDocumentReviewState
 import com.example.document.docx.DocxEngine
@@ -1387,7 +1388,14 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             templatesDir = templatesDir,
             dao = database.templateDao(),
             analysis = templateAnalysisEngine,
-            pdfThumbnail = { pdf, id -> TemplateThumbnails.renderPdfFirstPage(pdf, TemplateThumbnails.fileFor(templatesDir, id)) }
+            pdfThumbnail = { pdf, id -> TemplateThumbnails.renderPdfFirstPage(pdf, TemplateThumbnails.fileFor(templatesDir, id)) },
+            // Scanned PDF templates: structure from the first pages, read on the device.
+            scannedLayout = { pdf ->
+                extractionEngine.extract(
+                    listOf(com.example.extraction.ExtractionSource(Uri.fromFile(pdf), isPdf = true, pages = setOf(0, 1, 2))),
+                    OcrLanguage.fromCode(ocrLanguage.value), appLanguage.value
+                )
+            }
         )
     }
 
@@ -1869,7 +1877,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     private var scanJob: Job? = null
 
     /**
-     * Recognizes the scanned / picked page images ON THE DEVICE (Tesseract). Nothing is sent to
+     * Recognizes the scanned / picked page images ON THE DEVICE (PaddleOCR on ONNX Runtime). Nothing is sent to
      * any AI provider. When a review is already open, the new pages are appended to it.
      */
     fun processScannedPages(uris: List<Uri>) {
@@ -1920,6 +1928,50 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    /**
+     * Extracts a PDF of the Library with the shared extraction engine (pages that carry text are
+     * read directly, scanned pages by on-device OCR) and opens the review in Chat, where the text
+     * can be corrected, copied or inserted into the message. Nothing is sent automatically.
+     */
+    fun extractLibraryDocument(doc: com.example.data.model.DocumentEntity) {
+        if (_isScanning.value) return
+        val file = java.io.File(doc.filePath)
+        if (!doc.fileType.equals("PDF", ignoreCase = true) || !file.isFile) {
+            _snackBarMessage.value = str(R.string.library_extract_unavailable)
+            return
+        }
+        scanJob = viewModelScope.launch {
+            _isScanning.value = true
+            _scanProgress.value = str(R.string.recognizing_text)
+            setNavTab(AppNavTab.CHAT)
+            try {
+                val extracted = extractionEngine.extract(
+                    listOf(com.example.extraction.ExtractionSource(Uri.fromFile(file), isPdf = true)),
+                    OcrLanguage.fromCode(ocrLanguage.value), appLanguage.value
+                ) { page, total -> _scanProgress.value = str(R.string.scan_progress_page, page, total) }
+                val pages = extracted.pages.map { p -> p.toScannedPage(p.imageUri.orEmpty()) }
+                _scannedReviewState.value = ScannedDocumentReviewState(
+                    documentTitle = doc.title,
+                    pages = pages,
+                    activePageIndex = 0,
+                    selectedTemplateId = null,
+                    isAiEnhanced = false
+                )
+                reportScanOutcome(pages, extracted.pages.count { it.error != null && it.error != "no_text_found" })
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: OcrUnavailableException) {
+                Log.e(TAG, "OCR unavailable", e)
+                _snackBarMessage.value = str(R.string.scan_ocr_unavailable)
+            } catch (e: Exception) {
+                reportError("extractLibraryDocument", e)
+            } finally {
+                _isScanning.value = false
+                _scanProgress.value = null
+            }
+        }
+    }
+
     private fun reportScanOutcome(pages: List<ScannedPageData>, failedPages: Int) {
         val empty = pages.count { it.rawText.isBlank() }
         _snackBarMessage.value = when {
@@ -1942,14 +1994,19 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             if (current == null || current.pages.isEmpty()) return@launch
             _isScanning.value = true
             try {
+                // Pages read directly from a PDF's text have no image: they are kept as they are.
+                val withImage = current.pages.indices.filter { current.pages[it].imageUriString.isNotBlank() }
+                if (withImage.isEmpty()) return@launch
                 val result = ocrEngine.processPages(
-                    pageUris = current.pages.map { Uri.parse(it.imageUriString) },
+                    pageUris = withImage.map { Uri.parse(current.pages[it].imageUriString) },
                     language = OcrLanguage.fromCode(code),
                     appLanguage = appLanguage.value,
                     onProgress = { page, total -> _scanProgress.value = str(R.string.scan_progress_page, page, total) }
                 )
                 _scannedReviewState.value?.let { state ->
-                    _scannedReviewState.value = state.copy(pages = result.pages, isAiEnhanced = false, editedPages = emptySet())
+                    val pages = state.pages.toMutableList()
+                    withImage.forEachIndexed { k, i -> result.pages.getOrNull(k)?.let { if (i in pages.indices) pages[i] = it.copy(pageIndex = i) } }
+                    _scannedReviewState.value = state.copy(pages = pages, isAiEnhanced = false, editedPages = state.editedPages - withImage.toSet())
                 }
                 reportScanOutcome(result.pages, result.failedPages)
             } catch (e: CancellationException) {
@@ -2017,6 +2074,11 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         val current = _scannedReviewState.value ?: return
         val page = current.pages.getOrNull(pageIndex) ?: return
         if (_isScanning.value) return
+        if (page.imageUriString.isBlank()) {
+            // Read directly from a PDF's text: there is no image to recognize again.
+            _snackBarMessage.value = str(R.string.scan_page_from_pdf_text)
+            return
+        }
         scanJob = viewModelScope.launch {
             _isScanning.value = true
             _scanProgress.value = str(R.string.scan_progress_page, 1, 1)

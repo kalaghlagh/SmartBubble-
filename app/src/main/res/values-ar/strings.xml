@@ -269,6 +269,9 @@
     <string name="voice_err_tts_language">لا يوجد صوت مثبّت للغة هذه الرسالة. ثبّته من إعدادات تحويل النص إلى كلام في الجهاز.</string>
     <string name="voice_err_tts_failed">تعذّرت قراءة الرد بصوت مسموع.</string>
     <string name="scan_ocr_unavailable">تعذّر بدء التعرّف على النص على الجهاز. أفرغ بعض مساحة التخزين ثم حاول مرة أخرى.</string>
+    <string name="library_extract_text">استخراج النص</string>
+    <string name="library_extract_unavailable">لا يمكن استخراج النص إلا من ملفات PDF.</string>
+    <string name="scan_page_from_pdf_text">قُرئت هذه الصفحة مباشرة من نص ملف PDF: لا يوجد ما يُعاد التعرف عليه.</string>
     <string name="scan_pages_failed">تعذّرت قراءة %1$d صفحة. يمكنك كتابة نصها أو مسحها ضوئيًا مرة أخرى.</string>
     <string name="scan_pages_empty">لم يُعثر على نص في %1$d صفحة. تحقق من لغة المسح أو اكتب النص.</string>
     <string name="scan_ocr_language">لغة النص</string>
@@ -1086,4 +1089,8 @@
     <string name="dx_tables_found">الجداول الموجودة: %1$d</string>
     <string name="dx_uncertain_words">%1$d كلمة تم التعرف عليها بثقة منخفضة</string>
     <string name="dx_wrong_section">لا يمكن إدراج المحتوى إلا في القسم الذي بدأ منه الاستخراج. افتح ذلك القسم مجددًا.</string>
+    <string name="dx_check_region">تحقق</string>
+    <string name="dx_regions_to_review">%1$d عنصرًا في هذه الصفحة للتحقق (مؤطرة)</string>
+    <string name="dx_note_rerouted">أُعيدت قراءة %1$s سطرًا بنموذج كتابتها</string>
+    <string name="dx_note_missing">تعذرت قراءة %1$s سطرًا من الصورة: قارن مع الصفحة الأصلية</string>
 </resources>

@@ -106,7 +106,7 @@ ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 // Removed because nothing in the app uses them (smaller APK, smaller attack surface): Firebase AI
 // and App Check (including the debug provider), Retrofit, the OkHttp logging interceptor and
-// ML Kit text recognition (replaced by on-device Tesseract, which also reads Arabic).
+// ML Kit text recognition (replaced by on-device PaddleOCR, which also reads Arabic).
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {
@@ -147,8 +147,9 @@ dependencies {
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
   implementation(libs.play.services.mlkit.document.scanner)
-  // On-device OCR (Arabic, English, French) - Tesseract 5 via Tesseract4Android, Apache 2.0.
-  implementation(libs.tesseract4android)
+  // On-device OCR (Arabic, French, English): PaddleOCR PP-OCRv5 mobile models (assets/paddleocr,
+  // Apache-2.0) run by ONNX Runtime (MIT), CPU only. See third_party_licenses/.
+  implementation(libs.onnxruntime.android)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)

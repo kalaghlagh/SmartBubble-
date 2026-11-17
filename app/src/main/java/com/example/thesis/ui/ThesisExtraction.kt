@@ -126,7 +126,11 @@ private fun TableEditor(t: ExtractedBlock.Table, onChange: (ExtractedBlock.Table
         for (c in r) { cells += c.text; repeat(c.colSpan - 1) { cells += "" } }
         (cells + List((width - cells.size).coerceAtLeast(0)) { "" }).take(width)
     }
-    fun emit(g: List<List<String>>) = onChange(t.copy(rows = g.map { r -> r.map { TableCell(it) } }))
+    // Cells to check (uncertain reading), by position; a corrected cell is no longer marked.
+    val review = t.rows.map { r -> r.flatMap { c -> List(c.colSpan) { c.needsReview } } }
+    fun emit(g: List<List<String>>) = onChange(t.copy(rows = g.mapIndexed { ri, r -> r.mapIndexed { ci, v ->
+        TableCell(v, needsReview = review.getOrNull(ri)?.getOrNull(ci) == true && grid.getOrNull(ri)?.getOrNull(ci) == v)
+    } }))
     Column(Modifier.fillMaxWidth()) {
         if (t.uncertain) Text(stringResource(R.string.dx_table_check), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
         if (t.rows.any { r -> r.any { it.colSpan > 1 } }) Text(stringResource(R.string.dx_table_merged), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -138,6 +142,8 @@ private fun TableEditor(t: ExtractedBlock.Table, onChange: (ExtractedBlock.Table
                             value = cell,
                             onValueChange = { v -> emit(grid.mapIndexed { i, rr -> if (i == r) rr.mapIndexed { j, x -> if (j == c) v else x } else rr }) },
                             textStyle = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content, fontWeight = if (r == 0 && t.header) FontWeight.Bold else null),
+                            // An uncertain reading is outlined: compare it with the original page.
+                            isError = review.getOrNull(r)?.getOrNull(c) == true,
                             modifier = Modifier.width(140.dp).padding(2.dp).testTag("dx_cell_${r}_$c")
                         )
                     }
@@ -174,6 +180,8 @@ private fun BlockEditor(b: ExtractedBlock, onChange: (ExtractedBlock?) -> Unit, 
     Column(Modifier.fillMaxWidth().testTag(tag)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(label + if (b is ExtractedBlock.Heading) " ${b.level}" else "", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+            if (b.region?.needsReview == true) Text(stringResource(R.string.dx_check_region), style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(end = 4.dp).testTag("${tag}_review"))
             IconButton(onClick = { onChange(null) }, modifier = Modifier.size(36.dp).testTag("${tag}_delete")) {
                 Icon(Icons.Default.Close, contentDescription = stringResource(R.string.dx_remove_block), modifier = Modifier.size(18.dp))
             }

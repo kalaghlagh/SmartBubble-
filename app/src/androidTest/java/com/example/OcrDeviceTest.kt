@@ -15,6 +15,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.ocr.DocumentOcrEngine
 import com.example.ocr.OcrLanguage
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -27,7 +28,7 @@ import java.text.Normalizer
 /**
  * Real OCR on the device: printed pages are drawn (Arabic, French, English, mixed, rotated, low
  * contrast, a table, two pages), saved as JPEG like the document scanner does, and read by the
- * app's OCR engine (Tesseract with the bundled models). Each case reports the share of the
+ * app's OCR engine (PaddleOCR PP-OCRv5 on ONNX Runtime, bundled models). Each case reports the share of the
  * expected words found; the images and results go to the device-test evidence.
  */
 @RunWith(AndroidJUnit4::class)
@@ -94,9 +95,21 @@ class OcrDeviceTest {
         assertTrue("$case: only ${"%.0f".format(r * 100)}% of the words recognized: $text", r >= minimum)
     }
 
+    private fun engine() = com.example.ocr.paddle.PaddleOrtOcrEngine(
+        com.example.ocr.paddle.ModelInstaller(File(context.noBackupFilesDir, com.example.ocr.paddle.PaddleModels.DIR)) { context.assets.open(it) }
+    )
+
+    /** The text of the detected regions of [bmp], each read by [model], in reading order. */
+    private fun readAll(e: com.example.ocr.paddle.PaddleOrtOcrEngine, bmp: Bitmap, model: com.example.extraction.OcrModel): String =
+        e.detect(bmp).joinToString(" ") { box ->
+            val crop = Bitmap.createBitmap(bmp, box.left.toInt(), box.top.toInt(), (box.right - box.left).toInt().coerceAtLeast(1).coerceAtMost(bmp.width - box.left.toInt()),
+                (box.bottom - box.top).toInt().coerceAtLeast(1).coerceAtMost(bmp.height - box.top.toInt()))
+            try { com.example.ocr.paddle.RtlText.visualToLogical(e.recognize(crop, model).text) } finally { crop.recycle() }
+        }
+
     /**
-     * The recognizer itself, without the app's pipeline: the bundled English model reads a clean
-     * page. Isolates the native engine and model files from image loading and assembly.
+     * The recognizer itself, without the app's pipeline: the bundled detection and Latin models
+     * read a clean page. Isolates the native engine and model files from image loading and assembly.
      */
     @Test fun engineReadsAPlainBitmap() {
         val bmp = Bitmap.createBitmap(1240, 600, Bitmap.Config.ARGB_8888)
@@ -106,70 +119,76 @@ class OcrDeviceTest {
             drawText("Groundwater quality of wells", 80f, 200f, paint)
             drawText("in the region was analysed", 80f, 300f, paint)
         }
-        val root = com.example.ocr.TessDataInstaller.ensureInstalled(context, listOf("eng"))
-        val tess = com.googlecode.tesseract.android.TessBaseAPI()
-        try {
-            assertTrue("init", tess.init(root.absolutePath, "eng"))
-            tess.setImage(bmp)
-            val text = tess.getUTF8Text().orEmpty()
-            val line = "OCR raw-engine: confidence=${tess.meanConfidence()} text=${text.replace('\n', ' ')}"
+        engine().use { e ->
+            val text = readAll(e, bmp, com.example.extraction.OcrModel.LATIN)
+            val line = "OCR raw-engine: loads=${e.loadTimes} text=$text"
             Log.i("OcrDeviceTest", line)
             File(dir, "results.txt").appendText(line + "\n")
             check("raw-engine", "Groundwater quality of wells in the region was analysed", text, 0.8)
-        } finally {
-            tess.recycle()
         }
     }
 
     /**
-     * The Arabic model alone, in automatic layout and as one block, on the same Arabic page:
-     * tells whether a low Arabic score comes from the model or from the app's pipeline.
+     * The Arabic model alone on an Arabic page: every text line is detected, and the second line
+     * is read correctly (the line the previous engine dropped on full pages).
      */
     @Test fun engineReadsArabic() {
         val uri = page("arabic-raw", listOf(arabic))
         val bmp = android.graphics.BitmapFactory.decodeFile(uri.path)
-        val root = com.example.ocr.TessDataInstaller.ensureInstalled(context, listOf("ara"))
-        val tess = com.googlecode.tesseract.android.TessBaseAPI()
-        val outputs = ArrayList<String>()
-        try {
-            assertTrue("init", tess.init(root.absolutePath, "ara"))
-            for (mode in listOf(com.googlecode.tesseract.android.TessBaseAPI.PageSegMode.PSM_AUTO, com.googlecode.tesseract.android.TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK)) {
-                tess.setPageSegMode(mode)
-                tess.setImage(bmp)
-                val text = tess.getUTF8Text().orEmpty()
-                val line = "OCR raw-arabic psm=$mode recall=${"%.2f".format(recall(arabic, text))} text=${text.replace('\n', ' ')}"
-                Log.i("OcrDeviceTest", line)
-                File(dir, "results.txt").appendText(line + "\n")
-                outputs += line
-                tess.clear()
-            }
-        } finally {
-            tess.recycle()
-        }
-        // How many text lines the image shows, and the second line read on its own. Finding
-        // (runs #60-#62): on the full page the Arabic model returns only the first line in both
-        // modes, but it reads the second line perfectly alone; the app therefore reads line by
-        // line when lines are missing (see DocumentOcrEngine). This test checks that capability.
         val gray = com.example.ocr.OcrPreprocessor.prepare(bmp)
         val bands = com.example.ocr.OcrPreprocessor.textLineBands(gray)
-        val tess2 = com.googlecode.tesseract.android.TessBaseAPI()
-        val secondLine: String
-        try {
-            assertTrue("init", tess2.init(root.absolutePath, "ara"))
+        engine().use { e ->
+            val boxes = e.detect(gray)
+            val text = readAll(e, gray, com.example.extraction.OcrModel.ARABIC)
+            val line = "OCR raw-arabic ink lines=${bands.size} regions=${boxes.size} recall=${"%.2f".format(recall(arabic, text))} text=$text"
+            Log.i("OcrDeviceTest", line)
+            File(dir, "results.txt").appendText(line + "\n")
             assertTrue("text lines on the image: ${bands.size}", bands.size >= 2)
             val b = bands[1]
             val top = (b.first - 10).coerceAtLeast(0)
             val crop = Bitmap.createBitmap(gray, 0, top, gray.width, (b.last + 10).coerceAtMost(gray.height - 1) - top + 1)
-            FileOutputStream(File(dir, "arabic-line2.png")).use { crop.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            tess2.setImage(crop)
-            secondLine = tess2.getUTF8Text().orEmpty().replace('\n', ' ')
-        } finally {
-            tess2.recycle()
+            val ink = e.detect(crop).maxByOrNull { it.width }!!
+            val lineCrop = Bitmap.createBitmap(crop, ink.left.toInt(), ink.top.toInt(), ink.width.toInt().coerceAtMost(crop.width - ink.left.toInt()), ink.height.toInt().coerceAtMost(crop.height - ink.top.toInt()))
+            val secondLine = com.example.ocr.paddle.RtlText.visualToLogical(e.recognize(lineCrop, com.example.extraction.OcrModel.ARABIC).text)
+            File(dir, "results.txt").appendText("second line alone=$secondLine\n")
+            val expectedSecond = "الكبرى على الآبار العميقة لتلبية حاجات السكان"
+            assertTrue("the Arabic model does not read the second line alone: $secondLine | page: $text", recall(expectedSecond, secondLine) >= 0.8)
         }
-        outputs += "ink lines on the image=${bands.size}; second line alone=$secondLine"
-        File(dir, "results.txt").appendText(outputs.last() + "\n")
-        val expectedSecond = "الكبرى على الآبار العميقة لتلبية حاجات السكان"
-        assertTrue("the Arabic model does not read the second line alone: $outputs", recall(expectedSecond, secondLine) >= 0.8)
+    }
+
+    /** A damaged model is refused (SHA-256) and reported as unavailable OCR, without a crash. */
+    @Test fun damagedModelIsRefused() {
+        val dir = File(context.cacheDir, "paddle-damaged").apply { deleteRecursively(); mkdirs() }
+        val installer = com.example.ocr.paddle.ModelInstaller(dir) { path ->
+            val bytes = context.assets.open(path).use { it.readBytes() }
+            if (path.endsWith("det.ort")) bytes[bytes.size / 2] = (bytes[bytes.size / 2] + 1).toByte()
+            bytes.inputStream()
+        }
+        val e = com.example.ocr.paddle.PaddleOrtOcrEngine(installer)
+        try {
+            e.warmUp()
+            throw AssertionError("a damaged model was loaded")
+        } catch (x: com.example.ocr.paddle.ModelIntegrityException) {
+            assertTrue(x.message.orEmpty(), x.message.orEmpty().contains("det.ort"))
+        } finally {
+            e.close()
+        }
+        assertTrue("no partial file left", dir.listFiles().orEmpty().none { it.name.endsWith(".part") || it.name == "det.ort" })
+    }
+
+    /** Cancelling an extraction stops it; the engine works again for the next one. */
+    @Test fun cancellationStopsAndEngineRecovers() = kotlinx.coroutines.runBlocking {
+        val uris = (1..3).map { page("cancel-$it", listOf(english, french)) }
+        val job = launch(kotlinx.coroutines.Dispatchers.Default) {
+            com.example.extraction.DocumentExtractionEngine(context).extract(uris.map { com.example.extraction.ExtractionSource(it, false) },
+                OcrLanguage.AUTO, "en")
+        }
+        kotlinx.coroutines.delay(1500)
+        job.cancel()
+        kotlinx.coroutines.withTimeout(20_000) { job.join() }
+        assertTrue("cancelled", job.isCancelled)
+        val r = ocr(page("after-cancel", listOf(english)))
+        check("after-cancel", english, r.pages.single().rawText, 0.8)
     }
 
     @Test fun arabicPage() { val r = ocr(page("arabic", listOf(arabic))); check("arabic", arabic, r.pages.single().rawText, 0.6) }

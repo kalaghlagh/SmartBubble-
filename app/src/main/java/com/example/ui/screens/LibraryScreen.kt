@@ -253,6 +253,7 @@ fun LibraryScreen(
                         onOpen = { viewModel.openDocument(doc) },
                         onShare = { viewModel.shareDocument(doc) },
                         onExportPdf = { viewModel.exportDocumentAsPdf(doc) },
+                        onExtractText = { viewModel.extractLibraryDocument(doc) },
                         onRename = {
                             docToRename = doc
                             renameInput = doc.title
@@ -306,6 +307,7 @@ fun LibraryDocumentItem(
     onOpen: () -> Unit,
     onShare: () -> Unit,
     onExportPdf: () -> Unit,
+    onExtractText: () -> Unit = {},
     onRename: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -440,6 +442,16 @@ fun LibraryDocumentItem(
                             onClick = {
                                 menuExpanded = false
                                 onExportPdf()
+                            }
+                        )
+                    }
+                    if (doc.fileType.equals("PDF", ignoreCase = true)) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.library_extract_text)) },
+                            leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onExtractText()
                             }
                         )
                     }

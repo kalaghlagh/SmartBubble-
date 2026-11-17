@@ -250,7 +250,15 @@ class ThesisController(
     private val _state = MutableStateFlow(ThesisUiState())
     val state: StateFlow<ThesisUiState> = _state.asStateFlow()
 
-    val projects: StateFlow<List<ThesisProjectEntity>> = repository.observeProjects()
+    /**
+     * Re-reads the projects list after the app's own changes (rename, delete): Room's change
+     * notification is asynchronous and was seen arriving more than 10 s late on a busy machine,
+     * leaving the old title on screen.
+     */
+    private val projectsRefresh = MutableStateFlow(0)
+
+    val projects: StateFlow<List<ThesisProjectEntity>> = projectsRefresh
+        .flatMapLatest { repository.observeProjects() }
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Workspace progress (0..100) of every project, for the projects list. */
@@ -477,6 +485,7 @@ class ThesisController(
 
     fun deleteProject(projectId: String) = launch(ThesisBusy.SAVING) {
         repository.deleteProject(projectId)
+        projectsRefresh.value++
         if (_state.value.chatProjectId == projectId) exitChatMode()
         if (_state.value.projectId == projectId) {
             projectIdFlow.value = null
@@ -938,6 +947,7 @@ class ThesisController(
         if (t.isEmpty()) return@launch
         val snapshot = repository.snapshot(projectId)
         repository.applyDirect(projectId, listOf(ThesisOp.UpdateMeta(snapshot.meta.copy(title = t))), ChangeSource.USER, "rename")
+        projectsRefresh.value++
         if (_state.value.projectId == projectId) reload()
         onMessage(ThesisMessage.Renamed)
     }

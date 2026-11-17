@@ -205,8 +205,9 @@ opens it sees no change in Chat.
 1. Attach > **Scan Document** opens the Google document scanner (capture, crop, rotate,
    perspective correction). If the scanner is unavailable you can pick photos from the gallery
    instead; those are used as they are.
-2. Text is recognized **on the device** with Tesseract, using bundled models for Arabic, English
-   and French. Page images are not uploaded anywhere.
+2. Text is recognized **on the device** with PaddleOCR PP-OCRv5 mobile models (text detection,
+   Arabic and Latin recognition) run by ONNX Runtime on the CPU. The models are bundled and
+   verified by SHA-256 before use; nothing is downloaded and page images are not uploaded anywhere.
 3. You review and correct the text page by page, can change the text language, add or remove
    pages, and choose a template.
 4. The app generates an editable DOCX (real text, not page images) and saves it in the Library.
@@ -374,5 +375,6 @@ Keep the keystore and its passwords safe: updates must be signed with the same k
 Kotlin, Jetpack Compose (Material 3), a single `SmartBubbleViewModel`, Room (explicit
 migrations, no destructive fallback), DataStore, OkHttp, Android Keystore, document engines
 written in Kotlin on `java.util.zip` and Android `PdfDocument`, Google ML Kit document scanner
-(capture only), Tesseract 5 through Tesseract4Android with `tessdata_fast` models (Apache 2.0),
+(capture only), ONNX Runtime 1.27.0 (MIT) with PaddleOCR PP-OCRv5 mobile models (Apache 2.0,
+converted to ORT format by MakeACopy; see `third_party_licenses/`),
 Android `SpeechRecognizer` and `TextToSpeech`.

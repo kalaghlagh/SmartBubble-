@@ -4,6 +4,8 @@ import com.example.data.db.TemplateDao
 import com.example.data.model.TemplateEntity
 import com.example.template.analysis.TemplateAnalysisEngine
 import com.example.template.analysis.TemplateFileInspector
+import com.example.template.analysis.ScannedTemplateStructure
+import com.example.extraction.ExtractedDocument
 import com.example.template.pdf.PdfEncryptedException
 import com.example.template.pdf.PdfReadException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -34,7 +36,12 @@ class TemplateImporter(
     private val analysis: TemplateAnalysisEngine = TemplateAnalysisEngine(),
     private val io: CoroutineDispatcher = Dispatchers.IO,
     /** Renders a first-page thumbnail for PDF templates (device only; null in plain JVM tests). */
-    private val pdfThumbnail: ((pdf: File, templateId: String) -> Unit)? = null
+    private val pdfThumbnail: ((pdf: File, templateId: String) -> Unit)? = null,
+    /**
+     * Reads the structure of a scanned (image-only) PDF template with the shared extraction
+     * engine (device only; null in plain JVM tests). A failure leaves the profile as analysed.
+     */
+    private val scannedLayout: (suspend (pdf: File) -> ExtractedDocument?)? = null
 ) {
 
     suspend fun import(open: () -> InputStream?, userName: String, sourceFileName: String?): TemplateEntity {
@@ -75,6 +82,12 @@ class TemplateImporter(
                     throw TemplateImportException(TemplateImportException.Reason.PDF_DAMAGED)
                 }
                 target to profile
+            }.let { (file, profile) ->
+                // A scan carries no text: its structure is read by the on-device extraction engine.
+                val read = if (profile.isImageOnlyPdf && scannedLayout != null) {
+                    try { scannedLayout.invoke(file) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+                } else null
+                file to (read?.let { ScannedTemplateStructure.apply(profile, it) } ?: profile)
             }
             val entity = TemplateEntity(
                 id = profile.templateId,

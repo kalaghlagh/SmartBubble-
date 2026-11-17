@@ -324,4 +324,47 @@ class ExtractionCoreTest {
         assertTrue(text, text.contains("Monthly report"))
         assertTrue(text, text.contains("This is a reported study."))
     }
+
+    @Test
+    fun drawnSpaceGlyphs_separateWords_evenWithoutAGap() {
+        val chars = "Wel dpth"
+        val pdf = TestPdf()
+        val cmap = buildString {
+            append("/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n1 begincodespacerange <0000> <FFFF> endcodespacerange\n")
+            append("${chars.length} beginbfchar\n")
+            chars.forEachIndexed { i, c -> append(String.format("<%04X> <%04X>\n", i + 1, c.code)) }
+            append("endbfchar\nendcmap CMapName currentdict /CMap defineresource pop end end\n")
+        }
+        val toUnicode = pdf.stream("", cmap.toByteArray(Charsets.ISO_8859_1))
+        val desc = pdf.add("<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+Roboto-Regular /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>")
+        val font = pdf.add("<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+Roboto-Regular /Encoding /Identity-H /DescendantFonts [$desc 0 R] /ToUnicode $toUnicode 0 R >>")
+        val c = StringBuilder()
+        var x = 60.0
+        for (ch in "Well depth") {
+            c.append("BT /F9 12 Tf $x 760 Td <${String.format("%04X", chars.indexOf(ch) + 1)}> Tj ET\n")
+            x += 5.0 // no visible extra gap at the space
+        }
+        pdf.page(c.toString(), extraFonts = mapOf("F9" to font))
+        val reader = PdfDocumentReader.open(pdf.build())
+        val text = ExtractionText.page(PdfTextExtraction.page(0, PdfContentScanner(reader).scan(reader.pages().single())))
+        assertTrue(text, text.contains("Well depth"))
+    }
+
+    @Test
+    fun twoColumns_readAsSingleLines_areSplitAndReadColumnByColumn() {
+        // Each OCR line runs across the gutter (x 560-680): left words then right words.
+        val rows = listOf(
+            "The first column describes" to "The second column presents",
+            "the study area and its" to "the sampling of the wells."
+        )
+        val lines = rows.mapIndexed { i, (a, b) -> line(ltr(a, 100f, 100f + i * 30f) + ltr(b, 700f, 100f + i * 30f)) } +
+            line(ltr("climate.", 100f, 160f))
+        val blocks = LayoutAnalyzer.analyze(lines, 1240f, 1754f)
+        val text = blocks.joinToString(" | ") { (it as? ExtractedBlock.Paragraph)?.text ?: it.toString() }
+        assertEquals("The first column describes the study area and its climate. | The second column presents the sampling of the wells.", text)
+        assertTrue(blocks.none { it is ExtractedBlock.Table })
+        // Table rows with short cells are not columns of text.
+        val table = listOf(row(100f, 100f to "Product", 500f to "Quantity"), row(130f, 100f to "Product A", 500f to "10"))
+        assertEquals(table, LayoutAnalyzer.splitColumns(table))
+    }
 }

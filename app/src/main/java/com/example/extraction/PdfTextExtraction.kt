@@ -80,7 +80,7 @@ object PdfTextExtraction {
     } * fontSize / 1000.0
 
     /** A piece of a run between spaces, in page coordinates (y downwards). */
-    private class Piece(val text: String, val box: Box, val run: com.example.template.pdf.PdfTextRun, val spaceBefore: Boolean)
+    private class Piece(val text: String, val box: Box, val run: com.example.template.pdf.PdfTextRun, val spaceBefore: Boolean, val isSpace: Boolean = false)
 
     /**
      * Words of the page, y downwards. Producers draw text in runs of any size, often one glyph
@@ -91,9 +91,13 @@ object PdfTextExtraction {
         val pieces = ArrayList<Piece>()
         for (r in scan.texts) {
             val text = logicalText(r.text)
-            if (text.isBlank()) continue
             val top = (scan.height - r.y - r.fontSize * 0.8).toFloat()
             val bottom = (scan.height - r.y + r.fontSize * 0.2).toFloat()
+            // A drawn space glyph (producers that write one glyph per run) separates words.
+            if (text.isBlank()) {
+                if (text.isNotEmpty()) pieces += Piece("", Box(r.x.toFloat(), top, r.x.toFloat() + 0.1f, bottom), r, spaceBefore = true, isSpace = true)
+                continue
+            }
             val total = text.length.coerceAtLeast(1)
             val rtl = ScriptDetector.isRtl(text)
             // Widths of 0.95 em per glyph or more mean the font had no widths (1000 units assumed).
@@ -128,6 +132,7 @@ object PdfTextExtraction {
                 out += TextWord(text.toString(), box!!, null, c.run.bold, c.run.italic, c.run.fontSize.toFloat())
             }
             for (p in sorted) {
+                if (p.isSpace) { emit(); cur = null; continue }
                 val c = cur
                 val gap = if (c == null) Float.MAX_VALUE else p.box.left - box!!.right
                 val join = c != null && !p.spaceBefore && gap < (p.run.fontSize * 0.22).toFloat()
