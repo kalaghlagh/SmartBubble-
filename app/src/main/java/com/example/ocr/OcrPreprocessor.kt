@@ -81,6 +81,41 @@ object OcrPreprocessor {
      */
     fun score(text: String, confidence: Float): Double = confidence.toDouble() * text.count { it.isLetter() }
 
+    /**
+     * Number of text lines on a page from its horizontal ink profile: [rowInk] holds the dark
+     * pixels of each row. A line is a run of inked rows at least [minHeight] high; short gaps
+     * (accents, dots above Arabic letters) do not split it.
+     */
+    fun countTextLines(rowInk: IntArray, width: Int, minHeight: Int = 8, maxGap: Int = 3): Int {
+        val threshold = (width * 0.004).toInt().coerceAtLeast(2)
+        var lines = 0
+        var run = 0
+        var gap = 0
+        for (v in rowInk) {
+            if (v >= threshold) { run += gap.takeIf { run > 0 } ?: 0; run++; gap = 0 }
+            else if (run > 0) {
+                gap++
+                if (gap > maxGap) { if (run >= minHeight) lines++; run = 0; gap = 0 }
+            }
+        }
+        if (run >= minHeight) lines++
+        return lines
+    }
+
+    /** Text lines of a prepared (grey) page, see [countTextLines]. */
+    fun countTextLines(page: Bitmap): Int {
+        val w = page.width
+        val row = IntArray(w)
+        val ink = IntArray(page.height)
+        for (y in 0 until page.height) {
+            page.getPixels(row, 0, w, 0, y, w, 1)
+            var n = 0
+            for (x in 0 until w) if ((row[x] and 0xFF) < 110) n++
+            ink[y] = n
+        }
+        return countTextLines(ink, w)
+    }
+
     /** Share of the letters of [text] that are Arabic. */
     fun arabicShare(text: String): Double {
         val letters = text.filter { it.isLetter() }

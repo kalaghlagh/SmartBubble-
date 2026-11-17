@@ -150,6 +150,8 @@ class DocumentOcrEngine(private val context: Context) {
     private class Recognition(val text: String, val lines: List<OcrLineInfo>, val confidence: Float) {
         val score: Double get() = OcrPreprocessor.score(text, confidence)
         val letters: Int get() = text.count { it.isLetter() }
+        /** Lines in the result (layout lines, or text lines when there are none). */
+        val lineCount: Int get() = if (lines.isNotEmpty()) lines.size else text.lines().count { it.isNotBlank() }
     }
 
     private suspend fun recognizePage(tess: TessBaseAPI, uri: Uri, pageIndex: Int, arabicEngine: () -> TessBaseAPI?): ScannedPageData {
@@ -167,6 +169,20 @@ class DocumentOcrEngine(private val context: Context) {
                     if (r.score > best.score * 1.2) best = r
                     if (!OcrPreprocessor.isWeak(best.text, best.confidence)) break
                 }
+            }
+            // Lines missed by the layout analysis (seen on Arabic pages: only the first line came
+            // back): when the page shows clearly more text lines than were recognized, it is
+            // read again as one uniform block of text and the result with more letters kept.
+            val inkLines = OcrPreprocessor.countTextLines(prepared)
+            if (inkLines >= 2 && best.lineCount * 4 < inkLines * 3) {
+                currentCoroutineContext().ensureActive()
+                val engines = listOfNotNull(tess, if (OcrPreprocessor.arabicShare(best.text) > 0.3) arabicEngine() else null)
+                for (engine in engines) {
+                    engine.setPageSegMode(TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK)
+                    val r = try { recognize(engine, prepared) } finally { engine.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO) }
+                    if (r.letters > best.letters) best = r
+                }
+                Log.i(TAG, "Page ${pageIndex + 1}: $inkLines text lines on the image, read again as one block")
             }
             // A mostly Arabic page read with another model first: read again Arabic-first, keep the better.
             if (OcrPreprocessor.arabicShare(best.text) > 0.3) {

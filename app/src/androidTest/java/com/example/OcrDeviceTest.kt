@@ -119,6 +119,34 @@ class OcrDeviceTest {
         }
     }
 
+    /**
+     * The Arabic model alone, in automatic layout and as one block, on the same Arabic page:
+     * tells whether a low Arabic score comes from the model or from the app's pipeline.
+     */
+    @Test fun engineReadsArabic() {
+        val uri = page("arabic-raw", listOf(arabic))
+        val bmp = android.graphics.BitmapFactory.decodeFile(uri.path)
+        val root = com.example.ocr.TessDataInstaller.ensureInstalled(context, listOf("ara"))
+        val tess = com.googlecode.tesseract.android.TessBaseAPI()
+        val outputs = ArrayList<String>()
+        try {
+            assertTrue("init", tess.init(root.absolutePath, "ara"))
+            for (mode in listOf(com.googlecode.tesseract.android.TessBaseAPI.PageSegMode.PSM_AUTO, com.googlecode.tesseract.android.TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK)) {
+                tess.setPageSegMode(mode)
+                tess.setImage(bmp)
+                val text = tess.getUTF8Text().orEmpty()
+                val line = "OCR raw-arabic psm=$mode recall=${"%.2f".format(recall(arabic, text))} text=${text.replace('\n', ' ')}"
+                Log.i("OcrDeviceTest", line)
+                File(dir, "results.txt").appendText(line + "\n")
+                outputs += line
+                tess.clear()
+            }
+        } finally {
+            tess.recycle()
+        }
+        assertTrue("the Arabic model reads the page in no mode: $outputs", outputs.any { o -> Regex("recall=([0-9.]+)").find(o)!!.groupValues[1].toDouble() >= 0.6 })
+    }
+
     @Test fun arabicPage() { val r = ocr(page("arabic", listOf(arabic))); check("arabic", arabic, r.pages.single().rawText, 0.6) }
 
     @Test fun frenchPage() { val r = ocr(page("french", listOf(french))); check("french", french, r.pages.single().rawText, 0.8) }
