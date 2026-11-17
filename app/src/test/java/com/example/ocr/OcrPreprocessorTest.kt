@@ -48,6 +48,32 @@ class OcrPreprocessorTest {
     }
 
     @Test
+    fun textLines_areCountedFromTheInkProfile() {
+        fun page(vararg bands: Pair<Int, Int>): IntArray {
+            val ink = IntArray(400)
+            for ((from, to) in bands) for (y in from until to) ink[y] = 200
+            return ink
+        }
+        assertEquals(0, OcrPreprocessor.countTextLines(IntArray(400), 1000))
+        assertEquals(3, OcrPreprocessor.countTextLines(page(20 to 50, 80 to 110, 140 to 170), 1000))
+        // Dots above a line (a short gap) do not make a second line.
+        assertEquals(1, OcrPreprocessor.countTextLines(page(20 to 24, 26 to 50), 1000))
+        // Specks (shorter than a line) are not lines.
+        assertEquals(1, OcrPreprocessor.countTextLines(page(20 to 50, 300 to 302), 1000))
+        // Band positions, used to read each line on its own.
+        assertEquals(listOf(20..49, 80..109), OcrPreprocessor.textLineBands(page(20 to 50, 80 to 110), 1000))
+        assertEquals(listOf(20..49), OcrPreprocessor.textLineBands(page(20 to 24, 26 to 50), 1000))
+    }
+
+    @Test
+    fun arabicShare_decidesTheArabicFirstPass() {
+        assertTrue(OcrPreprocessor.arabicShare("المياه الجوفية مصدر أساسي") > 0.9)
+        assertTrue(OcrPreprocessor.arabicShare("Les eaux souterraines") == 0.0)
+        assertTrue(OcrPreprocessor.arabicShare("المياه الجوفية eau") > 0.3)
+        assertEquals(0.0, OcrPreprocessor.arabicShare("123 ..."), 0.0)
+    }
+
+    @Test
     fun weakResults_triggerAnotherOrientation() {
         assertTrue(OcrPreprocessor.isWeak("", 0.9f))
         assertTrue(OcrPreprocessor.isWeak("x.;- ,", 0.2f))

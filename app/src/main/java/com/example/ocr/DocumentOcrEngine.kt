@@ -64,11 +64,15 @@ class DocumentOcrEngine(private val context: Context) {
             }
             val lock = Any()
             var recycled = false
+            var arabicTess: TessBaseAPI? = null
             // Cancelling the coroutine aborts a recognition that is in progress.
             val cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
                 if (cause is CancellationException) {
                     synchronized(lock) {
-                        if (!recycled) try { tess.stop() } catch (e: Throwable) { /* already finished */ }
+                        if (!recycled) {
+                            try { tess.stop() } catch (e: Throwable) { /* already finished */ }
+                            try { arabicTess?.stop() } catch (e: Throwable) { /* already finished */ }
+                        }
                     }
                 }
             }
@@ -85,6 +89,26 @@ class DocumentOcrEngine(private val context: Context) {
                 // Keep the gaps between columns so simple tables can be reconstructed.
                 tess.setVariable("preserve_interword_spaces", "1")
 
+                // Arabic-first engine for pages that turn out to be Arabic when the app language put
+                // another model first (the first model decides ties between scripts). Created
+                // only when needed, released with the main one.
+                val languages = language.tesseractLanguages(appLanguage)
+                val arabicFirst = if ("ara" in language.models && !languages.startsWith("ara")) "ara+" + language.models.filter { it != "ara" }.joinToString("+") else null
+                fun arabicEngine(): TessBaseAPI? {
+                    if (arabicFirst == null) return null
+                    arabicTess?.let { return it }
+                    val t = TessBaseAPI()
+                    val ok = try { t.init(dataPath, arabicFirst, TessBaseAPI.OEM_LSTM_ONLY) } catch (e: Throwable) { false }
+                    if (!ok) { t.recycle(); return null }
+                    t.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO)
+                    // Not preserve_interword_spaces here: with it, Arabic words at a line end
+                    // came back joined ("تعتمدالمدن" instead of "تعتمد المدن").
+                    t.setVariable("preserve_interword_spaces", "0")
+                    t.setVariable("user_defined_dpi", "300")
+                    synchronized(lock) { if (recycled) { t.recycle(); return null } }
+                    arabicTess = t
+                    return t
+                }
                 val pages = ArrayList<ScannedPageData>(pageUris.size)
                 var failed = 0
                 val errors = ArrayList<String>()
@@ -93,7 +117,7 @@ class DocumentOcrEngine(private val context: Context) {
                     val pageIndex = firstPageIndex + offset
                     onProgress(offset + 1, pageUris.size)
                     val page = try {
-                        recognizePage(tess, uri, pageIndex)
+                        recognizePage(tess, uri, pageIndex, ::arabicEngine)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: OutOfMemoryError) {
@@ -118,6 +142,7 @@ class DocumentOcrEngine(private val context: Context) {
                 synchronized(lock) {
                     recycled = true
                     try { tess.recycle() } catch (e: Throwable) { /* native instance already released */ }
+                    try { arabicTess?.recycle() } catch (e: Throwable) { /* already released */ }
                 }
             }
         }
@@ -126,9 +151,12 @@ class DocumentOcrEngine(private val context: Context) {
     /** Text, layout lines and confidence of one recognition. */
     private class Recognition(val text: String, val lines: List<OcrLineInfo>, val confidence: Float) {
         val score: Double get() = OcrPreprocessor.score(text, confidence)
+        val letters: Int get() = text.count { it.isLetter() }
+        /** Lines in the result (layout lines, or text lines when there are none). */
+        val lineCount: Int get() = if (lines.isNotEmpty()) lines.size else text.lines().count { it.isNotBlank() }
     }
 
-    private suspend fun recognizePage(tess: TessBaseAPI, uri: Uri, pageIndex: Int): ScannedPageData {
+    private suspend fun recognizePage(tess: TessBaseAPI, uri: Uri, pageIndex: Int, arabicEngine: () -> TessBaseAPI?): ScannedPageData {
         val original: Bitmap = PageImageLoader.load(context, uri)
         val prepared = try { OcrPreprocessor.prepare(original) } finally { original.recycle() }
         try {
@@ -144,6 +172,26 @@ class DocumentOcrEngine(private val context: Context) {
                     if (!OcrPreprocessor.isWeak(best.text, best.confidence)) break
                 }
             }
+            // Lines missed by the layout analysis. Measured on the device (OcrDeviceTest): on an
+            // Arabic page of two lines, Tesseract returns only the first one in every page mode,
+            // although it reads the second line perfectly on its own. When the image shows
+            // clearly more text lines than were recognized, each line is read separately (cut
+            // from the page's ink profile) and the result with more letters is kept.
+            val bands = OcrPreprocessor.textLineBands(prepared)
+            if (bands.size >= 2 && best.lineCount * 4 < bands.size * 3) {
+                val engine = (if (OcrPreprocessor.arabicShare(best.text) > 0.3) arabicEngine() else null) ?: tess
+                val r = recognizeLines(engine, prepared, bands)
+                if (r.letters > best.letters) best = r
+                Log.i(TAG, "Page ${pageIndex + 1}: ${bands.size} text lines on the image, ${best.lineCount} recognized after reading line by line")
+            }
+            // A mostly Arabic page read with another model first: read again Arabic-first, keep the better.
+            if (OcrPreprocessor.arabicShare(best.text) > 0.3) {
+                arabicEngine()?.let { ar ->
+                    currentCoroutineContext().ensureActive()
+                    val r = recognize(ar, prepared)
+                    if (r.letters > best.letters || r.score > best.score) best = r
+                }
+            }
             Log.i(TAG, "Page ${pageIndex + 1}: ${best.text.length} characters, confidence ${"%.2f".format(best.confidence)}")
             return ScannedDocumentStructureReconstructor.reconstructPage(
                 pageIndex = pageIndex,
@@ -157,6 +205,33 @@ class DocumentOcrEngine(private val context: Context) {
         }
     }
 
+    /** Reads each text line band on its own (one block per line), in page order. */
+    private suspend fun recognizeLines(tess: TessBaseAPI, page: Bitmap, bands: List<IntRange>): Recognition {
+        val texts = ArrayList<String>()
+        var confidence = 0f
+        tess.setPageSegMode(TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK)
+        try {
+            for (band in bands) {
+                currentCoroutineContext().ensureActive()
+                val top = (band.first - 10).coerceAtLeast(0)
+                val bottom = (band.last + 10).coerceAtMost(page.height - 1)
+                val crop = Bitmap.createBitmap(page, 0, top, page.width, bottom - top + 1)
+                try {
+                    tess.setImage(crop)
+                    val t = tess.getUTF8Text().orEmpty().trim()
+                    if (t.isNotEmpty()) { texts += t.replace(Regex("""\s*\n\s*"""), " "); confidence += tess.meanConfidence() / 100f }
+                } finally {
+                    tess.clear()
+                    crop.recycle()
+                }
+            }
+        } finally {
+            tess.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO)
+        }
+        val conf = if (texts.isEmpty()) 0f else (confidence / texts.size).coerceIn(0f, 1f)
+        return Recognition(texts.joinToString("\n"), emptyList(), conf)
+    }
+
     private fun recognize(tess: TessBaseAPI, bitmap: Bitmap): Recognition {
         try {
             tess.setImage(bitmap)
@@ -166,7 +241,11 @@ class DocumentOcrEngine(private val context: Context) {
             val plainText = tess.getUTF8Text().orEmpty()
             val confidence = (tess.meanConfidence() / 100f).coerceIn(0f, 1f)
             val lines = readLines(tess)
-            val text = if (lines.isNotEmpty()) OcrTextAssembler.assemble(lines).ifBlank { plainText.trim() } else plainText.trim()
+            val assembled = if (lines.isNotEmpty()) OcrTextAssembler.assemble(lines) else ""
+            // The layout lines give paragraphs and tables; if they miss text the engine read,
+            // its plain text is used instead (nothing recognized is dropped).
+            val plain = plainText.trim()
+            val text = if (assembled.count { it.isLetter() } * 10 >= plain.count { it.isLetter() } * 9) assembled.ifBlank { plain } else plain
             return Recognition(text, lines, confidence)
         } finally {
             tess.clear()

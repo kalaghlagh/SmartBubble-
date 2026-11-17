@@ -33,8 +33,10 @@ object PageImageLoader {
     fun load(context: Context, uri: Uri): Bitmap {
         val resolver = context.contentResolver
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-            ?: throw IOException("Cannot open image")
+        // decodeStream returns null when it only reads the bounds, so the stream itself is
+        // checked (an elvis on the decode result rejected every image).
+        val stream = resolver.openInputStream(uri) ?: throw IOException("Cannot open image")
+        stream.use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw IOException("Not a readable image")
 
         val options = BitmapFactory.Options().apply {

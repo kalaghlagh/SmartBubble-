@@ -115,7 +115,11 @@ class KeyboardDeviceTest {
         compose.waitForIdle()
         assertAboveKeyboard("chat_input_field")
         hideKeyboard()
-        // No blank area left: the composer is back where it was (it is taller now, so its bottom matches).
+        // No blank area left: the composer goes back where it was (it is taller now, so its
+        // bottom matches) once the keyboard's closing animation has ended.
+        try {
+            compose.waitUntil(5_000) { kotlin.math.abs(bottomOf("chat_input_field") - closedBottom) < 4f }
+        } catch (e: Throwable) { /* reported below with the measured position */ }
         val after = bottomOf("chat_input_field")
         assertTrue("composer bottom $after, before the keyboard $closedBottom", kotlin.math.abs(after - closedBottom) < 4f)
         // The text typed is still there.

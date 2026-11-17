@@ -119,6 +119,57 @@ class OcrDeviceTest {
         }
     }
 
+    /**
+     * The Arabic model alone, in automatic layout and as one block, on the same Arabic page:
+     * tells whether a low Arabic score comes from the model or from the app's pipeline.
+     */
+    @Test fun engineReadsArabic() {
+        val uri = page("arabic-raw", listOf(arabic))
+        val bmp = android.graphics.BitmapFactory.decodeFile(uri.path)
+        val root = com.example.ocr.TessDataInstaller.ensureInstalled(context, listOf("ara"))
+        val tess = com.googlecode.tesseract.android.TessBaseAPI()
+        val outputs = ArrayList<String>()
+        try {
+            assertTrue("init", tess.init(root.absolutePath, "ara"))
+            for (mode in listOf(com.googlecode.tesseract.android.TessBaseAPI.PageSegMode.PSM_AUTO, com.googlecode.tesseract.android.TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK)) {
+                tess.setPageSegMode(mode)
+                tess.setImage(bmp)
+                val text = tess.getUTF8Text().orEmpty()
+                val line = "OCR raw-arabic psm=$mode recall=${"%.2f".format(recall(arabic, text))} text=${text.replace('\n', ' ')}"
+                Log.i("OcrDeviceTest", line)
+                File(dir, "results.txt").appendText(line + "\n")
+                outputs += line
+                tess.clear()
+            }
+        } finally {
+            tess.recycle()
+        }
+        // How many text lines the image shows, and the second line read on its own. Finding
+        // (runs #60-#62): on the full page the Arabic model returns only the first line in both
+        // modes, but it reads the second line perfectly alone; the app therefore reads line by
+        // line when lines are missing (see DocumentOcrEngine). This test checks that capability.
+        val gray = com.example.ocr.OcrPreprocessor.prepare(bmp)
+        val bands = com.example.ocr.OcrPreprocessor.textLineBands(gray)
+        val tess2 = com.googlecode.tesseract.android.TessBaseAPI()
+        val secondLine: String
+        try {
+            assertTrue("init", tess2.init(root.absolutePath, "ara"))
+            assertTrue("text lines on the image: ${bands.size}", bands.size >= 2)
+            val b = bands[1]
+            val top = (b.first - 10).coerceAtLeast(0)
+            val crop = Bitmap.createBitmap(gray, 0, top, gray.width, (b.last + 10).coerceAtMost(gray.height - 1) - top + 1)
+            FileOutputStream(File(dir, "arabic-line2.png")).use { crop.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            tess2.setImage(crop)
+            secondLine = tess2.getUTF8Text().orEmpty().replace('\n', ' ')
+        } finally {
+            tess2.recycle()
+        }
+        outputs += "ink lines on the image=${bands.size}; second line alone=$secondLine"
+        File(dir, "results.txt").appendText(outputs.last() + "\n")
+        val expectedSecond = "الكبرى على الآبار العميقة لتلبية حاجات السكان"
+        assertTrue("the Arabic model does not read the second line alone: $outputs", recall(expectedSecond, secondLine) >= 0.8)
+    }
+
     @Test fun arabicPage() { val r = ocr(page("arabic", listOf(arabic))); check("arabic", arabic, r.pages.single().rawText, 0.6) }
 
     @Test fun frenchPage() { val r = ocr(page("french", listOf(french))); check("french", french, r.pages.single().rawText, 0.8) }

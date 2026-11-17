@@ -81,6 +81,57 @@ object OcrPreprocessor {
      */
     fun score(text: String, confidence: Float): Double = confidence.toDouble() * text.count { it.isLetter() }
 
+    /**
+     * Number of text lines on a page from its horizontal ink profile: [rowInk] holds the dark
+     * pixels of each row. A line is a run of inked rows at least [minHeight] high; short gaps
+     * (accents, dots above Arabic letters) do not split it.
+     */
+    fun countTextLines(rowInk: IntArray, width: Int, minHeight: Int = 8, maxGap: Int = 3): Int =
+        textLineBands(rowInk, width, minHeight, maxGap).size
+
+    /** Rows (first..last) of each text line, from the horizontal ink profile (see [countTextLines]). */
+    fun textLineBands(rowInk: IntArray, width: Int, minHeight: Int = 8, maxGap: Int = 3): List<IntRange> {
+        val threshold = (width * 0.004).toInt().coerceAtLeast(2)
+        val bands = ArrayList<IntRange>()
+        var start = -1
+        var last = -1
+        for ((y, v) in rowInk.withIndex()) {
+            if (v >= threshold) {
+                if (start < 0) start = y
+                last = y
+            } else if (start >= 0 && y - last > maxGap) {
+                if (last - start + 1 >= minHeight) bands += start..last
+                start = -1
+            }
+        }
+        if (start >= 0 && last - start + 1 >= minHeight) bands += start..last
+        return bands
+    }
+
+    /** Text lines of a prepared (grey) page, see [countTextLines]. */
+    fun countTextLines(page: Bitmap): Int = textLineBands(page).size
+
+    /** Row bands of the text lines of a prepared (grey) page. */
+    fun textLineBands(page: Bitmap): List<IntRange> {
+        val w = page.width
+        val row = IntArray(w)
+        val ink = IntArray(page.height)
+        for (y in 0 until page.height) {
+            page.getPixels(row, 0, w, 0, y, w, 1)
+            var n = 0
+            for (x in 0 until w) if ((row[x] and 0xFF) < 110) n++
+            ink[y] = n
+        }
+        return textLineBands(ink, w)
+    }
+
+    /** Share of the letters of [text] that are Arabic. */
+    fun arabicShare(text: String): Double {
+        val letters = text.filter { it.isLetter() }
+        if (letters.isEmpty()) return 0.0
+        return letters.count { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }.toDouble() / letters.length
+    }
+
     /** A result too weak to trust the page's orientation (another rotation is tried). */
     fun isWeak(text: String, confidence: Float): Boolean = confidence < 0.55f || text.count { it.isLetter() } < 15
 }
