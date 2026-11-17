@@ -125,14 +125,14 @@ class ScanAndTemplateOptionsTest {
 
     @Test
     fun ocrLanguagesMapToBundledModels() {
-        assertEquals("ara+eng", OcrLanguage.ARABIC.tesseractLanguages("en"))
-        assertEquals("fra", OcrLanguage.FRENCH.tesseractLanguages("ar"))
-        assertEquals("ara+eng+fra", OcrLanguage.AUTO.tesseractLanguages("ar"))
-        assertEquals("fra+ara+eng", OcrLanguage.AUTO.tesseractLanguages("fr"))
+        assertEquals(com.example.extraction.OcrModel.ARABIC, OcrLanguage.ARABIC.preferredModel("en"))
+        assertEquals(com.example.extraction.OcrModel.LATIN, OcrLanguage.FRENCH.preferredModel("ar"))
+        assertEquals(com.example.extraction.OcrModel.ARABIC, OcrLanguage.AUTO.preferredModel("ar"))
+        assertEquals(com.example.extraction.OcrModel.LATIN, OcrLanguage.AUTO.preferredModel("fr"))
         assertEquals(OcrLanguage.AUTO, OcrLanguage.fromCode("unknown"))
-        OcrLanguage.values().forEach { lang ->
-            assertTrue(lang.models.all { it in com.example.ocr.TessDataInstaller.MODELS })
-        }
+        // Every model a language can use is bundled with its checksum.
+        val bundled = com.example.ocr.paddle.PaddleModels.ALL.map { it.asset }
+        assertTrue(com.example.ocr.paddle.PaddleModels.ARABIC.asset in bundled && com.example.ocr.paddle.PaddleModels.LATIN.asset in bundled)
     }
 
     // ---------------------------------------------------------------- template options

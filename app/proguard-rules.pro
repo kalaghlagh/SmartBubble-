@@ -26,9 +26,8 @@
 # has been verified on a device.
 # ---------------------------------------------------------------------------------------------
 
-# Tesseract4Android: classes and members are called from native code (JNI).
--keep class com.googlecode.tesseract.android.** { *; }
--keep class com.googlecode.leptonica.android.** { *; }
+# ONNX Runtime: classes and members are called from native code (JNI).
+-keep class ai.onnxruntime.** { *; }
 
 # Room entities / DAOs are referenced by generated code.
 -keep class com.example.data.model.** { *; }

@@ -6,27 +6,37 @@ import android.graphics.Matrix
 import android.os.SystemClock
 import android.util.Log
 import com.example.ocr.OcrPreprocessor
+import com.example.ocr.paddle.LineReading
+import com.example.ocr.paddle.PaddleOrtOcrEngine
+import com.example.ocr.paddle.RecLine
+import com.example.ocr.paddle.RecWords
+import com.example.ocr.paddle.RtlText
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 /**
- * Reads one page image into an [ExtractedPage], region by region:
+ * Reads one page image into an [ExtractedPage], region by region (PaddleOCR on ONNX Runtime):
  *
  * A. The page is straightened (skew), made grey with its contrast stretched, and turned upright
  *    when it was photographed sideways.
- * B. Layout: a first reading with all models gives the text lines and their boxes; the image's
- *    ink profile gives the text rows; drawn borders give the tables.
- * C. Script: each line's script is decided from its letters and its confident words.
- * D. Routing: each region is read again with the configuration of its script ([OcrRouting]):
- *    Arabic model for Arabic, French or English (or both) for Latin, digits for numbers.
- * E. Evaluation: the readings are compared by [CandidateEvaluator] (confidence, plausibility,
- *    script expected by the context, agreement, number vote); uncertain regions are marked for
- *    review. Rows of the image that no line covers are read on their own; table cells are read
- *    with the script of their row. [LayoutAnalyzer] rebuilds headings, lists, tables, paragraphs.
+ * B. Detection: every text region of the page gets a box (the detector does not drop short
+ *    lines the way a layout pass can).
+ * C. Recognition: each region is read by the model the page prefers ([preferred]); the other
+ *    model reads it too when needed ([LineReading.needsSecond]). An Arabic line keeps the Arabic
+ *    reading with its Latin words repaired from the Latin reading of the same crop
+ *    ([com.example.ocr.paddle.ScriptMerge]); a Latin line keeps the better of both readings.
+ *    Right-to-left text is put back in reading order ([RtlText]); words keep their boxes.
+ * D. Rows of the image that no region covers are read on their own and marked for review.
+ * E. Structure: [LayoutAnalyzer] rebuilds headings, lists, tables, paragraphs; table cells are
+ *    read again in the script their row and column expect, compared by [CandidateEvaluator].
  *
  * Page text is never written to the log (only counts and timings).
  */
-class OcrPageReader(private val engines: OcrEngineRegistry) {
+class OcrPageReader(
+    private val engine: PaddleOrtOcrEngine,
+    /** The model read first; the other one is read only where needed. */
+    private val preferred: OcrModel = OcrModel.ARABIC
+) {
 
     /** Time spent on the last page, by stage (ms), for the performance report. */
     val timings = LinkedHashMap<String, Long>()
@@ -39,90 +49,84 @@ class OcrPageReader(private val engines: OcrEngineRegistry) {
         return px
     }
 
-    private fun crop(page: Bitmap, left: Float, top: Float, right: Float, bottom: Float): Pair<Bitmap, IntArray>? {
-        val l = left.toInt().coerceAtLeast(0)
-        val t = top.toInt().coerceAtLeast(0)
-        val r = right.toInt().coerceAtMost(page.width)
-        val b = bottom.toInt().coerceAtMost(page.height)
-        if (r - l < 8 || b - t < 8) return null
-        return Bitmap.createBitmap(page, l, t, r - l, b - t) to intArrayOf(l, t)
+    private fun crop(page: Bitmap, box: Box): Pair<Bitmap, Box>? {
+        val l = box.left.toInt().coerceAtLeast(0)
+        val t = box.top.toInt().coerceAtLeast(0)
+        val r = box.right.toInt().coerceAtMost(page.width)
+        val b = box.bottom.toInt().coerceAtMost(page.height)
+        if (r - l < 4 || b - t < 4) return null
+        return Bitmap.createBitmap(page, l, t, r - l, b - t) to Box(l.toFloat(), t.toFloat(), r.toFloat(), b.toFloat())
     }
 
-    /**
-     * One region read by [config] (whole words: margins of a line height around the box, and
-     * [vMargin] above and below, a third of the height by default).
-     */
-    private fun readRegion(config: OcrConfig, page: Bitmap, box: Box, mode: Segmentation, vMargin: Float? = null): RecognitionCandidate? {
-        val engine = engines.get(config) ?: return null
-        val h = box.height.coerceAtLeast(8f)
-        val v = vMargin ?: (h * 0.35f)
-        val cropped = crop(page, box.left - h, box.top - v, box.right + h, box.bottom + v)
-        val (img, origin) = cropped ?: return null
-        return try {
-            val got = engine.lines(img, mode, origin[0], origin[1], config.languages)
-            val words = got.flatMap { it.words }
-            if (words.isEmpty()) null
-            else {
-                val line = TextLine(words, Box.of(words.map { it.box })!!, source = config.languages)
-                RecognitionCandidate(line.text, line.confidence, config.languages, config.script, listOf(line))
-            }
+    private fun other(model: OcrModel) = if (model == OcrModel.ARABIC) OcrModel.LATIN else OcrModel.ARABIC
+
+    /** A region read by the first model, and by the second one when needed. */
+    private suspend fun readRegion(page: Bitmap, box: Box, first: OcrModel = preferred): Pair<LineReading.Result, Box>? {
+        val (img, cropBox) = crop(page, box) ?: return null
+        try {
+            val a = engine.recognize(img, first)
+            currentCoroutineContext().ensureActive()
+            val b = if (LineReading.needsSecond(a)) engine.recognize(img, other(first)) else null
+            val result = LineReading.combine(a, b)
+            trace { "region ${cropBox.top.toInt()}-${cropBox.bottom.toInt()} readings=${listOfNotNull(a, b).map { "${it.model}:${it.confidence}:${it.text}" }} kept=${result.line.model}:${logical(result.line)} review=${result.reasons}" }
+            return result to cropBox
         } finally {
             img.recycle()
         }
     }
 
-    private fun pageCandidate(line: TextLine) = RecognitionCandidate(line.text, line.confidence, "page", null, listOf(line))
-
-    /** The script a line's confident words show (null when they do not decide). */
-    private fun confidentScript(line: TextLine): Script? {
-        val sure = line.words.filter { (it.confidence ?: 0f) >= 0.8f }.joinToString(" ") { it.text }
-        return ScriptDetector.classify(sure).takeIf { it == Script.ARABIC || it == Script.LATIN }
+    /** Words of a reading in reading order, on the page. */
+    private fun words(result: LineReading.Result, cropBox: Box, region: Box): List<TextWord> {
+        val box = Box(cropBox.left, maxOf(cropBox.top, region.top), cropBox.right, minOf(cropBox.bottom, region.bottom))
+        return RecWords.words(result.line, box)
     }
 
-    /** The line read again by the configurations of its script, the best reading kept. */
-    private fun routeLine(page: Bitmap, line: TextLine): TextLine {
-        val expected = confidentScript(line)
-        val script = ScriptDetector.classify(line.text)
-        val conf = line.confidence ?: 0f
-        // A confident line already in the script its context shows, read Arabic-first when
-        // Arabic, is kept as is (fewer recognitions on long documents).
-        // Every word must be confident too: one weak word ("2890" for an Arabic word) is enough
-        // to read the line again.
-        val weakest = line.words.minOfOrNull { it.confidence ?: 0f } ?: 0f
-        val settled = conf >= 0.88f && weakest >= 0.75f && expected != null && script == expected && !ScriptDetector.suspiciousLatinInArabic(line) &&
-            (script != Script.ARABIC || engines.pageArabicFirst)
-        if (settled) return line.copy(engines = listOf("page"))
-        val configs = OcrRouting.plan(line.text, expected, OcrRouting.isNumeric(line.text))
-        val candidates = listOf(pageCandidate(line)) + configs.mapNotNull { readRegion(it, page, line.box, Segmentation.LINE) }
-        val e = CandidateEvaluator.evaluate(candidates, expected, OcrRouting.isNumeric(line.text))
-        trace { "line expected=$expected candidates=${candidates.map { "${it.engine}:${it.confidence}:${it.text}" }} chosen=${e.chosen?.engine} review=${e.reasons}" }
-        val chosen = e.chosen ?: return line.copy(needsReview = true, engines = candidates.map { it.engine })
-        val base = chosen.lines.firstOrNull() ?: line
-        return base.copy(needsReview = e.needsReview, engines = candidates.map { it.engine }, source = chosen.engine.takeIf { it != "page" })
+    private fun logical(line: RecLine) = RtlText.visualToLogical(line.text)
+
+    /**
+     * Bounding box of the dark pixels inside [area] (the ink of a table cell or of a row of the
+     * image), or null when there is none.
+     */
+    private fun ink(g: IntArray, width: Int, height: Int, area: Box): Box? {
+        val l = area.left.toInt().coerceIn(0, width - 1)
+        val r = area.right.toInt().coerceIn(0, width - 1)
+        val t = area.top.toInt().coerceIn(0, height - 1)
+        val b = area.bottom.toInt().coerceIn(0, height - 1)
+        var minX = Int.MAX_VALUE; var maxX = -1; var minY = Int.MAX_VALUE; var maxY = -1
+        for (y in t..b) for (x in l..r) if (g[y * width + x] < 110) {
+            if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y
+        }
+        if (maxX < minX || maxY < minY) return null
+        return Box(minX.toFloat(), minY.toFloat(), (maxX + 1).toFloat(), (maxY + 1).toFloat())
     }
 
     /**
-     * A table cell read on its own by the configurations its row expects, compared with what the
-     * page reading found there. Bordered cells are read inside their borders; cells of tables
-     * without borders get a margin around their words so no letter is cut.
+     * A table cell read on its own by the models its row and column expect, compared with what
+     * the page reading found there. The crop is the ink inside the cell (inside its borders when
+     * it has some) with a small margin; a cell holding several lines keeps the page reading.
      */
-    private fun readCell(page: Bitmap, box: Box, words: List<TextWord>, bordered: Boolean, expected: Script?, column: List<String>): TableCell? {
+    private fun readCell(ctx: kotlin.coroutines.CoroutineContext, page: Bitmap, g: IntArray, lineH: Float, box: Box, words: List<TextWord>, bordered: Boolean,
+                                 expected: Script?, column: List<String>): TableCell? {
         val pageText = words.joinToString(" ") { it.text }
         val pageConf = words.mapNotNull { it.confidence }.takeIf { it.isNotEmpty() }?.average()?.toFloat()
         val numeric = OcrRouting.isNumeric(pageText)
-        val region = if (bordered) Box(box.left + 5, box.top + 5, box.right - 5, box.bottom - 5)
-        else box.height.coerceAtLeast(8f).let { h -> Box(box.left - h * 0.6f, box.top - h * 0.4f, box.right + h * 0.6f, box.bottom + h * 0.4f) }
+        val inside = if (bordered) Box(box.left + 5, box.top + 5, box.right - 5, box.bottom - 5) else box
+        val inkBox = ink(g, page.width, page.height, inside) ?: return null
+        if (inkBox.height > lineH * 1.8f) return null
+        val pad = (inkBox.height * 0.25f).coerceIn(3f, 12f)
+        val region = Box(inkBox.left - pad, inkBox.top - pad, inkBox.right + pad, inkBox.bottom + pad)
         val candidates = ArrayList<RecognitionCandidate>()
         if (pageText.isNotBlank()) candidates += RecognitionCandidate(pageText, pageConf, "page")
-        for (config in OcrRouting.plan(pageText, expected, numeric)) {
-            val engine = engines.get(config) ?: continue
-            val (img, _) = crop(page, region.left, region.top, region.right, region.bottom) ?: continue
-            try {
-                val (t, c) = engine.text(img, Segmentation.BLOCK)
-                if (t.isNotBlank()) candidates += RecognitionCandidate(t, c, config.languages, config.script)
-            } finally {
-                img.recycle()
+        val (img, cropBox) = crop(page, region) ?: return null
+        try {
+            for (model in OcrRouting.plan(pageText, expected, numeric)) {
+                ctx.ensureActive()
+                val line = engine.recognize(img, model)
+                val text = RecWords.words(line, cropBox).joinToString(" ") { it.text }
+                if (text.isNotBlank()) candidates += RecognitionCandidate(text, line.confidence, model.key, model.script)
             }
+        } finally {
+            img.recycle()
         }
         val e = CandidateEvaluator.evaluate(candidates, expected, numeric, column)
         trace { "cell expected=$expected column=$column candidates=${candidates.map { "${it.engine}:${it.confidence}:${it.text}" }} chosen=${e.chosen?.text} review=${e.reasons}" }
@@ -130,44 +134,70 @@ class OcrPageReader(private val engines: OcrEngineRegistry) {
         return TableCell(chosen.text, confidence = chosen.confidence, needsReview = e.needsReview)
     }
 
-    /**
-     * A row of the image no line covers, read by every configuration and checked. The crop keeps
-     * only a few pixels above and below the row so that the neighbouring lines (list items set
-     * close together) are not read with it. [blockLines] are the lines of a whole-page reading
-     * in uniform-block mode, which does not drop short lines.
-     */
-    private fun recoverBand(page: Bitmap, g: IntArray, band: IntRange, existing: List<TextLine>, blockLines: List<TextLine>): TextLine? {
-        // Horizontal extent of the ink in the band (not the whole page width).
-        var minX = page.width
-        var maxX = 0
-        for (y in band) for (x in 0 until page.width) if (g[y * page.width + x] < 110) { if (x < minX) minX = x; if (x > maxX) maxX = x }
-        if (maxX <= minX) return null
-        val box = Box(minX.toFloat(), band.first.toFloat(), maxX.toFloat(), band.last.toFloat())
-        val bandBox = Box(0f, band.first.toFloat(), page.width.toFloat(), band.last.toFloat())
-        val fromBlock = blockLines.filter { it.box.verticalOverlap(bandBox) > 0.5f }.map {
-            RecognitionCandidate(it.text, it.confidence, "page-block", null, listOf(it))
+    /** A row of the image no region covers, read by both models and checked. */
+    private suspend fun recoverBand(page: Bitmap, g: IntArray, band: IntRange, existing: List<TextLine>): TextLine? {
+        val box = ink(g, page.width, page.height, Box(0f, band.first.toFloat(), (page.width - 1).toFloat(), band.last.toFloat())) ?: return null
+        val pad = (box.height * 0.2f).coerceIn(2f, 10f)
+        val region = Box(box.left - pad * 2, box.top - pad, box.right + pad * 2, box.bottom + pad)
+        val (img, cropBox) = crop(page, region) ?: return null
+        val readings = try {
+            listOf(engine.recognize(img, OcrModel.ARABIC), engine.recognize(img, OcrModel.LATIN))
+        } finally {
+            img.recycle()
         }
-        val candidates = fromBlock + listOf(OcrConfig.PAGE, OcrConfig.ARABIC, OcrConfig.LATIN).flatMap { c ->
-            listOfNotNull(readRegion(c, page, box, Segmentation.LINE, vMargin = 4f), readRegion(c, page, box, Segmentation.BLOCK, vMargin = 4f))
-        }
-        val e = CandidateEvaluator.evaluate(candidates, expected = null)
-        trace { "band ${band.first}-${band.last} candidates=${candidates.map { "${it.engine}:${it.confidence}:${it.text}" }} chosen=${e.chosen?.text} review=${e.reasons}" }
-        val chosen = e.chosen ?: return null
-        val line = chosen.lines.firstOrNull() ?: return null
-        val plausible = CandidateEvaluator.plausibility(line.text) >= 0.6
-        if (((line.confidence ?: 0f) < 0.3f && !plausible) || OcrDecisions.isDuplicate(line.text, existing)) return null
+        val result = LineReading.combine(readings[0], readings[1])
+        val words = RecWords.words(result.line, cropBox)
+        val text = words.joinToString(" ") { it.text }
+        trace { "band ${band.first}-${band.last} readings=${readings.map { "${it.model}:${it.confidence}:${it.text}" }} kept=$text" }
+        val plausible = CandidateEvaluator.plausibility(text) >= 0.6
+        if (words.isEmpty() || (result.line.confidence < 0.3f && !plausible) || OcrDecisions.isDuplicate(text, existing)) return null
         // A recovered line is always shown for review.
-        return line.copy(source = "band", needsReview = true, engines = candidates.map { it.engine }.distinct())
+        return TextLine(words, Box.of(words.map { it.box })!!, source = "band", needsReview = true, engines = result.models)
     }
 
     private fun mean(lines: List<TextLine>): Float? = lines.flatMap { it.words }.mapNotNull { it.confidence }.takeIf { it.isNotEmpty() }?.average()?.toFloat()
+
+    /** Detection and recognition of the whole page: its text lines. */
+    private suspend fun readLines(page: Bitmap, notes: MutableList<String>): List<TextLine> {
+        val boxes = engine.detect(page)
+        currentCoroutineContext().ensureActive()
+        // The page's own script decides which model reads first: after a few regions, the
+        // script most regions turned out to be.
+        var arabicRegions = 0
+        var latinRegions = 0
+        var merged = 0
+        val regions = ArrayList<Pair<Box, List<TextWord>>>()
+        val infos = ArrayList<RecWords.LineInfo>()
+        for (box in boxes) {
+            currentCoroutineContext().ensureActive()
+            val first = when {
+                arabicRegions + latinRegions < 3 -> preferred
+                arabicRegions >= latinRegions -> OcrModel.ARABIC
+                else -> OcrModel.LATIN
+            }
+            val (result, cropBox) = readRegion(page, box, first) ?: continue
+            if (result.script == Script.ARABIC) arabicRegions++ else if (result.script == Script.LATIN) latinRegions++
+            merged += result.mergedRuns
+            var ws = words(result, cropBox, box)
+            // Safety net for the merge: a word the Arabic model read as letters with high
+            // confidence is not replaced by digits from the Latin reading.
+            val primary = result.primary
+            if (result.mergedRuns > 0 && primary != null) {
+                val arabicOnly = RecWords.words(primary, Box(cropBox.left, box.top, cropBox.right, box.bottom))
+                ws = OcrDecisions.fuseWords(TextLine(ws, box), listOf(TextLine(arabicOnly, box)), minConfidence = 0.9f).first.words
+            }
+            regions += box to ws
+            infos += RecWords.LineInfo(result.line.model, result.needsReview, result.models)
+        }
+        if (merged > 0) notes += "latin_merged:$merged"
+        return RecWords.lines(regions) { infos[it] }
+    }
 
     suspend fun read(original: Bitmap, index: Int, source: PageSource, imageUri: String?): ExtractedPage {
         val notes = ArrayList<String>()
         timings.clear()
         var t0 = SystemClock.elapsedRealtime()
         fun lap(stage: String) { val now = SystemClock.elapsedRealtime(); timings[stage] = now - t0; t0 = now }
-        val pageEngine = engines.get(OcrConfig.PAGE) ?: throw IllegalStateException("OCR engine could not be initialized")
         // A. Straighten a slightly skewed page (measured on a reduced copy).
         val angle = try {
             val small = Bitmap.createScaledBitmap(original, (original.width / 2).coerceAtLeast(1), (original.height / 2).coerceAtLeast(1), true)
@@ -188,46 +218,30 @@ class OcrPageReader(private val engines: OcrEngineRegistry) {
         lap("prepare")
         try {
             currentCoroutineContext().ensureActive()
-            // B. Layout pass.
-            var lines = pageEngine.lines(page, Segmentation.PAGE)
-            trace { "page lines=${lines.map { "${it.box.top.toInt()}-${it.box.bottom.toInt()}:${it.confidence}:${it.text}" }}" }
+            // B-C. Detection and recognition; a page photographed sideways is turned upright.
+            var lines = readLines(page, notes)
             if (OcrPreprocessor.isWeak(lines.joinToString(" ") { it.text }, mean(lines) ?: 0f)) {
                 for (deg in listOf(90, 270, 180)) {
                     currentCoroutineContext().ensureActive()
                     val rotated = OcrPreprocessor.rotate(page, deg)
-                    val r = pageEngine.lines(rotated, Segmentation.PAGE)
+                    val r = readLines(rotated, ArrayList())
                     val better = OcrPreprocessor.score(r.joinToString(" ") { it.text }, mean(r) ?: 0f) >
                         OcrPreprocessor.score(lines.joinToString(" ") { it.text }, mean(lines) ?: 0f) * 1.2
                     if (better) { page.recycle(); page = rotated; lines = r; notes += "rotated:$deg"; break } else rotated.recycle()
                 }
             }
-            lap("layout")
-
-            // C-E. Each line routed to the configuration of its script and checked.
-            var rerouted = 0
-            lines = lines.map { line ->
-                currentCoroutineContext().ensureActive()
-                routeLine(page, line).also { if (it.source != null) rerouted++ }
-            }
-            if (rerouted > 0) notes += "lines_rerouted:$rerouted"
+            trace { "page lines=${lines.map { "${it.box.top.toInt()}-${it.box.bottom.toInt()}:${it.confidence}:${it.text}" }}" }
             lap("lines")
 
-            // Rows of the image no line covers (Tesseract's layout analysis can drop lines).
+            // D. Rows of the image no region covers.
             val g = gray(page)
             val allBands = OcrPreprocessor.textLineBands(page)
             val missed = OcrDecisions.missedBands(allBands, lines.map { it.box })
             trace { "bands=${allBands.map { "${it.first}-${it.last}" }} missed=${missed.map { "${it.first}-${it.last}" }}" }
-            // One reading of the whole page as a uniform block (short lines are not dropped), by
-            // the Arabic model on Arabic pages, only when rows were missed.
-            val blockLines = if (missed.isEmpty()) emptyList() else {
-                val arabicPage = ScriptDetector.classify(lines.joinToString(" ") { it.text }) == Script.ARABIC
-                val engine = (if (arabicPage) engines.get(OcrConfig.ARABIC) else null) ?: pageEngine
-                engine.lines(page, Segmentation.BLOCK)
-            }
             var recovered = 0
             for (band in missed) {
                 currentCoroutineContext().ensureActive()
-                val line = recoverBand(page, g, band, lines, blockLines) ?: continue
+                val line = recoverBand(page, g, band, lines) ?: continue
                 lines = lines.toMutableList().apply { add(OcrDecisions.insertionIndex(this, line.box.top), line) }
                 recovered++
             }
@@ -236,14 +250,17 @@ class OcrPageReader(private val engines: OcrEngineRegistry) {
             if (missed.size > recovered) notes += "possible_missing_lines:${missed.size - recovered}"
             lap("recovery")
 
-            // Structure, with table cells read in the script of their row.
+            // E. Structure, with table cells read in the script of their row and column.
             val rulings = TableReconstructor.detectRulings(g, page.width, page.height)
+            val lineH = lines.map { it.box.height }.sorted().let { if (it.isEmpty()) 40f else it[it.size / 2] }
+            val pageBitmap = page
+            val ctx = currentCoroutineContext()
             val blocks = LayoutAnalyzer.analyze(lines, page.width.toFloat(), page.height.toFloat(), rulings,
-                CellReader { box, ws, bordered, expected, column -> readCell(page, box, ws, bordered, expected, column) })
+                CellReader { box, ws, bordered, expected, column -> readCell(ctx, pageBitmap, g, lineH, box, ws, bordered, expected, column) })
             lap("structure")
             if (blocks.any { it is ExtractedBlock.Table && it.uncertain }) notes += "table_uncertain"
             val words = lines.flatMap { it.words }
-            Log.i(TAG, "Page ${index + 1}: ${lines.size} lines, ${words.size} words, ${blocks.size} blocks, notes=$notes, ms=$timings, loads=${engines.loadTimes}")
+            Log.i(TAG, "Page ${index + 1}: ${lines.size} lines, ${words.size} words, ${blocks.size} blocks, notes=$notes, ms=$timings, loads=${engine.loadTimes}")
             return ExtractedPage(
                 index = index,
                 source = source,
@@ -268,7 +285,7 @@ class OcrPageReader(private val engines: OcrEngineRegistry) {
         private const val TAG = "OcrPageReader"
 
         /**
-         * Receives the readings considered for each line, row and cell, for the device tests'
+         * Receives the readings considered for each region, row and cell, for the device tests'
          * reports only. Null in the app: page text is never logged.
          */
         @Volatile var trace: ((String) -> Unit)? = null

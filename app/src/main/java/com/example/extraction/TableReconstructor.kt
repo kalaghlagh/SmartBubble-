@@ -89,9 +89,13 @@ object TableReconstructor {
                     Triple(Box(l, top, rgt, bottom), words.filter { it.box.centerX in l..rgt && it.box.centerY in top..bottom }, span)
                 }
             }
-            // Other cells of the same column: same left border, one column wide.
-            fun columnOf(r: Int, box: Box) = grid.withIndex().filter { it.index != r }.mapNotNull { (_, row) ->
-                row.firstOrNull { abs(it.first.left - box.left) <= tolerance && it.third == 1 }?.second
+            // Other cells of the same column (same left border, one column wide): the cells already
+            // read (the header first) with their kept text, the rows below with the page reading.
+            val kept = ArrayList<List<TableCell>>()
+            fun columnOf(r: Int, box: Box): List<List<TextWord>> = grid.withIndex().filter { it.index != r }.mapNotNull { (k, row) ->
+                val c = row.indexOfFirst { abs(it.first.left - box.left) <= tolerance && it.third == 1 }
+                if (c < 0) null
+                else kept.getOrNull(k)?.getOrNull(c)?.let { cell -> listOf(TextWord(cell.text, row[c].first, cell.confidence ?: 0.9f)) } ?: row[c].second
             }
             val rows = ArrayList<List<TableCell>>()
             for ((r, raw) in grid.withIndex()) {
@@ -102,6 +106,7 @@ object TableReconstructor {
                     val ownText = own?.text?.trim()?.trim('|', '[', ']')?.trim()
                     if (own != null && !ownText.isNullOrEmpty()) own.copy(text = ownText, colSpan = span) else TableCell(cellText(inCell, rtl), span)
                 }
+                kept += cells
                 rows += if (rtl) cells.reversed() else cells
             }
             if (rows.isEmpty()) continue

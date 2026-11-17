@@ -26,10 +26,6 @@ import com.example.extraction.ScriptDetector
 import com.example.extraction.TextMetrics
 import com.example.ocr.DocumentOcrEngine
 import com.example.ocr.OcrLanguage
-import com.google.android.gms.tasks.Tasks
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -46,7 +42,6 @@ import java.io.FileOutputStream
  * digital and mixed PDFs). For each case it measures character and word error rates, script
  * classification accuracy, table cell / numeric cell / shape accuracy, list-item recall, reading
  * order, time per page and memory, and reports them in the instrumentation output ("bench").
- * ML Kit's Latin recognizer is run on the Latin image cases for comparison (not used by the app).
  *
  * The documents are drawn with the system fonts, not photographed: these numbers measure the
  * pipeline on clean prints, not real-camera accuracy.
@@ -257,25 +252,6 @@ class OcrBenchmarkDeviceTest {
 
     private fun image(uri: Uri) = ExtractionSource(uri, isPdf = false)
 
-    // ------------------------------------------------------------------ ML Kit comparison
-
-    private fun mlkit(name: String, uri: Uri, expected: String) {
-        try {
-            val bmp = BitmapFactory.decodeFile(uri.path)
-            // The test APK's ML Kit start-up provider does not run in the app's process.
-            com.google.mlkit.common.sdkinternal.MlKitContext.initializeIfNeeded(context)
-            val client = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-            val t = SystemClock.elapsedRealtime()
-            val res = Tasks.await(client.process(InputImage.fromBitmap(bmp, 0)))
-            val ms = SystemClock.elapsedRealtime() - t
-            client.close()
-            val got = norm(res.text.replace('\n', ' '))
-            emit("MLKIT $name: cer=${"%.3f".format(TextMetrics.cer(norm(expected), got))} wer=${"%.3f".format(TextMetrics.wer(norm(expected), got))} ms=$ms text=${got.take(300)}")
-        } catch (e: Throwable) {
-            emit("MLKIT $name: not available ($e at ${e.stackTrace.take(3).joinToString(" < ")})")
-        }
-    }
-
     // ------------------------------------------------------------------ corpus
 
     @Test
@@ -310,7 +286,6 @@ class OcrBenchmarkDeviceTest {
         val e = Expect(listOf("Résultats des analyses" to Script.LATIN, p to Script.LATIN, cells.flatten().joinToString(" ") to Script.LATIN), tables = listOf(cells))
         val uri = f.save(dir, "bench-french")
         measure("french-doc", "latin", e, image(uri))
-        mlkit("french-doc", uri, e.text)
         check(results.last(), 0.05)
     }
 
@@ -329,7 +304,6 @@ class OcrBenchmarkDeviceTest {
             tables = listOf(cells), items = listOf("1." to "Wells were sampled in March.", "2." to "Samples were kept at 4 degrees."))
         val uri = f.save(dir, "bench-english")
         measure("english-doc", "latin", e, image(uri))
-        mlkit("english-doc", uri, e.text)
         check(results.last(), 0.05)
     }
 

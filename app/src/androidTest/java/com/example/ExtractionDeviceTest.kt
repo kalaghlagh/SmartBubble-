@@ -37,7 +37,7 @@ import java.text.Normalizer
 import kotlin.random.Random
 
 /**
- * The document extraction engine on the device (real Tesseract, real PDF rendering): structured
+ * The document extraction engine on the device (real PaddleOCR on ONNX Runtime, real PDF rendering): structured
  * Arabic, French and English pages, lists, tables with and without borders (also right to left),
  * a skewed noisy page, and digital, scanned and mixed PDFs. Every result is reported in the
  * instrumentation output ("extraction_result") so the CI log carries the actual text read.

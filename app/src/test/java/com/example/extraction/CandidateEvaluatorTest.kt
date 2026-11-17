@@ -89,14 +89,14 @@ class CandidateEvaluatorTest {
 
     @Test
     fun routing_byScriptAndLanguage() {
-        assertEquals(OcrConfig.ARABIC, OcrRouting.plan("المياه الجوفية", null).first())
-        assertEquals(OcrConfig.FRENCH, OcrRouting.plan("Les eaux de la région", null).first())
-        assertEquals(OcrConfig.ENGLISH, OcrRouting.plan("The wells of the basin", null).first())
-        assertEquals(OcrConfig.LATIN, OcrRouting.plan("Nitrates", null).first())
+        assertEquals(OcrModel.ARABIC, OcrRouting.plan("المياه الجوفية", null).first())
+        assertEquals(OcrModel.LATIN, OcrRouting.plan("Les eaux de la région", null).first())
+        assertEquals(OcrModel.LATIN, OcrRouting.plan("The wells of the basin", null).first())
+        assertEquals(OcrModel.LATIN, OcrRouting.plan("Nitrates", null).first())
         // The context wins over a wrong first reading: a Latin row with an Arabic-looking hint.
-        assertEquals(OcrConfig.LATIN, OcrRouting.plan("35 اروم", Script.LATIN).first())
-        assertEquals(OcrConfig.NUMERIC, OcrRouting.plan("120", null, numericOnly = true).first())
-        assertEquals(listOf(OcrConfig.ARABIC), OcrRouting.plan("١٢٠", null, numericOnly = true))
+        assertEquals(OcrModel.LATIN, OcrRouting.plan("35 اروم", Script.LATIN).first())
+        assertEquals(OcrModel.LATIN, OcrRouting.plan("120", null, numericOnly = true).first())
+        assertEquals(OcrModel.ARABIC, OcrRouting.plan("١٢٠", null, numericOnly = true).first())
         assertTrue(OcrRouting.isNumeric("12,5 %"))
         assertFalse(OcrRouting.isNumeric("P1"))
         assertEquals("fr", LatinLanguage.detect("Les valeurs dépassent la norme"))
@@ -134,7 +134,7 @@ class CandidateEvaluatorTest {
     @Test
     fun arabicLabelReadAsDigits_losesToTheArabicModel_inAnArabicColumn() {
         // Run #70: "ب1" in an Arabic table was read "15" by the page, digits and Latin models.
-        assertEquals(listOf(OcrConfig.NUMERIC, OcrConfig.ARABIC), OcrRouting.plan("15", Script.ARABIC, numericOnly = true))
+        assertEquals(listOf(OcrModel.ARABIC, OcrModel.LATIN), OcrRouting.plan("15", Script.ARABIC, numericOnly = true))
         val e = CandidateEvaluator.evaluate(listOf(
             c("15", 0.80f, "page"), c("15", 0.85f, "numeric", Script.NUMERIC), c("ب1", 0.82f, "ara", Script.ARABIC)
         ), expected = Script.ARABIC, numericExpected = true)

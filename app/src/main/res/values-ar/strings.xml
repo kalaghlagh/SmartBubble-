@@ -269,6 +269,9 @@
     <string name="voice_err_tts_language">لا يوجد صوت مثبّت للغة هذه الرسالة. ثبّته من إعدادات تحويل النص إلى كلام في الجهاز.</string>
     <string name="voice_err_tts_failed">تعذّرت قراءة الرد بصوت مسموع.</string>
     <string name="scan_ocr_unavailable">تعذّر بدء التعرّف على النص على الجهاز. أفرغ بعض مساحة التخزين ثم حاول مرة أخرى.</string>
+    <string name="library_extract_text">استخراج النص</string>
+    <string name="library_extract_unavailable">لا يمكن استخراج النص إلا من ملفات PDF.</string>
+    <string name="scan_page_from_pdf_text">قُرئت هذه الصفحة مباشرة من نص ملف PDF: لا يوجد ما يُعاد التعرف عليه.</string>
     <string name="scan_pages_failed">تعذّرت قراءة %1$d صفحة. يمكنك كتابة نصها أو مسحها ضوئيًا مرة أخرى.</string>
     <string name="scan_pages_empty">لم يُعثر على نص في %1$d صفحة. تحقق من لغة المسح أو اكتب النص.</string>
     <string name="scan_ocr_language">لغة النص</string>

@@ -1,22 +1,11 @@
 package com.example.extraction
 
-/** A recognition configuration: which models, and whether only digits and number signs are allowed. */
-enum class OcrConfig(val languages: String, val numeric: Boolean = false) {
-    /** Layout pass and multilingual reading (all models; the order is set by the session). */
-    PAGE("page"),
-    ARABIC("ara"),
-    FRENCH("fra"),
-    ENGLISH("eng"),
-    LATIN("fra+eng"),
-    /** Numbers, units signs and separators only (Western digits). */
-    NUMERIC("eng", numeric = true);
-
-    val script: Script? get() = when (this) {
-        ARABIC -> Script.ARABIC
-        FRENCH, ENGLISH, LATIN -> Script.LATIN
-        NUMERIC -> Script.NUMERIC
-        PAGE -> null
-    }
+/** A recognition model of the OCR engine (PaddleOCR PP-OCRv5 mobile). */
+enum class OcrModel(val script: Script, val key: String) {
+    /** Arabic script; its dictionary also holds Latin letters and both digit sets. */
+    ARABIC(Script.ARABIC, "arabic"),
+    /** Latin-script languages (French, English and others), digits and punctuation. */
+    LATIN(Script.LATIN, "latin")
 }
 
 /** French or English, from function words and accents (null when the text does not say). */
@@ -51,34 +40,27 @@ object LatinLanguage {
 }
 
 /**
- * Which recognition configurations a text region is read with. The first reading of the page
- * (all models) gives a hint; the expected script comes from the region's context (other cells of
- * the table row, the line's confident words). Several configurations are compared by
- * [CandidateEvaluator] when the script is mixed or unknown.
+ * Which recognition models a text region is read with. The expected script comes from the
+ * region's context (other cells of the table row and column, the line's confident words); when
+ * it does not decide, the first reading of the region (the hint) does. Readings of several models
+ * are compared by [CandidateEvaluator].
  */
 object OcrRouting {
 
-    fun plan(hint: String, expected: Script?, numericOnly: Boolean = false): List<OcrConfig> {
+    fun plan(hint: String, expected: Script?, numericOnly: Boolean = false): List<OcrModel> {
         if (numericOnly) {
             val easternDigits = hint.any { it in '٠'..'٩' || it in '۰'..'۹' }
-            if (easternDigits) return listOf(OcrConfig.ARABIC)
-            // A cell read as digits in an Arabic column may be an Arabic label ("ب1" read "15"):
-            // the Arabic model reads it too.
-            return if (expected == Script.ARABIC) listOf(OcrConfig.NUMERIC, OcrConfig.ARABIC) else listOf(OcrConfig.NUMERIC, OcrConfig.LATIN)
+            // A cell read as digits in an Arabic column may be an Arabic label ("ب1" read "15").
+            return if (easternDigits || expected == Script.ARABIC) listOf(OcrModel.ARABIC, OcrModel.LATIN) else listOf(OcrModel.LATIN, OcrModel.ARABIC)
         }
         val script = when {
             expected == Script.ARABIC || expected == Script.LATIN -> expected
             else -> ScriptDetector.classify(hint)
         }
         return when (script) {
-            Script.ARABIC -> listOf(OcrConfig.ARABIC, OcrConfig.LATIN)
-            Script.LATIN -> when (LatinLanguage.detect(hint)) {
-                "fr" -> listOf(OcrConfig.FRENCH, OcrConfig.ARABIC)
-                "en" -> listOf(OcrConfig.ENGLISH, OcrConfig.ARABIC)
-                else -> listOf(OcrConfig.LATIN, OcrConfig.ARABIC)
-            }
-            Script.NUMERIC -> listOf(OcrConfig.NUMERIC, OcrConfig.LATIN, OcrConfig.ARABIC)
-            Script.MIXED, Script.UNKNOWN -> listOf(OcrConfig.ARABIC, OcrConfig.LATIN)
+            Script.LATIN -> listOf(OcrModel.LATIN, OcrModel.ARABIC)
+            Script.NUMERIC -> listOf(OcrModel.LATIN, OcrModel.ARABIC)
+            Script.ARABIC, Script.MIXED, Script.UNKNOWN -> listOf(OcrModel.ARABIC, OcrModel.LATIN)
         }
     }
 

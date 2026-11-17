@@ -269,6 +269,9 @@
     <string name="voice_err_tts_language">Aucune voix n’est installée pour la langue de ce message. Installez-la dans les paramètres de synthèse vocale de l’appareil.</string>
     <string name="voice_err_tts_failed">La réponse n’a pas pu être lue à voix haute.</string>
     <string name="scan_ocr_unavailable">La reconnaissance de texte sur l’appareil n’a pas pu démarrer. Libérez de l’espace de stockage puis réessayez.</string>
+    <string name="library_extract_text">Extraire le texte</string>
+    <string name="library_extract_unavailable">Le texte ne peut être extrait que des fichiers PDF.</string>
+    <string name="scan_page_from_pdf_text">Cette page a été lue directement depuis le texte du PDF : il n\'y a rien à reconnaître de nouveau.</string>
     <string name="scan_pages_failed">%1$d page(s) n’ont pas pu être lues. Vous pouvez saisir leur texte ou les numériser à nouveau.</string>
     <string name="scan_pages_empty">Aucun texte trouvé sur %1$d page(s). Vérifiez la langue de numérisation ou saisissez le texte.</string>
     <string name="scan_ocr_language">Langue du texte</string>

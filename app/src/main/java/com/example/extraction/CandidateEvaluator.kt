@@ -167,7 +167,14 @@ object CandidateEvaluator {
             if (agreedNumbers != null && nums.isNotEmpty() && nums != agreedNumbers) { s -= 0.5; reasons += "number_disagreement" }
             Triple(c, s, reasons)
         }.sortedByDescending { it.second }
-        val (best, score, reasons) = scored.first()
+        var (best, score, reasons) = scored.first()
+        // Readings that differ only by case ("p1", "P1"): the letters agree, the column's pattern
+        // decides the case.
+        if (shapes.isNotEmpty() && shape(best.text) !in shapes) {
+            scored.drop(1).firstOrNull { it.first.text.equals(best.text, ignoreCase = true) && shape(it.first.text) in shapes }?.let {
+                best = it.first; score = it.second; reasons = it.third
+            }
+        }
         val margin = if (scored.size > 1) score - scored[1].second else 1.0
         val review = ArrayList(reasons)
         if ((best.confidence ?: 1f) < 0.6f) review += "low_confidence"

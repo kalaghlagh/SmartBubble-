@@ -269,6 +269,9 @@
     <string name="voice_err_tts_language">No voice is installed for the language of this message. Install it in the device’s text-to-speech settings.</string>
     <string name="voice_err_tts_failed">The reply could not be read aloud.</string>
     <string name="scan_ocr_unavailable">On-device text recognition could not start. Free some storage space and try again.</string>
+    <string name="library_extract_text">Extract text</string>
+    <string name="library_extract_unavailable">Text can be extracted from PDF files only.</string>
+    <string name="scan_page_from_pdf_text">This page was read directly from the PDF text: there is nothing to recognize again.</string>
     <string name="scan_pages_failed">%1$d page(s) could not be read. You can type their text or scan them again.</string>
     <string name="scan_pages_empty">No text was found on %1$d page(s). Check the scan language or type the text.</string>
     <string name="scan_ocr_language">Text language</string>

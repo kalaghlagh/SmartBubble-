@@ -43,7 +43,7 @@ data class TextWord(
 )
 
 /**
- * One text line: its words in reading order (right to left for Arabic lines, as Tesseract and
+ * One text line: its words in reading order (right to left for Arabic lines, as the OCR engine and
  * the PDF reader give them after ordering), its box and its script.
  */
 data class TextLine(

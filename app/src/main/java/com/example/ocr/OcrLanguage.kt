@@ -1,28 +1,25 @@
 package com.example.ocr
 
-/**
- * Languages the on-device OCR can read. [models] are the Tesseract language models used.
- * Arabic also loads English because Arabic documents commonly contain Latin words and numbers.
- */
-enum class OcrLanguage(val code: String, val models: List<String>) {
-    /** Arabic, English and French together (slower, slightly less accurate than a single language). */
-    AUTO("auto", listOf("ara", "eng", "fra")),
-    ARABIC("ar", listOf("ara", "eng")),
-    ENGLISH("en", listOf("eng")),
-    FRENCH("fr", listOf("fra"));
+import com.example.extraction.OcrModel
 
-    /**
-     * Tesseract language string. For [AUTO] the app language is tried first, which decides ties
-     * between scripts.
-     */
-    fun tesseractLanguages(appLanguage: String): String {
-        if (this != AUTO) return models.joinToString("+")
-        val first = when (appLanguage.lowercase().take(2)) {
-            "ar" -> "ara"
-            "fr" -> "fra"
-            else -> "eng"
-        }
-        return (listOf(first) + models.filter { it != first }).joinToString("+")
+/**
+ * Languages the user can choose for on-device OCR. Every choice can read Arabic, French and
+ * English (an Arabic page often holds Latin terms, a French one Arabic names): the choice only
+ * decides which recognition model reads each region first; the other one reads it too when the
+ * first reading shows another script or uncertain characters.
+ */
+enum class OcrLanguage(val code: String) {
+    /** The page's own script decides (the app language breaks ties on the first regions). */
+    AUTO("auto"),
+    ARABIC("ar"),
+    ENGLISH("en"),
+    FRENCH("fr");
+
+    /** The recognition model read first. */
+    fun preferredModel(appLanguage: String): OcrModel = when (this) {
+        ARABIC -> OcrModel.ARABIC
+        ENGLISH, FRENCH -> OcrModel.LATIN
+        AUTO -> if (appLanguage.lowercase().startsWith("ar")) OcrModel.ARABIC else OcrModel.LATIN
     }
 
     companion object {

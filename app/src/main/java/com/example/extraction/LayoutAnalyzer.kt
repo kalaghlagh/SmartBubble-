@@ -70,12 +70,19 @@ object LayoutAnalyzer {
             val left = ArrayList<List<TextWord>>()
             val right = ArrayList<List<TextWord>>()
             for (k in i..j) { left += segs[k][0]; right += segs[k][1] }
-            // A column that ends lower: the next lines lying on one side of the gutter only.
+            // A column that ends lower, or short last lines on both sides ("climate." and "the wells."):
+            // the next lines whose words lie on one side of the gutter or split at it.
             var k = j
-            while (k + 1 < lines.size && lines[k + 1].box.top - lines[k].box.bottom < lines[k].box.height &&
-                (lines[k + 1].box.right <= gr || lines[k + 1].box.left >= gl)) {
+            while (k + 1 < lines.size && lines[k + 1].box.top - lines[k].box.bottom < lines[k].box.height) {
+                val n = lines[k + 1]
+                val sg = segs[k + 1]
+                when {
+                    n.box.right <= gr -> left += n.words
+                    n.box.left >= gl -> right += n.words
+                    sg.size == 2 && sg[0].maxOf { it.box.right } <= gr && sg[1].minOf { it.box.left } >= gl -> { left += sg[0]; right += sg[1] }
+                    else -> break
+                }
                 k++
-                if (lines[k].box.right <= gr) left += lines[k].words else right += lines[k].words
             }
             fun line(ws: List<TextWord>) = TextLine(ws, Box.of(ws.map { it.box })!!, source = lines[i].source)
             val rtl = ScriptDetector.isRtl(lines.subList(i, k + 1).joinToString(" ") { it.text })
