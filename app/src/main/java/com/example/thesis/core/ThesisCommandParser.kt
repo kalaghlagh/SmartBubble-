@@ -10,7 +10,11 @@ enum class EditMode { CORRECT, IMPROVE, SHORTEN, EXPAND, REWRITE,
     /** Reorders and structures the text into paragraphs and lists (same words, same facts). */
     ORGANIZE,
     /** Drafts new content for the section from the user's instruction (shown for review only). */
-    GENERATE }
+    GENERATE,
+    /** Writes the next part of the section after its existing text (shown for review only). */
+    CONTINUE,
+    /** Condenses the text to its key points. */
+    SUMMARIZE }
 
 /** What a Chat message asks the Thesis Builder to do. */
 sealed class ThesisIntent {

@@ -996,4 +996,17 @@
     <string name="scan_copy_text">نسخ النص</string>
     <string name="scan_insert_into_chat">إدراج في المحادثة</string>
     <string name="scan_text_copied">تم نسخ النص</string>
+    <string name="thesis_ai_writing_for">القسم: %1$s</string>
+    <string name="thesis_ai_generating_for">جارٍ إنشاء محتوى لـ: %1$s</string>
+    <string name="thesis_ai_continue">متابعة الكتابة</string>
+    <string name="thesis_ai_summarize">تلخيص</string>
+    <string name="thesis_ai_insert_cursor">إدراج عند المؤشر</string>
+    <string name="thesis_ai_append">إضافة في نهاية القسم</string>
+    <string name="thesis_ai_replace_whole">استبدال القسم كاملاً</string>
+    <string name="thesis_check_language">النص ليس بلغة هذا القسم. راجعه قبل الإدراج.</string>
+    <string name="thesis_check_not_personal">يجب أن يكون هذا القسم شخصياً، لكن النص يتضمن محتوى بحثياً.</string>
+    <string name="thesis_check_citation">يجب ألا يتضمن هذا القسم استشهادات.</string>
+    <string name="thesis_check_too_long">النص طويل بالنسبة لهذا النوع من الأقسام.</string>
+    <string name="thesis_check_name">يذكر النص شخصاً غير موجود في معلومات المذكرة. تحقق من الأسماء.</string>
+    <string name="thesis_check_other">لم تلتزم الإجابة بقواعد القسم بالكامل. راجعها قبل الإدراج.</string>
 </resources>

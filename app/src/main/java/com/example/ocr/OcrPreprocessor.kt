@@ -11,7 +11,7 @@ import android.graphics.Matrix
 object OcrPreprocessor {
 
     /** Images whose long side is below this are enlarged (small photos, screenshots). */
-    const val MIN_LONG_SIDE = 1800
+    const val MIN_LONG_SIDE = 1600
 
     /** Grey level (0..255) of an ARGB pixel. */
     fun luminance(argb: Int): Int {

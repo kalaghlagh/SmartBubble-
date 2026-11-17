@@ -128,6 +128,12 @@ class ThesisAndroidTest {
             requests.add("edit:${items.size}"); fail?.let { throw it }; return editResult(items)
         }
         override suspend fun table(snapshot: ThesisSnapshot, data: String, listener: AiProgressListener) = TableSuggestion(listOf("A"), listOf(listOf("1")), emptyList())
+        /** Section contexts the assistant sent (what the provider is told about the section). */
+        val contexts = CopyOnWriteArrayList<com.example.thesis.ai.SectionWriteContext>()
+        override suspend fun write(snapshot: ThesisSnapshot, context: com.example.thesis.ai.SectionWriteContext, listener: AiProgressListener): EditSuggestion {
+            contexts.add(context)
+            return super.write(snapshot, context, listener)
+        }
     }
 
     private val ai = FakeAi()
@@ -865,6 +871,66 @@ class ThesisAndroidTest {
         assertTrue(controller.state.value.draft!!.text.contains("$original (improved) (improved)"))
         assertTrue(controller.state.value.draft!!.text.contains("Edited."))
         assertTrue(ai.requests.count { it.startsWith("edit:") } >= 6)
+    }
+
+    /**
+     * The assistant writes for the open section: the Dedication's identity reaches the AI, the
+     * screen says which section is being written, and the result can go at the cursor, at the
+     * end, or replace the whole section after confirmation.
+     */
+    @Test
+    @Config(qualifiers = "en")
+    fun aiAssistant_knowsTheSection_andOffersEveryInsertPlace() {
+        val host = TestHost()
+        val id = runBlocking { repo.createProject(meta(), aiAssist = false) }
+        val dedication = runBlocking { repo.snapshot(id) }.sections.first { it.kind == SectionKind.DEDICATION }.id
+        runBlocking { repo.applyDirect(id, listOf(ThesisOp.AddElements(dedication, null, listOf(
+            NewElement("d1", ElementType.PARAGRAPH, "To my parents."), NewElement("d2", ElementType.PARAGRAPH, "To my friends.")))), ChangeSource.USER, "x") }
+        ai.editResult = { items -> EditSuggestion(items.associate { it.first to "To my teachers." }, "done", emptyList()) }
+        controller.openProject(id)
+        showWorkspace(host)
+        await("snapshot") { controller.state.value.snapshot?.element("d1") != null }
+        controller.selectSection(dedication)
+        await("editor") { tagExists("thesis_editor_text") && controller.state.value.draft != null }
+
+        tap("thesis_open_assistant")
+        await("assistant") { tagExists("thesis_ai_section_label") }
+        compose.onNodeWithText("Section: Dedication").assertExists()
+        tap("thesis_ai_generate")
+        await("generated") { controller.state.value.assist?.result != null && controller.state.value.busy == null }
+        val c = ai.contexts.last()
+        assertEquals(com.example.thesis.ai.SectionType.DEDICATION, c.type)
+        assertEquals("Dedication", c.sectionTitle)
+        assertEquals(com.example.thesis.core.EditMode.GENERATE, c.mode)
+        assertTrue(c.existingText.contains("To my parents."))
+        assertTrue(c.related.isEmpty()) // no research excerpts for a dedication
+        // Append: at the end of the section.
+        tap("thesis_ai_append")
+        await("appended") { controller.state.value.screen == ThesisScreen.SECTION }
+        assertTrue(controller.state.value.draft!!.text.endsWith("To my friends.\n\nTo my teachers."))
+
+        // At the cursor: after the line where the cursor is (here, the start of the text).
+        controller.openAssistant(0, 0)
+        controller.runAssistant(com.example.thesis.core.EditMode.CONTINUE, "")
+        await("continued") { controller.state.value.assist?.result != null && controller.state.value.busy == null }
+        assertEquals(com.example.thesis.core.EditMode.CONTINUE, ai.contexts.last().mode)
+        tap("thesis_ai_insert_cursor")
+        await("at cursor") { controller.state.value.screen == ThesisScreen.SECTION }
+        assertTrue(controller.state.value.draft!!.text.startsWith("To my teachers.\n\nTo my parents."))
+
+        // Replace the whole section from a selection: asks first, Cancel keeps the text.
+        val before = controller.state.value.draft!!.text
+        controller.openAssistant(0, 5)
+        controller.runAssistant(com.example.thesis.core.EditMode.IMPROVE, "")
+        await("improved") { controller.state.value.assist?.result != null && controller.state.value.busy == null }
+        tap("thesis_ai_replace_section")
+        await("confirm") { tagExists("thesis_ai_replace_section_confirm") }
+        tap("thesis_ai_replace_section_confirm")
+        await("replaced") { controller.state.value.screen == ThesisScreen.SECTION }
+        assertEquals("To my teachers.", controller.state.value.draft!!.text)
+        assertTrue(before != controller.state.value.draft!!.text)
+        // Nothing is saved before "Save changes".
+        assertEquals("To my parents.", runBlocking { repo.snapshot(id) }.element("d1")!!.text)
     }
 
     /** Screens 3 and 6: chapters with titles, order, sub-sections, status, preview and export of the saved content. */

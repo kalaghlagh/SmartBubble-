@@ -42,6 +42,7 @@ class OcrPreprocessorTest {
     @Test
     fun smallImagesAreEnlarged() {
         assertTrue(OcrPreprocessor.needsUpscale(800, 1100))
+        assertTrue(OcrPreprocessor.needsUpscale(1000, 1500))
         assertFalse(OcrPreprocessor.needsUpscale(1240, 1754))
         assertFalse(OcrPreprocessor.needsUpscale(3000, 2000))
     }

@@ -572,6 +572,13 @@ internal fun noteText(code: String): String {
         "number_added" -> stringResource(R.string.thesis_warn_number_added)
         "to_verify" -> stringResource(R.string.thesis_warn_to_verify)
         "ignored" -> stringResource(R.string.thesis_warn_ignored)
+        "check_wrong_language" -> stringResource(R.string.thesis_check_language)
+        "check_not_personal" -> stringResource(R.string.thesis_check_not_personal)
+        "check_citation" -> stringResource(R.string.thesis_check_citation)
+        "check_too_long" -> stringResource(R.string.thesis_check_too_long)
+        "check_invented_name" -> stringResource(R.string.thesis_check_name)
+        "check_invented_numbers" -> stringResource(R.string.thesis_warn_number_added)
+        "check_ai_disclaimer", "check_repeated", "check_empty" -> stringResource(R.string.thesis_check_other)
         else -> code
     }
 }

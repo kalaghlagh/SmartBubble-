@@ -54,6 +54,8 @@ $INTEGRITY"""
             EditMode.EXPAND -> "Develop each text with explanations that follow from what is written. Do not add facts, figures, results or references; mark any statement that needs a source with [to verify]."
             EditMode.REWRITE -> "Rephrase each text in your own academic words, keeping the meaning and every fact."
             EditMode.ORGANIZE -> "Organize each text: group related sentences into coherent paragraphs, put enumerations into lists (one item per line starting with \"- \"), and order ideas logically. Keep the wording, every fact, citation and number."
+            EditMode.CONTINUE -> "Continue the text after its last sentence, in the same tone. Return only the new part. Do not add facts, figures, results or references; mark any statement that needs a source with [to verify]."
+            EditMode.SUMMARIZE -> "Summarize each text in a few sentences, keeping its key points and every citation, number and name it contains."
             EditMode.GENERATE -> "Write a draft for the thesis section following the user's instruction and the existing text (which may be empty). Do not invent results, measurements, quotations or references; mark any statement that needs a source with [to verify]."
         }
         return """You edit paragraphs of a ${languageName(language)} academic thesis. $task

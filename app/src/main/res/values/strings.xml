@@ -996,4 +996,17 @@
     <string name="scan_copy_text">Copy text</string>
     <string name="scan_insert_into_chat">Insert into chat</string>
     <string name="scan_text_copied">Text copied</string>
+    <string name="thesis_ai_writing_for">Section: %1$s</string>
+    <string name="thesis_ai_generating_for">Generating content for: %1$s</string>
+    <string name="thesis_ai_continue">Continue writing</string>
+    <string name="thesis_ai_summarize">Summarize</string>
+    <string name="thesis_ai_insert_cursor">Insert at cursor</string>
+    <string name="thesis_ai_append">Append to section</string>
+    <string name="thesis_ai_replace_whole">Replace whole section</string>
+    <string name="thesis_check_language">The text is not in the language of this section. Review it before inserting.</string>
+    <string name="thesis_check_not_personal">This section should be personal, but the text contains research content.</string>
+    <string name="thesis_check_citation">This section should not contain citations.</string>
+    <string name="thesis_check_too_long">The text is long for this kind of section.</string>
+    <string name="thesis_check_name">The text names a person who is not in the thesis information. Check the names.</string>
+    <string name="thesis_check_other">The answer did not fully follow the section rules. Review it before inserting.</string>
 </resources>

@@ -1261,6 +1261,7 @@ private fun ThesisAiAssistant(host: ThesisHost) {
     val provider = providers?.firstOrNull()
     val idle = state.busy == null
     var confirmReplace by remember { mutableStateOf(false) }
+    var confirmReplaceSection by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
         BlueTopBar(stringResource(R.string.thesis_ai_assistant), onBack = { controller.closeAssistant() })
         state.busy?.let { BusyBar(controller, it) }
@@ -1269,6 +1270,15 @@ private fun ThesisAiAssistant(host: ThesisHost) {
             return@Column
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // The section the assistant writes for (its rules and context come from it).
+            if (assist.sectionTitle.isNotBlank()) {
+                val writing = state.busy == com.example.thesis.ThesisBusy.ASKING_AI
+                Text(
+                    stringResource(if (writing) R.string.thesis_ai_generating_for else R.string.thesis_ai_writing_for, assist.sectionTitle),
+                    style = MaterialTheme.typography.titleSmall.copy(textDirection = TextDirection.Content), fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("thesis_ai_section_label")
+                )
+            }
             Card(Modifier.fillMaxWidth().testTag("thesis_ai_provider"), shape = RoundedCornerShape(16.dp)) {
                 Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
@@ -1302,7 +1312,9 @@ private fun ThesisAiAssistant(host: ThesisHost) {
                     Triple(EditMode.EXPAND, Icons.Outlined.UnfoldMore, R.string.thesis_ai_expand_content),
                     Triple(EditMode.REWRITE, Icons.Outlined.Autorenew, R.string.thesis_ai_rewrite),
                     Triple(EditMode.CORRECT, Icons.Outlined.Spellcheck, R.string.thesis_ai_correct_grammar),
-                    Triple(EditMode.ORGANIZE, Icons.Outlined.Reorder, R.string.thesis_ai_organize)
+                    Triple(EditMode.ORGANIZE, Icons.Outlined.Reorder, R.string.thesis_ai_organize),
+                    Triple(EditMode.CONTINUE, Icons.Outlined.Edit, R.string.thesis_ai_continue),
+                    Triple(EditMode.SUMMARIZE, Icons.Outlined.UnfoldMore, R.string.thesis_ai_summarize)
                 ).forEach { (mode, icon, label) ->
                     OutlinedButton(onClick = { controller.runAssistant(mode, assist.instruction) }, enabled = canRun && hasText, shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_ai_${mode.name}")) {
@@ -1334,8 +1346,17 @@ private fun ThesisAiAssistant(host: ThesisHost) {
                     modifier = Modifier.fillMaxWidth().height(52.dp).testTag("thesis_ai_insert")) {
                     Icon(Icons.Default.Check, contentDescription = null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.thesis_ai_insert))
                 }
+                // Other places: at the cursor, at the end, or instead of the whole section.
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(onClick = { controller.insertAssistResult(com.example.thesis.AssistInsert.AT_CURSOR) }, enabled = idle && result.isNotBlank(),
+                        shape = RoundedCornerShape(12.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_ai_insert_cursor")) { Text(stringResource(R.string.thesis_ai_insert_cursor)) }
+                    OutlinedButton(onClick = { controller.insertAssistResult(com.example.thesis.AssistInsert.APPEND) }, enabled = idle && result.isNotBlank(),
+                        shape = RoundedCornerShape(12.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_ai_append")) { Text(stringResource(R.string.thesis_ai_append)) }
+                    if (hasText && assist.hasSelection) OutlinedButton(onClick = { confirmReplaceSection = true }, enabled = idle && result.isNotBlank(),
+                        shape = RoundedCornerShape(12.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_ai_replace_section")) { Text(stringResource(R.string.thesis_ai_replace_whole)) }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (hasText && assist.mode != EditMode.GENERATE) OutlinedButton(onClick = { confirmReplace = true }, enabled = idle && result.isNotBlank(), shape = RoundedCornerShape(14.dp),
+                    if (hasText && assist.mode != EditMode.GENERATE && assist.mode != EditMode.CONTINUE) OutlinedButton(onClick = { confirmReplace = true }, enabled = idle && result.isNotBlank(), shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("thesis_ai_replace")) {
                         Icon(Icons.Outlined.Autorenew, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.thesis_ai_replace_short), maxLines = 1)
                     }
@@ -1359,6 +1380,16 @@ private fun ThesisAiAssistant(host: ThesisHost) {
             text = { Text(stringResource(R.string.thesis_ai_replace_confirm_text)) },
             confirmButton = { Button(onClick = { confirmReplace = false; controller.insertAssistResult(replace = true) }, modifier = Modifier.testTag("thesis_ai_replace_confirm")) { Text(stringResource(R.string.thesis_ai_replace_short)) } },
             dismissButton = { TextButton(onClick = { confirmReplace = false }) { Text(stringResource(R.string.action_cancel)) } }
+        )
+    }
+    if (confirmReplaceSection) {
+        AlertDialog(
+            onDismissRequest = { confirmReplaceSection = false },
+            title = { Text(stringResource(R.string.thesis_ai_replace_section)) },
+            text = { Text(stringResource(R.string.thesis_ai_replace_confirm_text)) },
+            confirmButton = { Button(onClick = { confirmReplaceSection = false; controller.insertAssistResult(com.example.thesis.AssistInsert.REPLACE_SECTION) },
+                modifier = Modifier.testTag("thesis_ai_replace_section_confirm")) { Text(stringResource(R.string.thesis_ai_replace_short)) } },
+            dismissButton = { TextButton(onClick = { confirmReplaceSection = false }) { Text(stringResource(R.string.action_cancel)) } }
         )
     }
 }
