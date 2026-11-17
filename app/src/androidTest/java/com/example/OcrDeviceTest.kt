@@ -158,7 +158,7 @@ class OcrDeviceTest {
             tess2.recycle()
         }
         File(dir, "results.txt").appendText(outputs.last() + "\n")
-        assertTrue("the Arabic model reads the page in no mode: $outputs", outputs.any { o -> Regex("recall=([0-9.]+)").find(o)!!.groupValues[1].toDouble() >= 0.6 })
+        assertTrue("the Arabic model reads the page in no mode: $outputs", outputs.any { o -> (Regex("recall=([0-9.]+)").find(o)?.groupValues?.get(1)?.toDouble() ?: 0.0) >= 0.6 })
     }
 
     @Test fun arabicPage() { val r = ocr(page("arabic", listOf(arabic))); check("arabic", arabic, r.pages.single().rawText, 0.6) }
