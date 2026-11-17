@@ -1126,7 +1126,7 @@ class ThesisController(
         val language = st.snapshot?.meta?.language ?: "en"
         val chosen = if (pages == null) doc else doc.copy(pages = doc.pages.filter { it.index in pages })
         // Placeholders for the new tables, after the draft's own.
-        var probe = d
+        var probe: SectionDraft = d
         val insertion = ExtractionToThesis.build(chosen, mode) { _ ->
             val token = SectionText.nextToken(probe, language, ElementType.TABLE)
             probe = probe.copy(media = probe.media + (token to DraftMedia(null, ElementType.TABLE, ElementData())))
