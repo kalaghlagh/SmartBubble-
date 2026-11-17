@@ -267,4 +267,26 @@ class ExtractionCoreTest {
         assertEquals(2f, Deskew.estimate(page(2.0), w, h), 0.3f)
         assertEquals(-3f, Deskew.estimate(page(-3.0), w, h), 0.3f)
     }
+
+    @Test
+    fun pdfDrawnOneGlyphPerRun_isReadAsWords() {
+        // Android's PdfDocument (Skia) writes one positioned glyph per text run.
+        val pdf = TestPdf()
+        val c = StringBuilder()
+        fun glyphs(text: String, x0: Double, y: Int) {
+            var x = x0
+            for (ch in text) {
+                if (ch != ' ') c.append("BT /F3 12 Tf $x $y Td ${TestPdf.lit(ch.toString())} Tj ET\n")
+                x += if (ch == ' ') 3.5 else 6.6
+            }
+        }
+        glyphs("Monthly report", 60.0, 760)
+        glyphs("The measurements of March.", 60.0, 740)
+        pdf.page(c.toString())
+        val reader = PdfDocumentReader.open(pdf.build())
+        val scan = PdfContentScanner(reader).scan(reader.pages().single())
+        val text = ExtractionText.page(PdfTextExtraction.page(0, scan))
+        assertTrue(text, text.contains("Monthly report"))
+        assertTrue(text, text.contains("The measurements of March."))
+    }
 }

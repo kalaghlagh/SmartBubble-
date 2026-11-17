@@ -41,7 +41,7 @@ object PdfTextExtraction {
      * normal Arabic letters is in reading order and is not touched.
      */
     fun logicalText(run: String): String {
-        val presentation = run.any { it in 'ﭐ'..'﷿' || it in 'ﹰ'..'﻿' }
+        val presentation = run.any { it in 'ﭐ'..'﷿' || it in 'ﹰ'..'\uFEFF' }
         val normalized = Normalizer.normalize(run, Normalizer.Form.NFKC)
         return if (presentation && ScriptDetector.count(normalized).arabic > 0) reverseVisual(normalized) else normalized
     }
@@ -52,26 +52,67 @@ object PdfTextExtraction {
         return parts.reversed().joinToString("")
     }
 
-    /** Words of the runs, in page coordinates with y downwards. */
+    /** A piece of a run between spaces, in page coordinates (y downwards). */
+    private class Piece(val text: String, val box: Box, val run: com.example.template.pdf.PdfTextRun, val spaceBefore: Boolean)
+
+    /**
+     * Words of the page, y downwards. Producers draw text in runs of any size, often one glyph
+     * per run (Android's PdfDocument does): pieces on the same baseline that touch are joined
+     * into one word, a space or a gap wider than a fraction of the font size separates words.
+     */
     fun words(scan: PdfPageScan): List<TextWord> {
-        val out = ArrayList<TextWord>()
+        val pieces = ArrayList<Piece>()
         for (r in scan.texts) {
             val text = logicalText(r.text)
             if (text.isBlank()) continue
             val top = (scan.height - r.y - r.fontSize * 0.8).toFloat()
             val bottom = (scan.height - r.y + r.fontSize * 0.2).toFloat()
-            val pieces = text.split(Regex("\\s+")).filter { it.isNotEmpty() }
-            if (pieces.isEmpty()) continue
-            // Each word gets its share of the run's width (by characters).
             val total = text.length.coerceAtLeast(1)
-            var x = r.x
             val rtl = ScriptDetector.isRtl(text)
-            val ordered = if (rtl) pieces.reversed() else pieces // visual left-to-right order for boxes
-            for (p in ordered) {
-                val w = r.width * (p.length + 1) / total
-                out += TextWord(p, Box(x.toFloat(), top, (x + w).toFloat(), bottom), null, r.bold, r.italic, r.fontSize.toFloat())
-                x += w
+            // Segments between spaces with their character positions (visual left-to-right for boxes).
+            var i = 0
+            while (i < text.length) {
+                if (text[i].isWhitespace()) { i++; continue }
+                val start = i
+                while (i < text.length && !text[i].isWhitespace()) i++
+                val (a, b) = if (rtl) (total - i) to (total - start) else start to i
+                val x0 = r.x + r.width * a / total
+                val x1 = r.x + r.width * b / total
+                pieces += Piece(text.substring(start, i), Box(x0.toFloat(), top, x1.toFloat(), bottom), r, spaceBefore = start > 0)
             }
+        }
+        // Same baseline, left to right; touching pieces form one word.
+        val lines = ArrayList<MutableList<Piece>>()
+        for (p in pieces.sortedWith(compareBy({ it.box.bottom }, { it.box.left }))) {
+            val l = lines.lastOrNull()
+            if (l != null && kotlin.math.abs(l.last().box.bottom - p.box.bottom) < p.box.height * 0.5f) l += p else lines += mutableListOf(p)
+        }
+        val out = ArrayList<TextWord>()
+        for (line in lines) {
+            val sorted = line.sortedBy { it.box.left }
+            val rtl = ScriptDetector.isRtl(sorted.joinToString("") { it.text })
+            var cur: Piece? = null
+            var text = StringBuilder()
+            var box: Box? = null
+            fun emit() {
+                val c = cur ?: return
+                out += TextWord(text.toString(), box!!, null, c.run.bold, c.run.italic, c.run.fontSize.toFloat())
+            }
+            for (p in sorted) {
+                val c = cur
+                val gap = if (c == null) Float.MAX_VALUE else p.box.left - box!!.right
+                val join = c != null && !p.spaceBefore && gap < (p.run.fontSize * 0.22).toFloat()
+                if (join) {
+                    // Visual order is reading order for Latin; for Arabic the left piece comes last.
+                    if (rtl && ScriptDetector.count(p.text).arabic > 0) text.insert(0, p.text) else text.append(p.text)
+                    box = box!!.union(p.box)
+                } else {
+                    emit()
+                    cur = p; text = StringBuilder(p.text); box = p.box
+                }
+                cur = cur ?: p
+            }
+            emit()
         }
         return out
     }

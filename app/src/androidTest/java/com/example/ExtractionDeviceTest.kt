@@ -164,7 +164,7 @@ class ExtractionDeviceTest {
         // Right to left kept in logical order: the first paragraph starts with its first word.
         val firstPara = page.blocks.filterIsInstance<ExtractedBlock.Paragraph>().firstOrNull()
         assertTrue("paragraphs: ${page.blocks}", firstPara != null && firstPara.rtl)
-        assertTrue("list items: ${page.blocks}", page.blocks.filterIsInstance<ExtractedBlock.ListItem>().size >= 2)
+        assertEquals("list items: ${page.blocks}", 3, page.blocks.filterIsInstance<ExtractedBlock.ListItem>().size)
     }
 
     @Test
@@ -180,9 +180,9 @@ class ExtractionDeviceTest {
         assertEquals(4, t!!.rows.size)
         assertEquals(3, t.columns)
         assertTrue(t.rtl)
-        // Numbers stay in their cells and rows.
-        assertEquals("35", t.rows[1].last().text.filter { it.isDigit() })
-        assertEquals("52", t.rows[2].last().text.filter { it.isDigit() })
+        // Cells: Arabic words and short codes read as Arabic, numbers in their cells and rows.
+        fun n(c: String) = normalize(c).filter { !it.isWhitespace() }
+        assertEquals(t.rows.toString(), cells.map { r -> r.map { n(it) } }, t.rows.map { r -> r.map { n(it.text) } })
     }
 
     // ------------------------------------------------------------------ French / English tables
@@ -201,8 +201,9 @@ class ExtractionDeviceTest {
         assertTrue("no table: ${page.blocks}", t != null)
         assertEquals(3, t!!.rows.size)
         assertEquals(3, t.columns)
-        assertEquals("Puits", t.rows[0][0].text)
-        assertTrue(t.rows[2].joinToString { it.text }, t.rows[2][2].text.contains("52"))
+        fun n(c: String) = c.filter { !it.isWhitespace() }
+        assertEquals(t.rows.toString(), listOf(listOf("Puits", "Profondeur", "Nitrates"), listOf("P1", "120m", "35mg/l"), listOf("P2", "85m", "52mg/l")),
+            t.rows.map { r -> r.map { n(it.text) } })
         assertTrue(recall("Résultats des analyses teneurs mesurées présentées tableau suivant valeurs dépassent norme", ExtractionText.page(page)) >= 0.8)
     }
 

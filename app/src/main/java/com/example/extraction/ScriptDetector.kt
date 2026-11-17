@@ -11,7 +11,7 @@ object ScriptDetector {
 
     fun isArabicLetter(c: Char): Boolean =
         (c in '؀'..'ۿ' && c !in '٠'..'٩' && c !in '۰'..'۹' && c.isLetter()) ||
-            c in 'ݐ'..'ݿ' || c in 'ࢠ'..'ࣿ' || (c in 'ﭐ'..'﷿' && c.isLetter()) || (c in 'ﹰ'..'﻿' && c.isLetter())
+            c in 'ݐ'..'ݿ' || c in 'ࢠ'..'ࣿ' || (c in 'ﭐ'..'﷿' && c.isLetter()) || (c in 'ﹰ'..'\uFEFF' && c.isLetter())
 
     fun isLatinLetter(c: Char): Boolean = c.isLetter() && (c in 'A'..'Z' || c in 'a'..'z' || c in 'À'..'ɏ' || c in 'Ḁ'..'ỿ')
 

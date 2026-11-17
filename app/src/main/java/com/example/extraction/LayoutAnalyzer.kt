@@ -34,7 +34,9 @@ object LayoutAnalyzer {
         rawLines: List<TextLine>,
         pageWidth: Float,
         pageHeight: Float,
-        rulings: List<Ruling> = emptyList()
+        rulings: List<Ruling> = emptyList(),
+        /** Reads the text inside a table cell on its own (OCR), or null to use the page words. */
+        cellReader: ((Box) -> String?)? = null
     ): List<ExtractedBlock> {
         val lines = clean(rawLines)
         if (lines.isEmpty()) return emptyList()
@@ -45,9 +47,9 @@ object LayoutAnalyzer {
         val textWidth = (textRight - textLeft).coerceAtLeast(1f)
 
         // Tables first: drawn borders, then aligned columns in the remaining lines.
-        val bordered = TableReconstructor.fromRulings(rulings, lines)
+        val bordered = TableReconstructor.fromRulings(rulings, lines, cellReader = cellReader)
         val used = bordered.flatMap { it.consumedLines }.toSet()
-        val layout = TableReconstructor.fromLayout(lines, used)
+        val layout = TableReconstructor.fromLayout(lines, used, cellReader)
         val tables = (bordered + layout).sortedBy { it.region.top }
         val tableAt = HashMap<Int, ExtractedBlock.Table>()
         val consumed = HashSet<Int>()
@@ -82,8 +84,10 @@ object LayoutAnalyzer {
             val next = lines.getOrNull(i + 1)?.takeIf { i + 1 !in consumed }
             val gapBefore = if (previous == null) Float.MAX_VALUE else line.box.top - previous.box.bottom
             val gapAfter = if (next == null) Float.MAX_VALUE else next.box.top - line.box.bottom
-            val alone = gapBefore > lineH * 0.6f || gapAfter > lineH * 0.6f || next == null
-            val larger = if (fontSize > 0f) (line.fontSize ?: 0f) >= fontSize * 1.15f else line.box.height >= lineH * 1.25f
+            // Heading: set apart from the text around it, and larger (font size in PDFs; for OCR
+            // the line box, which varies with accents and dots, so a clear margin is required).
+            val alone = gapBefore > lineH * 0.9f || gapAfter > lineH * 0.9f || next == null
+            val larger = if (fontSize > 0f) (line.fontSize ?: 0f) >= fontSize * 1.15f else line.box.height >= lineH * 1.4f
             // "1. Item" followed by "2. Item" is a numbered list; "1.2 Title" is always a heading.
             val number = HEADING_NUMBER.find(text)?.groupValues?.get(1)
             val nextSameStyle = next != null && Regex("""^[0-9٠-٩]+\.\s""").containsMatchIn(next.text)

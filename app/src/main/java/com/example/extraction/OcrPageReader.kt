@@ -107,6 +107,42 @@ class OcrPageReader(
         }
     }
 
+    /** Text and mean confidence of [tess] reading [crop] as one block. */
+    private fun readBlock(tess: TessBaseAPI, crop: Bitmap): Pair<String, Float> {
+        tess.setPageSegMode(TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK)
+        try {
+            tess.setImage(crop)
+            val t = tess.getUTF8Text().orEmpty().trim().replace(Regex("""\s*\n\s*"""), " ")
+            return t to (tess.meanConfidence() / 100f).coerceIn(0f, 1f)
+        } finally {
+            tess.clear()
+            tess.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO)
+        }
+    }
+
+    /**
+     * One table cell read inside its borders, by the page model and by the Arabic and the Latin
+     * models alone; the reading with the highest confidence is kept (a short Arabic word read by
+     * the Latin model, or "mg/l" read by the Arabic one, comes out with a low confidence).
+     */
+    private fun readCell(page: Bitmap, box: Box): String? {
+        val inset = 5
+        val left = (box.left + inset).toInt().coerceAtLeast(0)
+        val top = (box.top + inset).toInt().coerceAtLeast(0)
+        val right = (box.right - inset).toInt().coerceAtMost(page.width)
+        val bottom = (box.bottom - inset).toInt().coerceAtMost(page.height)
+        if (right - left < 8 || bottom - top < 8) return null
+        val crop = Bitmap.createBitmap(page, left, top, right - left, bottom - top)
+        return try {
+            listOfNotNull(pageEngine, arabicEngine(), latinEngine()).distinct()
+                .map { readBlock(it, crop) }
+                .filter { it.first.isNotBlank() }
+                .maxByOrNull { it.second }?.first
+        } finally {
+            crop.recycle()
+        }
+    }
+
     private fun mean(lines: List<TextLine>): Float? = lines.flatMap { it.words }.mapNotNull { it.confidence }.takeIf { it.isNotEmpty() }?.average()?.toFloat()
 
     suspend fun read(original: Bitmap, index: Int, source: PageSource, imageUri: String?): ExtractedPage {
@@ -150,8 +186,14 @@ class OcrPageReader(
                 currentCoroutineContext().ensureActive()
                 when {
                     OcrDecisions.needsArabicReread(line, pageArabicFirst) -> arabicEngine()?.let { ar ->
-                        val chosen = OcrDecisions.choose(line, readLine(ar, page, line.box, "ara"), arabicExpected = true)
+                        var chosen = OcrDecisions.choose(line, readLine(ar, page, line.box, "ara"), arabicExpected = true)
                         if (chosen !== line) arabicReread++
+                        // A short line with few letters ("P1  120 m  35 mg/l") can be Latin read as
+                        // Arabic: the Latin models alone are tried too, kept only if clearly surer.
+                        if (chosen.words.size <= 4) latinEngine()?.let { lat ->
+                            val l = readLine(lat, page, line.box, "lat")
+                            if (l != null && (l.confidence ?: 0f) > (chosen.confidence ?: 0f) + 0.1f) chosen = l
+                        }
                         chosen
                     } ?: line
                     OcrDecisions.needsLatinReread(line) -> latinEngine()?.let { lat ->
@@ -182,7 +224,7 @@ class OcrPageReader(
 
             // 4. Structure.
             val rulings = TableReconstructor.detectRulings(g, page.width, page.height)
-            val blocks = LayoutAnalyzer.analyze(lines, page.width.toFloat(), page.height.toFloat(), rulings)
+            val blocks = LayoutAnalyzer.analyze(lines, page.width.toFloat(), page.height.toFloat(), rulings) { box -> readCell(page, box) }
             if (blocks.any { it is ExtractedBlock.Table && it.uncertain }) notes += "table_uncertain"
             val words = lines.flatMap { it.words }
             Log.i(TAG, "Page ${index + 1}: ${lines.size} lines, ${words.size} words, ${blocks.size} blocks, notes=$notes")
