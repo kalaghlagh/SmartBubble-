@@ -324,4 +324,29 @@ class ExtractionCoreTest {
         assertTrue(text, text.contains("Monthly report"))
         assertTrue(text, text.contains("This is a reported study."))
     }
+
+    @Test
+    fun drawnSpaceGlyphs_separateWords_evenWithoutAGap() {
+        val chars = "Wel dpth"
+        val pdf = TestPdf()
+        val cmap = buildString {
+            append("/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n1 begincodespacerange <0000> <FFFF> endcodespacerange\n")
+            append("${chars.length} beginbfchar\n")
+            chars.forEachIndexed { i, c -> append(String.format("<%04X> <%04X>\n", i + 1, c.code)) }
+            append("endbfchar\nendcmap CMapName currentdict /CMap defineresource pop end end\n")
+        }
+        val toUnicode = pdf.stream("", cmap.toByteArray(Charsets.ISO_8859_1))
+        val desc = pdf.add("<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+Roboto-Regular /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>")
+        val font = pdf.add("<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+Roboto-Regular /Encoding /Identity-H /DescendantFonts [$desc 0 R] /ToUnicode $toUnicode 0 R >>")
+        val c = StringBuilder()
+        var x = 60.0
+        for (ch in "Well depth") {
+            c.append("BT /F9 12 Tf $x 760 Td <${String.format("%04X", chars.indexOf(ch) + 1)}> Tj ET\n")
+            x += 5.0 // no visible extra gap at the space
+        }
+        pdf.page(c.toString(), extraFonts = mapOf("F9" to font))
+        val reader = PdfDocumentReader.open(pdf.build())
+        val text = ExtractionText.page(PdfTextExtraction.page(0, PdfContentScanner(reader).scan(reader.pages().single())))
+        assertTrue(text, text.contains("Well depth"))
+    }
 }

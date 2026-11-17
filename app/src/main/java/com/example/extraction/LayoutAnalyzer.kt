@@ -19,6 +19,20 @@ object LayoutAnalyzer {
     // Word ends are written out: \b only knows ASCII letters, not Arabic ones.
     private val HEADING_WORD = Regex("""^(chapitre|chapter|partie|part|section|annexe|appendix|introduction|conclusion|résumé|abstract|الفصل|المبحث|المطلب|الباب|الجزء|المحور|مقدمة|خاتمة|ملخص)(?=$|[\s:.\-–])""", RegexOption.IGNORE_CASE)
 
+    /** Region of a block made of [lines] (first line index [first] makes the id). */
+    private fun region(lines: List<TextLine>, first: Int): RegionMeta {
+        val text = lines.joinToString(" ") { it.text }
+        val confs = lines.flatMap { it.words }.mapNotNull { it.confidence }
+        return RegionMeta(
+            id = "r$first",
+            box = Box.of(lines.map { it.box }),
+            script = ScriptDetector.classify(text),
+            confidence = confs.takeIf { it.isNotEmpty() }?.average()?.toFloat(),
+            needsReview = lines.any { it.needsReview },
+            engines = lines.flatMap { it.engines }.distinct()
+        )
+    }
+
     private fun median(values: List<Float>): Float = if (values.isEmpty()) 0f else values.sorted()[values.size / 2]
 
     /** Drops stray symbols left by borders and specks ("|", "_", "—"). */
@@ -68,10 +82,11 @@ object LayoutAnalyzer {
         fun flush() {
             val p = para ?: return
             para = null
-            out += paragraph(p, textLeft, textRight, pageWidth)
+            out += paragraph(p, textLeft, textRight, pageWidth).copy(region = region(p, lines.indexOf(p.first())))
         }
         for ((i, line) in lines.withIndex()) {
-            tableAt[i]?.let { flush(); out += it }
+            tableAt[i]?.let { flush(); out += it.copy(region = RegionMeta("t$i", tables.firstOrNull { t -> t.table === it }?.region, ScriptDetector.classify(it.rows.flatten().joinToString(" ") { c -> c.text }),
+                needsReview = it.uncertain || it.cellsToReview > 0)) }
             if (i in consumed) continue
             val text = line.text
             val rtl = line.rtl
@@ -79,7 +94,7 @@ object LayoutAnalyzer {
             if (PAGE_NUMBER.matches(text) && (line.box.top < pageHeight * 0.08f || line.box.bottom > pageHeight * 0.92f)) {
                 flush(); out += ExtractedBlock.PageNumber(text); continue
             }
-            if (CAPTION.containsMatchIn(text) && text.length < 160) { flush(); out += ExtractedBlock.Caption(text, rtl); continue }
+            if (CAPTION.containsMatchIn(text) && text.length < 160) { flush(); out += ExtractedBlock.Caption(text, rtl, region(listOf(line), i)); continue }
             val previous = lines.getOrNull(i - 1)?.takeIf { i - 1 !in consumed }
             val next = lines.getOrNull(i + 1)?.takeIf { i + 1 !in consumed }
             val gapBefore = if (previous == null) Float.MAX_VALUE else line.box.top - previous.box.bottom
@@ -99,7 +114,7 @@ object LayoutAnalyzer {
                     (text.count { it.isLetter() } >= 4 && text.filter { it.isLetter() }.all { it.isUpperCase() } && ScriptDetector.classify(text) == Script.LATIN))
             if (headingLike) {
                 flush()
-                out += ExtractedBlock.Heading(text, headingLevel(text, line, lineH, fontSize), rtl, line.bold)
+                out += ExtractedBlock.Heading(text, headingLevel(text, line, lineH, fontSize), rtl, line.bold, region(listOf(line), i))
                 continue
             }
             val marker = LIST_MARKER.find(text)
@@ -108,7 +123,7 @@ object LayoutAnalyzer {
                 val m = marker.groupValues[1]
                 val indent = if (rtl) textRight - line.box.right else line.box.left - textLeft
                 val level = (indent / (lineH * 1.5f)).toInt().coerceIn(0, 3)
-                out += ExtractedBlock.ListItem(marker.groupValues[2].trim(), m, ordered = m.any { it.isLetterOrDigit() }, level = level, rtl = rtl)
+                out += ExtractedBlock.ListItem(marker.groupValues[2].trim(), m, ordered = m.any { it.isLetterOrDigit() }, level = level, rtl = rtl, region = region(listOf(line), i))
                 continue
             }
             // Paragraphs: a wide gap, a change of direction, or an indented first line starts a new one.

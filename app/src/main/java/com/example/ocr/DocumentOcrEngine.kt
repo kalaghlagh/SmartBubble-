@@ -6,6 +6,8 @@ import android.util.Log
 import com.example.document.model.ScannedPageData
 import com.example.extraction.ExtractedPage
 import com.example.extraction.ExtractionText
+import com.example.extraction.OcrConfig
+import com.example.extraction.OcrEngineRegistry
 import com.example.extraction.OcrPageReader
 import com.example.extraction.PageSource
 import com.googlecode.tesseract.android.TessBaseAPI
@@ -37,6 +39,10 @@ data class OcrBatchResult(
  */
 class DocumentOcrEngine(private val context: Context) {
 
+    /** Model loading time (ms) of each configuration used by the last session. */
+    @Volatile var lastLoadTimes: Map<String, Long> = emptyMap()
+        private set
+
     /**
      * Opens the engines for [language] (installing the bundled models if needed), runs [block]
      * with a page reader, and releases them. One session at a time; cancelling the coroutine
@@ -50,56 +56,20 @@ class DocumentOcrEngine(private val context: Context) {
             } catch (e: Exception) {
                 throw OcrUnavailableException("OCR language data could not be installed", e)
             }
-            val languages = language.tesseractLanguages(appLanguage)
-            val engines = ArrayList<TessBaseAPI>()
-            val lock = Any()
-            var recycled = false
-            fun open(langs: String): TessBaseAPI? {
-                val t = try { TessBaseAPI() } catch (e: Throwable) { return null }
-                val ok = try { t.init(dataPath, langs, TessBaseAPI.OEM_LSTM_ONLY) } catch (e: Throwable) { false }
-                if (!ok) { try { t.recycle() } catch (e: Throwable) { }; return null }
-                t.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO)
-                // Scanned pages are about 300 dpi; without this Tesseract assumes 70 dpi for bitmaps.
-                t.setVariable("user_defined_dpi", "300")
-                synchronized(lock) {
-                    if (recycled) { t.recycle(); return null }
-                    engines += t
-                }
-                return t
-            }
+            // Each configuration (page, Arabic, French, English, numbers) is loaded on first use
+            // and reused for every page of the session.
+            val registry = OcrEngineRegistry(dataPath, language.tesseractLanguages(appLanguage), language.models.toSet())
             // Cancelling the coroutine aborts a recognition that is in progress.
             val cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
-                if (cause is CancellationException) synchronized(lock) {
-                    if (!recycled) engines.forEach { e -> try { e.stop() } catch (x: Throwable) { /* finished */ } }
-                }
+                if (cause is CancellationException) registry.stopAll()
             }
             try {
-                val page = open(languages) ?: throw OcrUnavailableException("OCR engine could not be initialized")
-                var arabic: TessBaseAPI? = null
-                var arabicTried = false
-                var latin: TessBaseAPI? = null
-                var latinTried = false
-                val latinModels = language.models.filter { it == "fra" || it == "eng" }
-                val reader = OcrPageReader(
-                    pageEngine = page,
-                    pageArabicFirst = languages.startsWith("ara"),
-                    arabicEngine = {
-                        if (!arabicTried && "ara" in language.models) { arabicTried = true; arabic = open("ara") }
-                        arabic
-                    },
-                    latinEngine = {
-                        // Only useful when the page engine also had Arabic (otherwise it is the same models).
-                        if (!latinTried && latinModels.isNotEmpty() && "ara" in language.models) { latinTried = true; latin = open(latinModels.joinToString("+")) }
-                        latin
-                    }
-                )
-                block(reader)
+                registry.get(OcrConfig.PAGE) ?: throw OcrUnavailableException("OCR engine could not be initialized")
+                block(OcrPageReader(registry))
             } finally {
                 cancelHandle?.dispose()
-                synchronized(lock) {
-                    recycled = true
-                    engines.forEach { e -> try { e.recycle() } catch (x: Throwable) { /* already released */ } }
-                }
+                lastLoadTimes = registry.loadTimes.mapKeys { it.key.name }
+                registry.closeAll()
             }
         }
     }

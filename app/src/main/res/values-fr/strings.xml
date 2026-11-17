@@ -1086,4 +1086,8 @@
     <string name="dx_tables_found">Tableaux trouvés : %1$d</string>
     <string name="dx_uncertain_words">%1$d mots reconnus avec une faible confiance</string>
     <string name="dx_wrong_section">Le contenu ne peut être inséré que dans la section d\'où l\'extraction a été lancée. Rouvrez cette section.</string>
+    <string name="dx_check_region">Vérifier</string>
+    <string name="dx_regions_to_review">%1$d éléments de cette page à vérifier (encadrés)</string>
+    <string name="dx_note_rerouted">%1$s lignes relues avec le modèle de leur écriture</string>
+    <string name="dx_note_missing">%1$s lignes de texte de l\'image n\'ont pas pu être lues : comparez avec la page originale</string>
 </resources>

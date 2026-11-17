@@ -12,7 +12,13 @@ data class Ruling(val horizontal: Boolean, val position: Float, val start: Float
  * or the words' own box, [words] what the page reading found there. Returns a better text, or
  * null to keep the page reading.
  */
-fun interface CellReader { fun read(box: Box, words: List<TextWord>, bordered: Boolean): String? }
+fun interface CellReader {
+    /**
+     * [expected] is the script the cell's context expects (the other cells of its row, or the
+     * table); returns the cell to keep, or null to keep the page reading.
+     */
+    fun read(box: Box, words: List<TextWord>, bordered: Boolean, expected: Script?): TableCell?
+}
 
 /** A table found on a page and the lines whose words went into it. */
 data class FoundTable(val table: ExtractedBlock.Table, val region: Box, val consumedLines: Set<Int>)
@@ -75,15 +81,17 @@ object TableReconstructor {
                 // Column boundaries present in this row (a missing one merges two cells).
                 val present = xs.filter { x -> gv.any { abs(it.position - x) <= tolerance && it.start <= mid + tolerance && it.end >= mid - tolerance } }
                 val bounds = (listOf(xs.first()) + present + listOf(xs.last())).distinct().sorted()
-                val cells = ArrayList<TableCell>()
-                for (c in 0 until bounds.size - 1) {
+                // The cells of the row first, then each read with what its row expects.
+                val raw = (0 until bounds.size - 1).map { c ->
                     val l = bounds[c]; val rgt = bounds[c + 1]
                     val span = xs.count { it > l + tolerance && it < rgt - tolerance } + 1
-                    val inCell = words.filter { it.box.centerX in l..rgt && it.box.centerY in top..bottom }
-                    // A cell read on its own (inside its borders) is more reliable than words cut
-                    // from page lines that run across the borders; the page words are the fallback.
-                    val own = cellReader?.read(Box(l, top, rgt, bottom), inCell, true)?.trim()?.trim('|', '[', ']')?.trim()
-                    cells += TableCell(own?.takeIf { it.isNotEmpty() } ?: cellText(inCell, rtl), span)
+                    Triple(Box(l, top, rgt, bottom), words.filter { it.box.centerX in l..rgt && it.box.centerY in top..bottom }, span)
+                }
+                val cells = raw.mapIndexed { c, (box, inCell, span) ->
+                    val expected = expectedScript(raw.filterIndexed { k, _ -> k != c }.map { it.second }, words)
+                    val own = cellReader?.read(box, inCell, true, expected)
+                    val ownText = own?.text?.trim()?.trim('|', '[', ']')?.trim()
+                    if (own != null && !ownText.isNullOrEmpty()) own.copy(text = ownText, colSpan = span) else TableCell(cellText(inCell, rtl), span)
                 }
                 rows += if (rtl) cells.reversed() else cells
             }
@@ -92,6 +100,27 @@ object TableReconstructor {
             out += FoundTable(table, region, inside.map { it.index }.toSet())
         }
         return out
+    }
+
+    /**
+     * Script a cell is expected to be in: the script of the other cells of its row (confident
+     * words with letters), or of the whole table when the row does not decide; null when the
+     * table itself is mixed.
+     */
+    fun expectedScript(rowOthers: List<List<TextWord>>, tableWords: List<TextWord>): Script? {
+        fun vote(ws: List<TextWord>): Script? {
+            val scripts = ws.filter { (it.confidence ?: 1f) >= 0.6f }.map { ScriptDetector.classify(it.text) }
+                .filter { it == Script.ARABIC || it == Script.LATIN }
+            if (scripts.size < 1) return null
+            val ar = scripts.count { it == Script.ARABIC }
+            val la = scripts.size - ar
+            return when {
+                ar >= la * 2 && ar > 0 -> Script.ARABIC
+                la >= ar * 2 && la > 0 -> Script.LATIN
+                else -> null
+            }
+        }
+        return vote(rowOthers.flatten()) ?: vote(tableWords)
     }
 
     /** Words of one cell in reading order: by line, then right to left (Arabic) or left to right. */
@@ -167,6 +196,7 @@ object TableReconstructor {
         val uncertain = columns.size > maxCells || rowSegs.any { it.size < columns.size - 1 }
         val text = rowSegs.flatten().flatMap { it.second }.joinToString(" ") { it.text }
         val rtl = ScriptDetector.isRtl(text)
+        val allWords = rowSegs.flatten().flatMap { it.second }
         val rows = rowSegs.map { segsOfRow ->
             val cells = ArrayList<TableCell>()
             var c = 0
@@ -175,8 +205,10 @@ object TableReconstructor {
                 val seg = segsOfRow.firstOrNull { (b, _) -> b.left <= col[1] && b.right >= col[0] }
                 if (seg == null) { cells += TableCell(""); c++; continue }
                 val covered = columns.count { b -> seg.first.left <= b[1] && seg.first.right >= b[0] }.coerceAtLeast(1)
-                val own = cellReader?.read(seg.first, seg.second, false)?.trim()?.trim('|')?.trim()
-                cells += TableCell(own?.takeIf { it.isNotEmpty() } ?: cellText(seg.second, rtl), covered)
+                val expected = expectedScript(segsOfRow.filter { it !== seg }.map { it.second }, allWords)
+                val own = cellReader?.read(seg.first, seg.second, false, expected)
+                val ownText = own?.text?.trim()?.trim('|')?.trim()
+                cells += if (own != null && !ownText.isNullOrEmpty()) own.copy(text = ownText, colSpan = covered) else TableCell(cellText(seg.second, rtl), covered)
                 c += covered
             }
             if (rtl) cells.reversed() else cells

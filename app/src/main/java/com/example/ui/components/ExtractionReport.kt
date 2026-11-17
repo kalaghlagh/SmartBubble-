@@ -77,10 +77,13 @@ fun ExtractionPageReport(p: ExtractedPage) {
                     "rotated" -> stringResource(R.string.dx_note_rotated, value)
                     "table_uncertain" -> stringResource(R.string.dx_note_table_uncertain)
                     "pdf_incomplete" -> stringResource(R.string.dx_note_pdf_incomplete)
+                    "lines_rerouted" -> stringResource(R.string.dx_note_rerouted, value)
+                    "possible_missing_lines" -> stringResource(R.string.dx_note_missing, value)
                     else -> null
                 }
                 if (t != null) Text("• $t", style = MaterialTheme.typography.bodySmall)
             }
+            if (p.regionsToReview > 0) Text(stringResource(R.string.dx_regions_to_review, p.regionsToReview), style = MaterialTheme.typography.bodySmall)
             if (p.uncertainWords > 0) Text(stringResource(R.string.dx_uncertain_words, p.uncertainWords), style = MaterialTheme.typography.bodySmall)
             p.error?.let { Text(extractionErrorText(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("dx_page_error")) }
             if (p.reviewRecommended) Text(stringResource(R.string.dx_review_recommended), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)

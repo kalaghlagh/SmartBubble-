@@ -160,6 +160,9 @@ dependencies {
   androidTestImplementation(libs.androidx.espresso.core)
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.runner)
+  // Comparison only (OcrBenchmarkDeviceTest): ML Kit's on-device Latin text recognizer is
+  // measured against the app's Tesseract pipeline on the same pages. Not part of the app.
+  androidTestImplementation("com.google.mlkit:text-recognition:16.0.1")
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)

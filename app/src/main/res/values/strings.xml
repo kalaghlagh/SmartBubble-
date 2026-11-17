@@ -1086,4 +1086,8 @@
     <string name="dx_tables_found">Tables found: %1$d</string>
     <string name="dx_uncertain_words">%1$d words recognized with low confidence</string>
     <string name="dx_wrong_section">The content can only be inserted into the section the extraction was started from. Open that section again.</string>
+    <string name="dx_check_region">Check</string>
+    <string name="dx_regions_to_review">%1$d parts of this page to check (outlined)</string>
+    <string name="dx_note_rerouted">%1$s lines read again with the model of their script</string>
+    <string name="dx_note_missing">%1$s text lines on the image could not be read: compare with the original page</string>
 </resources>

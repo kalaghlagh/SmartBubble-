@@ -52,7 +52,11 @@ data class TextLine(
     /** The engine marked the line as the start of a paragraph (when it says so). */
     val startsParagraph: Boolean = false,
     /** How the line was obtained: null for the page pass, "ara" / "fra+eng" for a line read again, "band" for a missed line. */
-    val source: String? = null
+    val source: String? = null,
+    /** The reading kept is uncertain (see [CandidateEvaluator]): to check. */
+    val needsReview: Boolean = false,
+    /** Configurations whose readings were compared for this line. */
+    val engines: List<String> = emptyList()
 ) {
     val text: String get() = words.joinToString(" ") { it.text }.trim()
     val script: Script get() = ScriptDetector.classify(text)
@@ -64,7 +68,29 @@ data class TextLine(
 }
 
 /** A cell of an extracted table (text exactly as read; empty when the cell is empty). */
-data class TableCell(val text: String, val colSpan: Int = 1)
+data class TableCell(
+    val text: String,
+    val colSpan: Int = 1,
+    /** Confidence of the reading kept, when the engine gave one. */
+    val confidence: Float? = null,
+    /** The reading is uncertain (low confidence, readings disagree, unconfirmed number): to check. */
+    val needsReview: Boolean = false
+)
+
+/**
+ * Where a block comes from on the page and how sure its reading is: a stable id, its box (in
+ * page image or PDF coordinates), its script, the confidence of the reading kept and whether a
+ * manual check is advised.
+ */
+data class RegionMeta(
+    val id: String,
+    val box: Box?,
+    val script: Script,
+    val confidence: Float? = null,
+    val needsReview: Boolean = false,
+    /** Configurations whose readings were compared ("page", "ara", "fra"...). */
+    val engines: List<String> = emptyList()
+)
 
 /** Paragraph alignment detected on the page. */
 enum class Alignment { START, CENTER, END, JUSTIFIED }
@@ -72,8 +98,10 @@ enum class Alignment { START, CENTER, END, JUSTIFIED }
 /** One element of the reconstructed document, in reading order. */
 sealed class ExtractedBlock {
     abstract val rtl: Boolean
+    /** Position, script and certainty of the block on its page (null when not known). */
+    open val region: RegionMeta? get() = null
 
-    data class Heading(val text: String, val level: Int, override val rtl: Boolean, val bold: Boolean = false) : ExtractedBlock()
+    data class Heading(val text: String, val level: Int, override val rtl: Boolean, val bold: Boolean = false, override val region: RegionMeta? = null) : ExtractedBlock()
     data class Paragraph(
         val text: String,
         override val rtl: Boolean,
@@ -81,11 +109,12 @@ sealed class ExtractedBlock {
         val bold: Boolean = false,
         val italic: Boolean = false,
         /** Words recognized with low confidence (the user should check them). */
-        val uncertainWords: List<String> = emptyList()
+        val uncertainWords: List<String> = emptyList(),
+        override val region: RegionMeta? = null
     ) : ExtractedBlock()
 
     /** A list item with its original marker ("1.", "a)", "-", "•", "أ-"...), kept as written. */
-    data class ListItem(val text: String, val marker: String, val ordered: Boolean, val level: Int, override val rtl: Boolean) : ExtractedBlock()
+    data class ListItem(val text: String, val marker: String, val ordered: Boolean, val level: Int, override val rtl: Boolean, override val region: RegionMeta? = null) : ExtractedBlock()
 
     data class Table(
         val rows: List<List<TableCell>>,
@@ -95,12 +124,15 @@ sealed class ExtractedBlock {
         /** The structure is a guess (no ruling lines and an irregular layout): to be checked. */
         val uncertain: Boolean = false,
         /** "rules" (drawn borders) or "layout" (aligned columns without borders). */
-        val detectedBy: String = "layout"
+        val detectedBy: String = "layout",
+        override val region: RegionMeta? = null
     ) : ExtractedBlock() {
+        /** Cells marked for review. */
+        val cellsToReview: Int get() = rows.sumOf { r -> r.count { it.needsReview } }
         val columns: Int get() = rows.maxOfOrNull { r -> r.sumOf { it.colSpan } } ?: 0
     }
 
-    data class Caption(val text: String, override val rtl: Boolean) : ExtractedBlock()
+    data class Caption(val text: String, override val rtl: Boolean, override val region: RegionMeta? = null) : ExtractedBlock()
 
     /** A page number found in a margin (kept apart from the content). */
     data class PageNumber(val text: String) : ExtractedBlock() { override val rtl: Boolean get() = false }
@@ -134,15 +166,21 @@ data class ExtractedPage(
     val imageUri: String? = null,
     /** Which of the extracted files the page comes from, and its page number in that PDF. */
     val sourceIndex: Int = 0,
-    val sourcePage: Int? = null
+    val sourcePage: Int? = null,
+    /** Milliseconds spent on the page by stage ("prepare", "layout", "lines", "recovery", "structure"). */
+    val timingsMs: Map<String, Long> = emptyMap()
 ) {
     val tables: Int get() = blocks.count { it is ExtractedBlock.Table }
     val isEmpty: Boolean get() = blocks.none { it !is ExtractedBlock.PageNumber }
 
     /** Manual review is advised: an error, low confidence, recovered lines or an uncertain table. */
     val reviewRecommended: Boolean
-        get() = error != null || isEmpty || (confidence != null && confidence < 0.7f) || uncertainWords > 5 ||
-            notes.any { it.startsWith("lines_recovered") || it == "table_uncertain" }
+        get() = error != null || isEmpty || (confidence != null && confidence < 0.7f) || uncertainWords > 5 || regionsToReview > 0 ||
+            notes.any { it.startsWith("lines_recovered") || it.startsWith("possible_missing_lines") || it == "table_uncertain" }
+
+    /** Blocks and table cells marked for review. */
+    val regionsToReview: Int
+        get() = blocks.count { it.region?.needsReview == true } + blocks.filterIsInstance<ExtractedBlock.Table>().sumOf { it.cellsToReview }
 }
 
 /** The result of extracting one or more images or a PDF. */
