@@ -86,24 +86,33 @@ object OcrPreprocessor {
      * pixels of each row. A line is a run of inked rows at least [minHeight] high; short gaps
      * (accents, dots above Arabic letters) do not split it.
      */
-    fun countTextLines(rowInk: IntArray, width: Int, minHeight: Int = 8, maxGap: Int = 3): Int {
+    fun countTextLines(rowInk: IntArray, width: Int, minHeight: Int = 8, maxGap: Int = 3): Int =
+        textLineBands(rowInk, width, minHeight, maxGap).size
+
+    /** Rows (first..last) of each text line, from the horizontal ink profile (see [countTextLines]). */
+    fun textLineBands(rowInk: IntArray, width: Int, minHeight: Int = 8, maxGap: Int = 3): List<IntRange> {
         val threshold = (width * 0.004).toInt().coerceAtLeast(2)
-        var lines = 0
-        var run = 0
-        var gap = 0
-        for (v in rowInk) {
-            if (v >= threshold) { run += gap.takeIf { run > 0 } ?: 0; run++; gap = 0 }
-            else if (run > 0) {
-                gap++
-                if (gap > maxGap) { if (run >= minHeight) lines++; run = 0; gap = 0 }
+        val bands = ArrayList<IntRange>()
+        var start = -1
+        var last = -1
+        for ((y, v) in rowInk.withIndex()) {
+            if (v >= threshold) {
+                if (start < 0) start = y
+                last = y
+            } else if (start >= 0 && y - last > maxGap) {
+                if (last - start + 1 >= minHeight) bands += start..last
+                start = -1
             }
         }
-        if (run >= minHeight) lines++
-        return lines
+        if (start >= 0 && last - start + 1 >= minHeight) bands += start..last
+        return bands
     }
 
     /** Text lines of a prepared (grey) page, see [countTextLines]. */
-    fun countTextLines(page: Bitmap): Int {
+    fun countTextLines(page: Bitmap): Int = textLineBands(page).size
+
+    /** Row bands of the text lines of a prepared (grey) page. */
+    fun textLineBands(page: Bitmap): List<IntRange> {
         val w = page.width
         val row = IntArray(w)
         val ink = IntArray(page.height)
@@ -113,7 +122,7 @@ object OcrPreprocessor {
             for (x in 0 until w) if ((row[x] and 0xFF) < 110) n++
             ink[y] = n
         }
-        return countTextLines(ink, w)
+        return textLineBands(ink, w)
     }
 
     /** Share of the letters of [text] that are Arabic. */

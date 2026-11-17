@@ -60,6 +60,9 @@ class OcrPreprocessorTest {
         assertEquals(1, OcrPreprocessor.countTextLines(page(20 to 24, 26 to 50), 1000))
         // Specks (shorter than a line) are not lines.
         assertEquals(1, OcrPreprocessor.countTextLines(page(20 to 50, 300 to 302), 1000))
+        // Band positions, used to read each line on its own.
+        assertEquals(listOf(20..49, 80..109), OcrPreprocessor.textLineBands(page(20 to 50, 80 to 110), 1000))
+        assertEquals(listOf(20..49), OcrPreprocessor.textLineBands(page(20 to 24, 26 to 50), 1000))
     }
 
     @Test

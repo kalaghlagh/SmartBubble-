@@ -172,19 +172,17 @@ class DocumentOcrEngine(private val context: Context) {
                     if (!OcrPreprocessor.isWeak(best.text, best.confidence)) break
                 }
             }
-            // Lines missed by the layout analysis (seen on Arabic pages: only the first line came
-            // back): when the page shows clearly more text lines than were recognized, it is
-            // read again as one uniform block of text and the result with more letters kept.
-            val inkLines = OcrPreprocessor.countTextLines(prepared)
-            if (inkLines >= 2 && best.lineCount * 4 < inkLines * 3) {
-                currentCoroutineContext().ensureActive()
-                val engines = listOfNotNull(tess, if (OcrPreprocessor.arabicShare(best.text) > 0.3) arabicEngine() else null)
-                for (engine in engines) {
-                    engine.setPageSegMode(TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK)
-                    val r = try { recognize(engine, prepared) } finally { engine.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO) }
-                    if (r.letters > best.letters) best = r
-                }
-                Log.i(TAG, "Page ${pageIndex + 1}: $inkLines text lines on the image, read again as one block")
+            // Lines missed by the layout analysis. Measured on the device (OcrDeviceTest): on an
+            // Arabic page of two lines, Tesseract returns only the first one in every page mode,
+            // although it reads the second line perfectly on its own. When the image shows
+            // clearly more text lines than were recognized, each line is read separately (cut
+            // from the page's ink profile) and the result with more letters is kept.
+            val bands = OcrPreprocessor.textLineBands(prepared)
+            if (bands.size >= 2 && best.lineCount * 4 < bands.size * 3) {
+                val engine = (if (OcrPreprocessor.arabicShare(best.text) > 0.3) arabicEngine() else null) ?: tess
+                val r = recognizeLines(engine, prepared, bands)
+                if (r.letters > best.letters) best = r
+                Log.i(TAG, "Page ${pageIndex + 1}: ${bands.size} text lines on the image, ${best.lineCount} recognized after reading line by line")
             }
             // A mostly Arabic page read with another model first: read again Arabic-first, keep the better.
             if (OcrPreprocessor.arabicShare(best.text) > 0.3) {
@@ -205,6 +203,33 @@ class DocumentOcrEngine(private val context: Context) {
         } finally {
             prepared.recycle()
         }
+    }
+
+    /** Reads each text line band on its own (one block per line), in page order. */
+    private suspend fun recognizeLines(tess: TessBaseAPI, page: Bitmap, bands: List<IntRange>): Recognition {
+        val texts = ArrayList<String>()
+        var confidence = 0f
+        tess.setPageSegMode(TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK)
+        try {
+            for (band in bands) {
+                currentCoroutineContext().ensureActive()
+                val top = (band.first - 10).coerceAtLeast(0)
+                val bottom = (band.last + 10).coerceAtMost(page.height - 1)
+                val crop = Bitmap.createBitmap(page, 0, top, page.width, bottom - top + 1)
+                try {
+                    tess.setImage(crop)
+                    val t = tess.getUTF8Text().orEmpty().trim()
+                    if (t.isNotEmpty()) { texts += t.replace(Regex("""\s*\n\s*"""), " "); confidence += tess.meanConfidence() / 100f }
+                } finally {
+                    tess.clear()
+                    crop.recycle()
+                }
+            }
+        } finally {
+            tess.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO)
+        }
+        val conf = if (texts.isEmpty()) 0f else (confidence / texts.size).coerceIn(0f, 1f)
+        return Recognition(texts.joinToString("\n"), emptyList(), conf)
     }
 
     private fun recognize(tess: TessBaseAPI, bitmap: Bitmap): Recognition {
