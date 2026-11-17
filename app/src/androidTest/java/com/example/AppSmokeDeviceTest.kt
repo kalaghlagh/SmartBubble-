@@ -154,6 +154,10 @@ class AppSmokeDeviceTest {
         assertEquals(setOf("DOCX", "PPTX", "XLSX"), imported.map { it.fileType.uppercase() }.toSet())
         tap("nav_templates")
         await("templates screen") { vm.currentTab.value == AppNavTab.TEMPLATES }
+        shot("templates-library")
+        // The uploaded templates (the library also lists the built-in categories).
+        tap("st_filter_uploaded")
+        await("only uploads listed") { !exists("st_category_reports") && !exists("categories_header") }
         shot("templates-list")
         for (t in imported) {
             tap("template_menu_${t.id}")
@@ -242,9 +246,17 @@ class AppSmokeDeviceTest {
         val pdf = File(thesis.state.value.lastExport!!.document.filePath)
         PdfRenderer(ParcelFileDescriptor.open(pdf, ParcelFileDescriptor.MODE_READ_ONLY)).use { r ->
             assertTrue("PDF has no pages", r.pageCount >= 1)
+            // The page size of the template this thesis uses: A4 (595 x 842 pt) with the built-in
+            // formatting, or the default Word template's own page (its PDF follows the Word export).
+            val resolved = runBlocking { com.example.thesis.export.ThesisTemplateResolver.resolve(com.example.offline.document.RoomTemplateRepository(vm.database.templateDao()), null) }
+            val expected = com.example.thesis.export.ThesisTemplateResolver.pdfProfile(resolved).let { p ->
+                (if (p.pageWidthPt > 0) p.pageWidthPt else 595) to (if (p.pageHeightPt > 0) p.pageHeightPt else 842)
+            }
+            android.util.Log.i("AppSmokeDeviceTest", "Thesis template: ${resolved.source} ${resolved.entity?.name}, page ${expected.first}x${expected.second}")
             r.openPage(0).use { p ->
-                // A4 in points (595 x 842), within rounding.
-                assertTrue("not A4: ${p.width}x${p.height}", p.width in 590..600 && p.height in 837..847)
+                assertTrue("page ${p.width}x${p.height}, template page ${expected.first}x${expected.second} (${resolved.source} ${resolved.entity?.name})",
+                    Math.abs(p.width - expected.first) <= 5 && Math.abs(p.height - expected.second) <= 5)
+                if (resolved.entity == null) assertTrue("not A4: ${p.width}x${p.height}", p.width in 590..600 && p.height in 837..847)
             }
             // Ink in the body of each page (the footer band with the page number is left out), on
             // a 2x render so a page holding a single heading still counts.
@@ -326,7 +338,8 @@ class AppSmokeDeviceTest {
     @Test
     fun thesis_universityTemplateAndLogo_inPreviewPdfAndDocx_previewIsAViewerOnly() {
         language("en", "Thesis")
-        val dir = File(context.cacheDir, "device-template-test").apply { deleteRecursively(); mkdirs() }
+        // Under generated_docs: the folder the app's FileProvider serves (as for the other imports).
+        val dir = File(context.filesDir, "generated_docs/device-template-test").apply { deleteRecursively(); mkdirs() }
         val blue = Color.rgb(0, 0, 200)
         val green = Color.rgb(0, 160, 0)
         val red = Color.rgb(255, 0, 0)
@@ -348,7 +361,10 @@ class AppSmokeDeviceTest {
         assertEquals(595 to 842, profile.pageWidthPt to profile.pageHeightPt)
         assertEquals("Times New Roman" to 12, profile.bodyFont to profile.baseFontSizePt)
         tap("nav_templates")
-        await("template card") { exists("template_format_${entity.id}") }
+        tap("st_filter_uploaded")
+        await("only uploads listed") { !exists("st_category_reports") }
+        // The details are a child of the clickable card, whose semantics merge its children.
+        await("template card") { compose.onAllNodes(hasTestTag("template_format_${entity.id}"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
         shot("template-docx-formatting")
 
         // 2. New thesis with the template and a logo picked on the form (staged before the project exists).
@@ -380,9 +396,13 @@ class AppSmokeDeviceTest {
         await("preview built", 90_000) { thesis.state.value.busy == null && thesis.state.value.previewFile != null && exists("thesis_page_0") }
         for (tag in listOf("thesis_export_docx", "thesis_export_pdf", "thesis_export_result", "thesis_export_section")) assertTrue("$tag on the preview", !exists(tag))
         val viewport = compose.onNodeWithTag("thesis_preview_viewport").fetchSemanticsNode().boundsInRoot
-        val pageBox = compose.onNodeWithTag("thesis_page_0").fetchSemanticsNode().boundsInRoot
-        assertTrue("page cut off sideways: page $pageBox viewport $viewport", pageBox.left >= viewport.left - 1 && pageBox.right <= viewport.right + 1)
-        assertTrue("page is not A4-shaped: $pageBox", Math.abs(pageBox.height / pageBox.width - 842f / 595f) < 0.03f)
+        // Unclipped layout size and position (boundsInRoot is clipped to what is visible: a page
+        // taller than the screen scrolls vertically, which is allowed; sideways it must fit).
+        val pageNode = compose.onNodeWithTag("thesis_page_0").fetchSemanticsNode()
+        val pageLeft = pageNode.positionInRoot.x
+        val pageRight = pageLeft + pageNode.size.width
+        assertTrue("page cut off sideways: $pageLeft..$pageRight, viewport $viewport", pageLeft >= viewport.left - 1 && pageRight <= viewport.right + 1)
+        assertTrue("page is not A4-shaped: ${pageNode.size}", Math.abs(pageNode.size.height.toFloat() / pageNode.size.width - 842f / 595f) < 0.03f)
         for (arrow in listOf("thesis_page_prev", "thesis_page_next")) {
             val a = compose.onNodeWithTag(arrow).fetchSemanticsNode().boundsInRoot
             assertTrue("$arrow covers the page area: $a viewport $viewport", a.top >= viewport.bottom - 1)
@@ -445,4 +465,117 @@ class AppSmokeDeviceTest {
         assertEquals(0, countColor(File(thesis.state.value.lastExport!!.document.filePath), 0, green))
         assertTrue("crash report written", CrashLog.read(context) == null)
     }
+
+    // ------------------------------------------------------------------ Smart Templates
+
+    /**
+     * The template library on the device: categories, a subcategory default set in the UI and
+     * kept after the screen is recreated, built-in details with a sample page, Auto Format in
+     * Settings, and built-in documents drawn as real PDF/DOCX/XLSX/PPTX files with their styles.
+     */
+    @Test
+    fun smartTemplates_library_defaults_settings_andBuiltInOutputs() {
+        language("en", "Thesis")
+        runBlocking { vm.smartTemplates.clearDefault("letters.recommendation") }
+        tap("nav_templates")
+        await("library") { exists("templates_list") }
+        // All six categories are listed (the list is lazy: scrolled to each).
+        for (c in com.example.smarttemplates.TemplateCatalog.categories) {
+            scrollToTag("st_category_${c.id}")
+            assertTrue("category ${c.id}", exists("st_category_${c.id}"))
+        }
+        shot("st-library")
+        scrollToTag("st_category_letters")
+        tap("st_category_letters")
+        await("letters") { exists("st_category_screen") && exists("st_sub_letters.recommendation") }
+        shot("st-letters")
+        // Default for Recommendation Letters: the modern style (only that subcategory).
+        tap("st_set_default_letters.recommendation_builtin.letters.modern")
+        await("default saved") { runBlocking { vm.smartTemplates.defaults() }["letters.recommendation"] == "builtin.letters.modern" }
+        await("badge") { exists("st_default_badge_letters.recommendation_builtin.letters.modern") }
+        assertEquals(null, runBlocking { vm.smartTemplates.defaults() }["letters.business"])
+        // Details with a sample page drawn with the template.
+        tap("st_preview_letters.recommendation_builtin.letters.modern")
+        await("details") { exists("st_details_dialog") }
+        await("sample page", 30_000) { exists("st_sample_page") }
+        shot("st-details-letter-modern")
+        tap("st_details_close")
+        // Favorite.
+        tap("st_favorite_letters.recommendation_builtin.letters.classic")
+        await("favorite") { vm.templateLibrary.value.single { it.id == "builtin.letters.classic" }.favorite }
+        // Kept after the activity is recreated (Room).
+        compose.activityRule.scenario.recreate()
+        await("recreated") { exists("nav_templates") }
+        assertEquals("builtin.letters.modern", runBlocking { vm.smartTemplates.defaults() }["letters.recommendation"])
+        assertEquals("SUBCATEGORY_DEFAULT", runBlocking { vm.smartTemplates.resolve("letters.recommendation", "DOCX") }.source.name)
+        // Settings: Auto Format.
+        tap("nav_settings")
+        await("settings") { vm.currentTab.value == AppNavTab.SETTINGS }
+        scrollToTag("st_auto_format_switch")
+        val before = vm.autoFormat.value
+        tap("st_auto_format_switch")
+        await("auto format toggled") { vm.autoFormat.value != before }
+        tap("st_auto_format_switch")
+        await("auto format back") { vm.autoFormat.value == before }
+        shot("st-settings")
+
+        // Built-in outputs on the device: PDF pages drawn with the style (border, top band, Arabic).
+        val dir = File(context.cacheDir, "st-device").apply { deleteRecursively(); mkdirs() }
+        val formal = com.example.smarttemplates.BuiltInTemplates.byId("builtin.letters.formal")!!
+        val pdf = File(dir, "formal.pdf")
+        com.example.document.pdf.PdfEngine().generatePdf(com.example.smarttemplates.SampleContent.word("letters", "Formal"), pdf, formal.profile)
+        // Single border 24 pt from the page edge on the left (the margin there holds no text).
+        assertTrue("formal page border", countDark(pdf, 0, android.graphics.RectF(0.02f, 0.2f, 0.07f, 0.8f)) > 200)
+        val modern = com.example.smarttemplates.BuiltInTemplates.byId("builtin.reports.modern")!!
+        val pdf2 = File(dir, "modern.pdf")
+        com.example.document.pdf.PdfEngine().generatePdf(com.example.smarttemplates.SampleContent.word("reports", "Modern"), pdf2, modern.profile)
+        assertTrue("modern top band", countColor(pdf2, 0, Color.parseColor("#0F766E"), android.graphics.RectF(0.1f, 0f, 0.9f, 0.04f)) > 1000)
+        PdfRenderer(ParcelFileDescriptor.open(pdf2, ParcelFileDescriptor.MODE_READ_ONLY)).use { r ->
+            r.openPage(0).use { p -> assertTrue("A4", p.width in 590..600 && p.height in 837..847) }
+        }
+        val arabic = File(dir, "ar.pdf")
+        com.example.document.pdf.PdfEngine().generatePdf(com.example.document.model.WordDocumentModel("طلب إجازة", sections = listOf(
+            com.example.document.model.WordSection("", listOf("أتقدم إليكم بطلب إجازة لمدة أسبوع ابتداء من الأحد القادم."))),
+            letter = com.example.document.model.LetterParts(sender = listOf("أمينة بلقاسم"), subject = "الموضوع: طلب إجازة", signatureName = "أمينة بلقاسم", showTitle = true)),
+            arabic, com.example.smarttemplates.BuiltInTemplates.byId("builtin.requests.formal")!!.profile.copy(rtl = true))
+        // Right-to-left: the body text sits against the right margin.
+        val right = countDark(arabic, 0, android.graphics.RectF(0.6f, 0.08f, 0.9f, 0.5f))
+        val left = countDark(arabic, 0, android.graphics.RectF(0.1f, 0.08f, 0.4f, 0.5f))
+        assertTrue("Arabic text not right-aligned: right=$right left=$left", right > left)
+        // Native files of the other kinds open as valid packages.
+        for (t in com.example.smarttemplates.BuiltInTemplates.all) {
+            val f = File(dir, t.id + "." + t.format.lowercase())
+            when (t.kind) {
+                com.example.smarttemplates.OutputKind.SPREADSHEET -> com.example.document.xlsx.XlsxEngine().generateXlsx(com.example.smarttemplates.SampleContent.sheet("S"), f, t.profile)
+                com.example.smarttemplates.OutputKind.PRESENTATION -> com.example.document.pptx.PptxEngine().generatePptx(com.example.smarttemplates.SampleContent.slides("S"), f, t.profile)
+                com.example.smarttemplates.OutputKind.DOCUMENT -> com.example.document.docx.DocxEngine().generateDocx(com.example.smarttemplates.SampleContent.word(t.categoryId, "S"), f, t.profile)
+            }
+            assertEquals(t.id, null, com.example.document.DocumentFileValidator.validate(f, t.format.lowercase()))
+        }
+        assertTrue("crash report written", CrashLog.read(context) == null)
+    }
+
+    /** Scrolls every scrollable container (lazy ones included) until the node tagged [tag] is composed. */
+    private fun scrollToTag(tag: String) {
+        val containers = compose.onAllNodes(hasScrollAction())
+        repeat(containers.fetchSemanticsNodes().size) { i -> try { containers[i].performScrollToNode(hasTestTag(tag)) } catch (e: Throwable) { } }
+        compose.waitForIdle()
+        await("node $tag") { exists(tag) }
+    }
+
+    /** Dark pixels (lines, text) of [page] inside [area] (fractions of the page). */
+    private fun countDark(pdf: File, page: Int, area: android.graphics.RectF): Int =
+        PdfRenderer(ParcelFileDescriptor.open(pdf, ParcelFileDescriptor.MODE_READ_ONLY)).use { r ->
+            r.openPage(page).use { p ->
+                val bmp = Bitmap.createBitmap(p.width * 2, p.height * 2, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) }
+                p.render(bmp, null, android.graphics.Matrix().apply { setScale(2f, 2f) }, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                var n = 0
+                for (y in (area.top * bmp.height).toInt() until (area.bottom * bmp.height).toInt()) for (x in (area.left * bmp.width).toInt() until (area.right * bmp.width).toInt()) {
+                    val c = bmp.getPixel(x, y)
+                    if ((Color.red(c) + Color.green(c) + Color.blue(c)) / 3 < 160) n++
+                }
+                bmp.recycle()
+                n
+            }
+        }
 }

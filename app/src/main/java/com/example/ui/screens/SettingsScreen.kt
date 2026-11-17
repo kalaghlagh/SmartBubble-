@@ -269,6 +269,9 @@ fun SettingsScreen(
                 }
             }
 
+            // Section: Smart Templates (Auto Format, document language and format, defaults)
+            item { SmartTemplatesSettingsCard(viewModel) }
+
             // Section: Preferences Card (Language, Theme, About)
             item {
                 Card(

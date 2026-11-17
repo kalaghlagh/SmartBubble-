@@ -22,7 +22,9 @@ class OcrUnavailableException(message: String, cause: Throwable? = null) : Excep
 data class OcrBatchResult(
     val pages: List<ScannedPageData>,
     /** Number of pages whose image could not be read or recognized (they are kept, empty). */
-    val failedPages: Int
+    val failedPages: Int,
+    /** Why each failed page failed ("Page 2: image could not be read"), for the user and the logs. */
+    val errors: List<String> = emptyList()
 )
 
 /**
@@ -78,11 +80,14 @@ class DocumentOcrEngine(private val context: Context) {
                 }
                 if (!started) throw OcrUnavailableException("OCR engine could not be initialized")
                 tess.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO)
+                // Scanned pages are about 300 dpi; without this Tesseract assumes 70 dpi for bitmaps.
+                tess.setVariable("user_defined_dpi", "300")
                 // Keep the gaps between columns so simple tables can be reconstructed.
                 tess.setVariable("preserve_interword_spaces", "1")
 
                 val pages = ArrayList<ScannedPageData>(pageUris.size)
                 var failed = 0
+                val errors = ArrayList<String>()
                 for ((offset, uri) in pageUris.withIndex()) {
                     currentCoroutineContext().ensureActive()
                     val pageIndex = firstPageIndex + offset
@@ -93,9 +98,11 @@ class DocumentOcrEngine(private val context: Context) {
                         throw e
                     } catch (e: OutOfMemoryError) {
                         Log.w(TAG, "Page ${pageIndex + 1}: not enough memory to recognize the image")
+                        errors += "Page ${pageIndex + 1}: not enough memory"
                         null
                     } catch (e: Exception) {
-                        Log.w(TAG, "Page ${pageIndex + 1} could not be recognized: ${e.javaClass.simpleName}")
+                        Log.w(TAG, "Page ${pageIndex + 1} could not be recognized", e)
+                        errors += "Page ${pageIndex + 1}: ${e.javaClass.simpleName}: ${e.message.orEmpty().take(200)}"
                         null
                     }
                     currentCoroutineContext().ensureActive() // a stopped recognition is not a result
@@ -105,7 +112,7 @@ class DocumentOcrEngine(private val context: Context) {
                         pageIndex = pageIndex, imageUriString = uri.toString(), rawText = ""
                     )
                 }
-                OcrBatchResult(pages, failed)
+                OcrBatchResult(pages, failed, errors)
             } finally {
                 cancelHandle?.dispose()
                 synchronized(lock) {
@@ -116,8 +123,41 @@ class DocumentOcrEngine(private val context: Context) {
         }
     }
 
-    private fun recognizePage(tess: TessBaseAPI, uri: Uri, pageIndex: Int): ScannedPageData {
-        val bitmap: Bitmap = PageImageLoader.load(context, uri)
+    /** Text, layout lines and confidence of one recognition. */
+    private class Recognition(val text: String, val lines: List<OcrLineInfo>, val confidence: Float) {
+        val score: Double get() = OcrPreprocessor.score(text, confidence)
+    }
+
+    private suspend fun recognizePage(tess: TessBaseAPI, uri: Uri, pageIndex: Int): ScannedPageData {
+        val original: Bitmap = PageImageLoader.load(context, uri)
+        val prepared = try { OcrPreprocessor.prepare(original) } finally { original.recycle() }
+        try {
+            var best = recognize(tess, prepared)
+            // A weak result may come from a page photographed sideways or upside down (the
+            // scanner does not always fix it): the other orientations are tried, the best kept.
+            if (OcrPreprocessor.isWeak(best.text, best.confidence)) {
+                for (degrees in listOf(90, 270, 180)) {
+                    currentCoroutineContext().ensureActive()
+                    val rotated = OcrPreprocessor.rotate(prepared, degrees)
+                    val r = try { recognize(tess, rotated) } finally { rotated.recycle() }
+                    if (r.score > best.score * 1.2) best = r
+                    if (!OcrPreprocessor.isWeak(best.text, best.confidence)) break
+                }
+            }
+            Log.i(TAG, "Page ${pageIndex + 1}: ${best.text.length} characters, confidence ${"%.2f".format(best.confidence)}")
+            return ScannedDocumentStructureReconstructor.reconstructPage(
+                pageIndex = pageIndex,
+                imageUriString = uri.toString(),
+                rawText = best.text,
+                lines = best.lines,
+                confidence = if (best.text.isBlank()) 0f else best.confidence
+            )
+        } finally {
+            prepared.recycle()
+        }
+    }
+
+    private fun recognize(tess: TessBaseAPI, bitmap: Bitmap): Recognition {
         try {
             tess.setImage(bitmap)
             // getHOCRText runs the recognition in the mode that stop() can interrupt (see the
@@ -126,17 +166,10 @@ class DocumentOcrEngine(private val context: Context) {
             val plainText = tess.getUTF8Text().orEmpty()
             val confidence = (tess.meanConfidence() / 100f).coerceIn(0f, 1f)
             val lines = readLines(tess)
-            val text = if (lines.isNotEmpty()) OcrTextAssembler.assemble(lines) else plainText.trim()
-            return ScannedDocumentStructureReconstructor.reconstructPage(
-                pageIndex = pageIndex,
-                imageUriString = uri.toString(),
-                rawText = text,
-                lines = lines,
-                confidence = if (text.isBlank()) 0f else confidence
-            )
+            val text = if (lines.isNotEmpty()) OcrTextAssembler.assemble(lines).ifBlank { plainText.trim() } else plainText.trim()
+            return Recognition(text, lines, confidence)
         } finally {
             tess.clear()
-            bitmap.recycle()
         }
     }
 

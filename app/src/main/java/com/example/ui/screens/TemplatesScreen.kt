@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.model.TemplateEntity
 import com.example.template.domain.TemplateProfile
+import com.example.smarttemplates.TemplateCatalog
 import com.example.ui.SmartBubbleViewModel
 import com.example.ui.components.FilterChipRow
 import com.example.ui.components.FilterOption
@@ -75,6 +76,15 @@ fun TemplatesScreen(
     var showUploadDialog by remember { mutableStateOf(false) }
 
     var templateForOptions by remember { mutableStateOf<TemplateEntity?>(null) }
+
+    // Smart Templates library
+    val library by viewModel.templateLibrary.collectAsState()
+    val pendingClassification by viewModel.pendingTemplateClassification.collectAsState()
+    var libraryFilter by remember { mutableStateOf(TemplateLibraryFilter.ALL) }
+    var openCategory by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    var detailsFor by remember { mutableStateOf<com.example.smarttemplates.LibraryTemplate?>(null) }
+    // Names in the app language, for the search.
+    val libraryNames = library.associate { t -> t.id to (t.builtIn?.let { context.getString(com.example.ui.SmartTemplateStrings.builtInName(it.id)) } ?: t.uploaded?.name.orEmpty()) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -207,90 +217,139 @@ fun TemplatesScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Filter chips [All] [Docs] [PPTX] [XLSX]: one horizontally scrollable row (see FilterChipRow).
-        FilterChipRow(
-            options = listOf(
-                FilterOption("All", stringResource(R.string.filter_all)),
-                FilterOption("Docs", stringResource(R.string.filter_docs)),
-                FilterOption("PPTX", stringResource(R.string.filter_pptx)),
-                FilterOption("XLSX", stringResource(R.string.filter_xlsx)),
-                FilterOption("PDF", stringResource(R.string.filter_pdf))
-            ),
-            selectedKey = selectedFilter,
-            onSelect = { selectedFilter = it },
-            testTagPrefix = "filter_"
-        )
-
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Templates List
-        if (filteredTemplates.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.FolderOpen,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        modifier = Modifier.size(64.dp)
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = stringResource(R.string.template_empty_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = stringResource(R.string.template_empty_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 13.sp
-                    )
+        val openCategoryEntity = openCategory?.let { TemplateCatalog.category(it) }
+        if (openCategoryEntity != null) {
+            // Smart Templates: the subcategories of one category with their templates and defaults.
+            Box(Modifier.weight(1f)) {
+                CategoryContent(viewModel, openCategoryEntity, library, onBack = { openCategory = null }) { t ->
+                    if (t.uploaded != null) viewModel.openTemplatePreview(t.uploaded) else detailsFor = t
                 }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                contentPadding = PaddingValues(bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
+        } else LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .testTag("templates_list"),
+            contentPadding = PaddingValues(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            item(key = "library_header") {
+                Text(stringResource(R.string.st_library_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 16.dp))
+            }
+            item(key = "library_filters") { TemplateLibraryFilterRow(libraryFilter) { libraryFilter = it } }
+            pendingClassification?.let { pending -> item(key = "classify") { ClassificationCard(viewModel, pending) } }
+            val query = searchQuery.trim()
+            if ((libraryFilter != TemplateLibraryFilter.ALL && libraryFilter != TemplateLibraryFilter.UPLOADED) ||
+                (libraryFilter == TemplateLibraryFilter.ALL && query.isNotEmpty())) {
+                val matches = library.filter { t ->
+                    val byFilter = when (libraryFilter) {
+                        TemplateLibraryFilter.BUILT_IN -> t.isBuiltIn
+                        TemplateLibraryFilter.FAVORITES -> t.favorite
+                        TemplateLibraryFilter.DEFAULTS -> t.defaultFor.isNotEmpty()
+                        else -> true
+                    }
+                    byFilter && (query.isEmpty() || libraryNames[t.id].orEmpty().contains(query, ignoreCase = true))
+                }
+                items(matches, key = { "lib_" + it.id }) { t ->
+                    Box(Modifier.padding(horizontal = 16.dp)) {
+                        LibraryTemplateRow(
+                            template = t,
+                            defaultBadgeFor = t.defaultFor.firstOrNull()?.let { scope -> context.getString(com.example.ui.SmartTemplateStrings.subcategory(scope)) },
+                            onFavorite = { viewModel.setTemplateFavorite(t.id, it) },
+                            onPreview = { if (t.uploaded != null) viewModel.openTemplatePreview(t.uploaded) else detailsFor = t },
+                            onSetDefault = null
+                        )
+                    }
+                }
+            }
+            if (libraryFilter == TemplateLibraryFilter.ALL || libraryFilter == TemplateLibraryFilter.UPLOADED) {
+                item(key = "uploaded_header") {
+                    Text(stringResource(R.string.st_filter_uploaded), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp))
+                }
+                // Filter chips [All] [Docs] [PPTX] [XLSX]: one horizontally scrollable row (see FilterChipRow).
+                item(key = "uploaded_filters") {
+                    FilterChipRow(
+                        options = listOf(
+                            FilterOption("All", stringResource(R.string.filter_all)),
+                            FilterOption("Docs", stringResource(R.string.filter_docs)),
+                            FilterOption("PPTX", stringResource(R.string.filter_pptx)),
+                            FilterOption("XLSX", stringResource(R.string.filter_xlsx)),
+                            FilterOption("PDF", stringResource(R.string.filter_pdf))
+                        ),
+                        selectedKey = selectedFilter,
+                        onSelect = { selectedFilter = it },
+                        testTagPrefix = "filter_"
+                    )
+                }
+                if (filteredTemplates.isEmpty()) item(key = "uploaded_empty") {
+                    Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.size(64.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = stringResource(R.string.template_empty_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = stringResource(R.string.template_empty_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
                 items(filteredTemplates, key = { it.id }) { template ->
                     // First-page image of PDF templates (rendered on the device, cached).
                     val thumbnail by produceState<ImageBitmap?>(null, template.id, template.originalFilePath) {
                         publishOnMain(viewModel.templateThumbnail(template)?.asImageBitmap())
                     }
-                    TemplateItemCard(
-                        template = template,
-                        thumbnail = thumbnail,
-                        onPreview = { viewModel.openTemplatePreview(template) },
-                        onDuplicate = {
-                            templateToDuplicate = template
-                            duplicateNameInput = context.getString(R.string.template_duplicate_name_format, template.name)
-                        },
-                        onSetDefault = { viewModel.setDefaultTemplate(template) },
-                        onRemoveDefault = { viewModel.removeDefaultTemplate(template) },
-                        onDelete = { viewModel.deleteTemplate(template) },
-                        onOptions = { templateForOptions = template },
-                        onSelectForChat = {
-                            viewModel.selectTemplateForChat(template)
-                            viewModel.setNavTab(com.example.ui.AppNavTab.CHAT)
-                        }
-                    )
+                    Box(Modifier.padding(horizontal = 16.dp)) {
+                        TemplateItemCard(
+                            template = template,
+                            thumbnail = thumbnail,
+                            onPreview = { viewModel.openTemplatePreview(template) },
+                            onDuplicate = {
+                                templateToDuplicate = template
+                                duplicateNameInput = context.getString(R.string.template_duplicate_name_format, template.name)
+                            },
+                            onSetDefault = { viewModel.setDefaultTemplate(template) },
+                            onRemoveDefault = { viewModel.removeDefaultTemplate(template) },
+                            onDelete = { viewModel.deleteTemplate(template) },
+                            onOptions = { templateForOptions = template },
+                            onSelectForChat = {
+                                viewModel.selectTemplateForChat(template)
+                                viewModel.setNavTab(com.example.ui.AppNavTab.CHAT)
+                            }
+                        )
+                    }
+                }
+            }
+            // Categories of the library (built-in and uploaded templates by kind of document).
+            if (libraryFilter == TemplateLibraryFilter.ALL && query.isEmpty()) {
+                item(key = "categories_header") {
+                    Text(stringResource(R.string.st_categories), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp))
+                }
+                items(TemplateCatalog.categories, key = { "cat_" + it.id }) { c ->
+                    Box(Modifier.padding(horizontal = 16.dp)) {
+                        CategoryCard(c, library.count { t -> c.subcategories.any { t.appliesTo(it.id) } }) { openCategory = c.id }
+                    }
                 }
             }
         }
     }
+
+    detailsFor?.let { t -> TemplateDetailsDialog(viewModel, t) { detailsFor = null } }
 
     // Template generation settings dialog
     templateForOptions?.let { target ->

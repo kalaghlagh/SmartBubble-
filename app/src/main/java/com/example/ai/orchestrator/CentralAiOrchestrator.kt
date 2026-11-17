@@ -42,7 +42,31 @@ data class ChatTurnResult(
     val reply: String,
     val provider: ProviderEntity,
     val document: DocumentEntity? = null,
-    val templateApplied: Boolean = false
+    val templateApplied: Boolean = false,
+    /** Smart Templates: the kind of document detected and the template that formatted it. */
+    val intent: com.example.smarttemplates.DocumentIntent? = null,
+    val template: com.example.smarttemplates.ResolvedTemplate? = null,
+    /** Auto Format is off: the document uses neutral formatting until the user picks a template. */
+    val needsTemplateChoice: Boolean = false,
+    /** The kind of document is unclear: the user is asked to choose (no AI request was made). */
+    val clarification: com.example.smarttemplates.DocumentIntent? = null
+)
+
+/**
+ * Smart Templates settings for one chat turn.
+ * @property autoFormat apply the default template of the detected kind of document automatically
+ * @property preferredDocumentFormat "DOCX" or "PDF" for documents that are not asked for in a given format
+ * @property documentLanguage language of generated documents; null = the language of the request
+ * @property forcedSubcategory the kind of document the user picked (answer to a clarification, regenerate)
+ * @property overrideTemplateId a template chosen for this one document (saved defaults are unchanged)
+ */
+data class SmartTemplateOptions(
+    val service: com.example.smarttemplates.SmartTemplateService,
+    val autoFormat: Boolean = true,
+    val preferredDocumentFormat: String = "DOCX",
+    val documentLanguage: String? = null,
+    val forcedSubcategory: String? = null,
+    val overrideTemplateId: String? = null
 )
 
 /**
@@ -69,7 +93,9 @@ class CentralAiOrchestrator(
     private val context: Context,
     private val database: SmartBubbleDatabase,
     private val deliveryManager: DeliveryManager,
-    private val providerManager: ProviderManager
+    private val providerManager: ProviderManager,
+    /** The default provider and its client (tests point a real client at a local server). */
+    private val defaultClient: suspend () -> Pair<ProviderEntity, AiProviderClient> = { providerManager.defaultClient() }
 ) {
     private val docxEngine = DocxEngine()
     private val pptxEngine = PptxEngine()
@@ -99,27 +125,67 @@ class CentralAiOrchestrator(
         uiLanguage: String,
         selectedTemplate: TemplateEntity?,
         forceFormat: DocumentFormat? = null,
-        listener: AiProgressListener = AiProgressListener.NONE
+        listener: AiProgressListener = AiProgressListener.NONE,
+        smart: SmartTemplateOptions? = null
     ): ChatTurnResult = withContext(Dispatchers.IO) {
         listener.onStage(AiProgressStage.CONNECTING)
-        val (provider, client) = providerManager.defaultClient()
+        val (provider, client) = defaultClient()
         val conversation = ConversationContext.build(history, userMessage)
 
-        val plan: Plan = if (forceFormat != null) {
-            Plan.Document(forceFormat, title = null, brief = userMessage, reply = null)
-        } else {
-            planTurn(client, conversation, uiLanguage, selectedTemplate, listener)
+        // Smart Templates: local detection first (no AI request). A clear request goes straight
+        // to the document writer; an unclear one is asked about; anything else goes to the
+        // planner, which also classifies documents in the same request.
+        val local: com.example.smarttemplates.DocumentIntent? = smart?.let { opts ->
+            opts.forcedSubcategory?.let { intentFor(it, userMessage, forceFormat?.name ?: opts.preferredDocumentFormat) }
+                ?: com.example.smarttemplates.DocumentIntentDetector.detect(userMessage, forceFormat?.name?.takeIf { it == "PDF" || it == "DOCX" } ?: opts.preferredDocumentFormat)
+        }?.let { i -> smart?.documentLanguage?.let { i.copy(language = it) } ?: i }
+
+        val plan: Plan = when {
+            forceFormat != null -> Plan.Document(forceFormat, title = null, brief = userMessage, reply = null,
+                intent = local?.takeIf { !it.needsClarification && com.example.smarttemplates.OutputKind.ofFormat(it.format) == com.example.smarttemplates.OutputKind.ofFormat(forceFormat.name) }?.copy(format = forceFormat.name)
+                    ?: smart?.let { generalIntent(forceFormat.name, userMessage, it.documentLanguage) })
+            local != null && !local.needsClarification ->
+                Plan.Document(DocumentFormat.parse(local.format) ?: DocumentFormat.DOCX, title = null, brief = userMessage, reply = null, intent = local)
+            local != null && local.choices.isNotEmpty() ->
+                return@withContext ChatTurnResult(reply = "", provider = provider, clarification = local)
+            else -> planTurn(client, conversation, uiLanguage, selectedTemplate, listener, smart)
         }
 
         when (plan) {
             is Plan.Chat -> ChatTurnResult(reply = plan.reply, provider = provider)
-            is Plan.Document -> generateDocument(client, provider, conversation, plan, uiLanguage, selectedTemplate, listener)
+            is Plan.Document -> generateDocument(client, provider, conversation, plan, uiLanguage, selectedTemplate, listener, smart, userMessage)
         }
     }
 
     private sealed class Plan {
         data class Chat(val reply: String) : Plan()
-        data class Document(val format: DocumentFormat, val title: String?, val brief: String, val reply: String?) : Plan()
+        data class Document(
+            val format: DocumentFormat, val title: String?, val brief: String, val reply: String?,
+            val intent: com.example.smarttemplates.DocumentIntent? = null
+        ) : Plan()
+    }
+
+    /** The intent for a kind of document chosen by the user (clarification answer, regenerate). */
+    private fun intentFor(subcategoryId: String, text: String, preferredFormat: String): com.example.smarttemplates.DocumentIntent? {
+        val category = com.example.smarttemplates.TemplateCatalog.categoryOf(subcategoryId) ?: return null
+        val format = when (category.kind) {
+            com.example.smarttemplates.OutputKind.SPREADSHEET -> "XLSX"
+            com.example.smarttemplates.OutputKind.PRESENTATION -> "PPTX"
+            com.example.smarttemplates.OutputKind.DOCUMENT -> if (preferredFormat == "PDF") "PDF" else "DOCX"
+        }
+        return com.example.smarttemplates.DocumentIntent(category.id, subcategoryId, format,
+            com.example.smarttemplates.DocumentIntentDetector.detectLanguage(text), 1.0, source = "user")
+    }
+
+    /** The general kind of document for a file format (used when only the format is known). */
+    private fun generalIntent(format: String, text: String, language: String?): com.example.smarttemplates.DocumentIntent {
+        val sub = when (com.example.smarttemplates.OutputKind.ofFormat(format)) {
+            com.example.smarttemplates.OutputKind.SPREADSHEET -> "spreadsheets.general"
+            com.example.smarttemplates.OutputKind.PRESENTATION -> "presentations.general"
+            com.example.smarttemplates.OutputKind.DOCUMENT -> "reports.general"
+        }
+        return com.example.smarttemplates.DocumentIntent(sub.substringBefore('.'), sub, format,
+            language ?: com.example.smarttemplates.DocumentIntentDetector.detectLanguage(text), 0.8, source = "format")
     }
 
     private suspend fun planTurn(
@@ -127,11 +193,15 @@ class CentralAiOrchestrator(
         conversation: List<AiMessage>,
         uiLanguage: String,
         selectedTemplate: TemplateEntity?,
-        listener: AiProgressListener
+        listener: AiProgressListener,
+        smart: SmartTemplateOptions? = null
     ): Plan {
-        val templateNote = selectedTemplate?.let {
-            "The user selected the ${it.fileType} template \"${it.name}\". If they ask for a document, prefer the ${it.fileType} format unless they ask for another one."
-        }
+        val templateNote = listOfNotNull(
+            selectedTemplate?.let {
+                "The user selected the ${it.fileType} template \"${it.name}\". If they ask for a document, prefer the ${it.fileType} format unless they ask for another one."
+            },
+            smart?.let { OrchestratorPrompts.plannerCategories(com.example.smarttemplates.TemplateCatalog.subcategories.map { it.id }) }
+        ).joinToString("\n- ").ifEmpty { null }
         // The planner's answer is streamed: a chat reply is shown while it arrives. Pieces are
         // delivered in order on one OkHttp thread.
         val extractor = PlannerReplyExtractor()
@@ -171,7 +241,15 @@ class CentralAiOrchestrator(
         if (intent == "document") {
             val format = DocumentFormat.parse(obj["format"] as? String) ?: DocumentFormat.DOCX
             val brief = (obj["brief"] as? String)?.trim().orEmpty()
-            return Plan.Document(format, (obj["title"] as? String)?.trim(), brief.ifEmpty { conversation.last().text }, reply.ifEmpty { null })
+            // The AI's classification is used only when it names a catalog kind of the right file type.
+            val docIntent = smart?.let { opts ->
+                val sub = com.example.smarttemplates.TemplateCatalog.subcategory(obj["category"] as? String)
+                    ?.takeIf { s -> com.example.smarttemplates.TemplateCatalog.categoryOf(s.id)?.kind == com.example.smarttemplates.OutputKind.ofFormat(format.name) }
+                val text = conversation.last().text
+                (sub?.let { intentFor(it.id, text, format.name)?.copy(format = format.name, confidence = 0.8, source = "ai") } ?: generalIntent(format.name, text, opts.documentLanguage))
+                    .let { i -> opts.documentLanguage?.let { i.copy(language = it) } ?: i }
+            }
+            return Plan.Document(format, (obj["title"] as? String)?.trim(), brief.ifEmpty { conversation.last().text }, reply.ifEmpty { null }, docIntent)
         }
         if (reply.isEmpty()) {
             if (response.truncated) throw AiException(AiErrorKind.TRUNCATED_RESPONSE)
@@ -260,10 +338,36 @@ class CentralAiOrchestrator(
         plan: Plan.Document,
         uiLanguage: String,
         selectedTemplate: TemplateEntity?,
-        listener: AiProgressListener
+        listener: AiProgressListener,
+        smart: SmartTemplateOptions? = null,
+        userMessage: String = ""
     ): ChatTurnResult {
-        val template = chooseTemplate(plan.format, selectedTemplate)
+        val intent = plan.intent
+        // Smart Templates: the template comes from the library (override, subcategory default,
+        // category default, best built-in). With Auto Format off the document gets neutral
+        // formatting and the user picks a template afterwards. A template attached to the chat
+        // counts as the choice for this document.
+        var resolved: com.example.smarttemplates.ResolvedTemplate? = null
+        var needsChoice = false
+        val template: TemplateChoice = if (smart != null && intent?.subcategoryId != null) {
+            val override = smart.overrideTemplateId ?: selectedTemplate?.id
+            if (smart.autoFormat || override != null) {
+                val r = smart.service.resolve(intent.subcategoryId, plan.format.name, override)
+                resolved = r
+                // Arabic documents are laid out right to left by the profile writers.
+                val profile = if (r.isBuiltIn) r.profile.copy(rtl = intent.language == "ar") else r.profile
+                TemplateChoice(profile, r.file, r.entity, null)
+            } else {
+                needsChoice = true
+                TemplateChoice(com.example.offline.document.TemplateMatcher.builtInProfile(), null, null, null)
+            }
+        } else chooseTemplate(plan.format, selectedTemplate)
         val templateDescription = describeTemplate(template.entity)
+        val guidance = intent?.subcategoryId?.let { sub ->
+            val category = com.example.smarttemplates.TemplateCatalog.categoryOf(sub)!!
+            OrchestratorPrompts.kindGuidance(category.layout.name, sub.substringAfter('.').replace('_', ' ') + " " + category.id.removeSuffix("s"),
+                intent.language, intent.missingInfo)
+        }
         currentCoroutineContext().ensureActive()
         listener.onStage(AiProgressStage.GENERATING)
 
@@ -276,7 +380,7 @@ class CentralAiOrchestrator(
             }
         )
         val date = DateFormat.getDateInstance(DateFormat.LONG, Locale.forLanguageTag(uiLanguage)).format(Date())
-        val parsed = requestStructuredContent(client, writerMessages, plan.format, uiLanguage, templateDescription, date, listener)
+        val parsed = requestStructuredContent(client, writerMessages, plan.format, uiLanguage, templateDescription, date, listener, guidance)
 
         // Render the real file (nothing is created once the operation was cancelled).
         currentCoroutineContext().ensureActive()
@@ -318,12 +422,16 @@ class CentralAiOrchestrator(
                 fileSize = outputFile.length(),
                 wordCount = plain.split(Regex("\\s+")).count { it.isNotBlank() },
                 pageOrSlideCount = counts,
-                templateId = template.entity?.id,
-                templateName = template.entity?.name,
+                templateId = resolved?.templateId ?: template.entity?.id,
+                templateName = resolved?.entity?.name ?: resolved?.builtIn?.id ?: template.entity?.name,
                 providerUsed = provider.name,
                 summary = "${provider.name} • ${provider.modelName} • ${outputFile.length() / 1024} KB",
                 textContent = plain,
-                isOrchestratorVerified = true
+                isOrchestratorVerified = true,
+                documentKind = intent?.subcategoryId,
+                contentJson = parsed.rawJson.ifEmpty { null },
+                sourceRequest = userMessage.ifBlank { null },
+                documentLanguage = intent?.language
             )
             database.documentDao().insertDocument(docEntity)
             saved = true
@@ -335,7 +443,7 @@ class CentralAiOrchestrator(
             val reply = buildString {
                 plan.reply?.let { append(it).append("\n\n") }
                 append("**").append(docEntity.title).append("** (").append(outputFile.length() / 1024).append(" KB)")
-                if (engineResult.templateApplied && template.entity != null) {
+                if (resolved == null && engineResult.templateApplied && template.entity != null) {
                     append(" — template: ").append(template.entity.name)
                 }
                 if (notes.isNotEmpty()) {
@@ -343,7 +451,63 @@ class CentralAiOrchestrator(
                     notes.forEach { append("• ").append(it).append('\n') }
                 }
             }.trim()
-            return ChatTurnResult(reply, provider, docEntity, engineResult.templateApplied)
+            return ChatTurnResult(reply, provider, docEntity, engineResult.templateApplied || resolved?.isBuiltIn == true,
+                intent = intent, template = resolved, needsTemplateChoice = needsChoice)
+        } finally {
+            if (!saved) outputFile.delete()
+        }
+    }
+
+    /**
+     * Renders a Smart Templates document again from its stored content, with another template
+     * ([overrideTemplateId], used for this document only) or in another format of the same kind
+     * (Word to PDF). No AI request is made. The new file is a new Library entry; the original is kept.
+     */
+    suspend fun rerenderDocument(
+        doc: DocumentEntity,
+        targetFormat: DocumentFormat,
+        overrideTemplateId: String?,
+        service: com.example.smarttemplates.SmartTemplateService
+    ): DocumentEntity = withContext(Dispatchers.IO) {
+        val json = doc.contentJson ?: throw IllegalStateException("This document has no stored content to render again.")
+        val source = DocumentFormat.parse(doc.fileType) ?: DocumentFormat.DOCX
+        require(com.example.smarttemplates.OutputKind.ofFormat(source.name) == com.example.smarttemplates.OutputKind.ofFormat(targetFormat.name)) {
+            "A ${source.name} document cannot be rendered as ${targetFormat.name}."
+        }
+        val parsed = DocumentSchemaParser.parse(json, targetFormat)
+        val sub = doc.documentKind
+        val r = if (sub != null) service.resolve(sub, targetFormat.name, overrideTemplateId)
+        else service.materialize(com.example.smarttemplates.TemplateChoice(overrideTemplateId, com.example.smarttemplates.SelectionSource.OVERRIDE), targetFormat.name)
+        val profile = if (r.isBuiltIn) r.profile.copy(rtl = doc.documentLanguage == "ar") else r.profile
+        val documentsDir = File(context.filesDir, "generated_docs").apply { mkdirs() }
+        val outputFile = DocumentFileNames.createUniqueFile(documentsDir, parsed.document.title, targetFormat.extension)
+        var saved = false
+        try {
+            runInterruptible(Dispatchers.IO) {
+                when (val d = parsed.document) {
+                    is ParsedDocument.Word -> if (targetFormat == DocumentFormat.PDF) pdfEngine.generatePdf(d.model, outputFile, profile)
+                        else docxEngine.generateDocxDetailed(d.model, outputFile, profile, r.file)
+                    is ParsedDocument.Presentation -> pptxEngine.generatePptxDetailed(d.model, outputFile, profile, r.file)
+                    is ParsedDocument.Spreadsheet -> xlsxEngine.generateXlsxDetailed(d.model, outputFile, profile, r.file)
+                }
+            }
+            currentCoroutineContext().ensureActive()
+            DocumentFileValidator.validate(outputFile, targetFormat.extension)?.let { throw IllegalStateException(it) }
+            val entity = doc.copy(
+                id = UUID.randomUUID().toString(),
+                title = DocumentFileNames.displayTitle(parsed.document.title) + "." + targetFormat.extension,
+                fileType = targetFormat.name,
+                filePath = outputFile.absolutePath,
+                fileSize = outputFile.length(),
+                pageOrSlideCount = countsOf(parsed.document),
+                templateId = r.templateId,
+                templateName = r.entity?.name ?: r.builtIn?.id,
+                createdAt = System.currentTimeMillis(),
+                isFavorite = false
+            )
+            database.documentDao().insertDocument(entity)
+            saved = true
+            entity
         } finally {
             if (!saved) outputFile.delete()
         }
@@ -357,9 +521,10 @@ class CentralAiOrchestrator(
         uiLanguage: String,
         templateDescription: String?,
         date: String,
-        listener: AiProgressListener
+        listener: AiProgressListener,
+        kindGuidance: String? = null
     ): DocumentSchemaParser.Result {
-        val system = OrchestratorPrompts.documentWriter(format, uiLanguage, templateDescription)
+        val system = OrchestratorPrompts.documentWriter(format, uiLanguage, templateDescription, kindGuidance)
         // Streamed (not shown): long documents keep arriving in pieces instead of waiting for
         // one large response, and cancelling closes the stream.
         val first = client.stream(AiRequest(system, messages, expectJson = true, maxOutputTokens = 16_000)) {}

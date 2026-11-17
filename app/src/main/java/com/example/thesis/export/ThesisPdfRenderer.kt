@@ -24,6 +24,7 @@ import com.example.thesis.core.InlineFormat
 import com.example.thesis.core.ThesisLabels
 import com.example.thesis.core.ThesisNumbering
 import com.example.thesis.core.ThesisStructure
+import com.example.thesis.core.ThesisToc
 import com.example.thesis.model.ElementType
 import com.example.thesis.model.SectionKind
 import com.example.thesis.model.ThesisAsset
@@ -85,10 +86,24 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
     }
 
     /** Pages of headings, figures and tables found by the measuring pass. */
-    private class Positions(val headings: MutableList<Pair<String, Int>> = ArrayList(), val figures: MutableList<Pair<String, Int>> = ArrayList(), val tables: MutableList<Pair<String, Int>> = ArrayList()) {
+    private class Positions(val headings: MutableMap<String, Int> = HashMap(), val figures: MutableList<Pair<String, Int>> = ArrayList(), val tables: MutableList<Pair<String, Int>> = ArrayList()) {
         var pageCount = 0
+        /** Physical page where the main text (the first section after the preliminary pages) starts. */
+        var mainStart = 0
         var logoDrawn = false
     }
+
+    /** Pages where the last [render] drew each heading (TOC key -> physical page, 1 = cover). */
+    var headingPages: Map<String, Int> = emptyMap()
+        private set
+
+    /** Pages the last [render] printed in its table of contents (from the measuring pass). */
+    var tocPages: Map<String, Int> = emptyMap()
+        private set
+
+    /** Physical page where the main text started in the last [render]. */
+    var mainStartPage: Int = 0
+        private set
 
     /** True when the last [render] drew the cover logo. */
     var logoDrawn = false
@@ -104,6 +119,9 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
             val drawn = Positions()
             val pages = pass(snapshot, assets.associateBy { it.id }, numbering, doc, drawn, measured)
             logoDrawn = drawn.logoDrawn
+            headingPages = drawn.headings.toMap()
+            tocPages = measured.headings.toMap()
+            mainStartPage = drawn.mainStart
             FileOutputStream(output).use { doc.writeTo(it) }
             return pages
         } finally {
@@ -133,6 +151,11 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
         val footer = paint(9f, layout.bodyFont, false, layout.textColor)
         val headerPaint = paint(layout.headerSize.coerceAtLeast(layout.bodySize - 2f), bodyFace, false, layout.textColor)
         val decor = PageDecor.from(profile, layout)
+        // Thesis page numbering options (roman front matter, first page number) replace the
+        // template's numbering; the main text start comes from the measuring pass.
+        val meta = snapshot.meta
+        if (ThesisToc.customNumbering(meta)) decor.labeler = { p -> ThesisToc.pageLabel(p, known?.mainStart ?: record.mainStart, meta) }
+        fun label(p: Int): String = if (ThesisToc.customNumbering(meta)) ThesisToc.pageLabel(p, known?.mainStart ?: 0, meta) else decor.number(p)
         // A header taller than the top margin pushes the text down, as in Word.
         val bodyTop = maxOf(layout.marginTop, decor.headerBottom(headerPaint) + 6f)
         val fill = Paint().apply { style = Paint.Style.FILL }
@@ -187,19 +210,36 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
         fun text(t: String, p: TextPaint, align: String = layout.bodyAlignment, after: Float = layout.paragraphSpacing, indent: Float = 0f) =
             block(staticLayout(styled(t), p, (width - indent).toInt(), align), if (rtl) layout.marginLeft else layout.marginLeft + indent, after)
 
-        fun pageOf(list: List<Pair<String, Int>>?, index: Int): String = list?.getOrNull(index)?.second?.toString() ?: "000"
+        fun pageOf(list: List<Pair<String, Int>>?, index: Int): String = list?.getOrNull(index)?.second?.let { label(it) } ?: "000"
 
-        fun indexLines(lines: List<String>, pages: List<Pair<String, Int>>?) {
+        val dot = body.measureText(".")
+
+        /**
+         * Index lines (table of contents, lists of figures and tables): the entry, a dot leader and
+         * the page label at the outer edge (right in LTR, left in RTL). [indent] is per line.
+         */
+        fun indexLines(lines: List<String>, pages: List<String>, indents: List<Float> = emptyList()) {
             lines.forEachIndexed { i, line ->
-                val n = pageOf(pages, i)
-                val sl = staticLayout(line, body, width - 40, "start")
+                val n = pages.getOrElse(i) { "000" }
+                val indent = indents.getOrElse(i) { 0f }
+                val gap = 48f
+                val lineWidth = (width - gap - indent).toInt().coerceAtLeast(80)
+                val sl = staticLayout(line, body, lineWidth, "start")
                 if (y + sl.height > layout.contentBottom) newPage()
                 val top = y
-                block(sl, if (rtl) layout.marginLeft + 40 else layout.marginLeft, 4f)
+                val x0 = if (rtl) layout.marginLeft + gap else layout.marginLeft + indent
+                block(sl, x0, 4f)
                 canvas?.let { c ->
+                    val last = sl.lineCount - 1
+                    val baseline = top + sl.getLineBaseline(last)
                     val w = body.measureText(n)
-                    val x = if (rtl) layout.marginLeft else layout.marginLeft + width - w
-                    c.drawText(n, x, top + sl.getLineBaseline(sl.lineCount - 1), body)
+                    val nx = if (rtl) layout.marginLeft else layout.marginLeft + width - w
+                    c.drawText(n, nx, baseline, body)
+                    // Dot leader between the end of the entry and the page label.
+                    val from = if (rtl) nx + w + 6f else x0 + sl.getLineRight(last) + 6f
+                    val to = if (rtl) x0 + sl.getLineLeft(last) - 6f else nx - 6f
+                    val count = ((to - from) / dot).toInt()
+                    if (count > 2) c.drawText(".".repeat(count), if (rtl) to - count * dot else from, baseline, body)
                 }
             }
         }
@@ -263,6 +303,7 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
         for ((section, _) in snapshot.outline(includeDisabled = false)) {
             // Every top-level section and every chapter starts on a new page.
             if (section.parentId == null || section.kind == SectionKind.CHAPTER) newPage(cover = section.kind == SectionKind.COVER)
+            if (record.mainStart == 0 && section.parentId == null && !section.kind.preliminary) record.mainStart = pageNo
             when (section.kind) {
                 SectionKind.COVER -> {
                     val m = snapshot.meta
@@ -304,29 +345,37 @@ class ThesisPdfRenderer(private val profile: TemplateProfile, private val corout
                 }
                 SectionKind.TABLE_OF_CONTENTS -> {
                     text(ThesisStructure.displayTitle(section, numbering, lang), headings[0], "center", 16f)
-                    val entries = snapshot.outline(includeDisabled = false).filter { !it.first.kind.generated }
-                    indexLines(entries.map { (s, d) -> "    ".repeat(d) + ThesisStructure.displayTitle(s, numbering, lang) }, known?.headings)
+                    val entries = ThesisToc.entries(snapshot, numbering)
+                    indexLines(
+                        entries.map { it.text },
+                        entries.map { e -> known?.headings?.get(e.key)?.let { label(it) } ?: "000" },
+                        entries.map { (it.level - 1) * 18f }
+                    )
                 }
                 SectionKind.LIST_OF_FIGURES -> {
                     text(ThesisStructure.displayTitle(section, numbering, lang), headings[0], "center", 16f)
-                    indexLines(snapshot.orderedElements().filter { it.type == ElementType.IMAGE }.map { ThesisStructure.figureCaption(it, numbering, lang) }, known?.figures)
+                    indexLines(snapshot.orderedElements().filter { it.type == ElementType.IMAGE }.map { ThesisStructure.figureCaption(it, numbering, lang) }, snapshot.orderedElements().filter { it.type == ElementType.IMAGE }.indices.map { pageOf(known?.figures, it) })
                 }
                 SectionKind.LIST_OF_TABLES -> {
                     text(ThesisStructure.displayTitle(section, numbering, lang), headings[0], "center", 16f)
-                    indexLines(snapshot.orderedElements().filter { it.type == ElementType.TABLE }.map { ThesisStructure.tableCaption(it, numbering, lang) }, known?.tables)
+                    indexLines(snapshot.orderedElements().filter { it.type == ElementType.TABLE }.map { ThesisStructure.tableCaption(it, numbering, lang) }, snapshot.orderedElements().filter { it.type == ElementType.TABLE }.indices.map { pageOf(known?.tables, it) })
                 }
                 else -> {
                     val level = ThesisStructure.headingLevel(snapshot, section)
                     val heading = staticLayout(ThesisStructure.displayTitle(section, numbering, lang), headings[(level - 1).coerceIn(0, 3)], width, if (level == 1) "center" else "start")
                     if (y + heading.height + layout.bodySize * 3 > layout.contentBottom) newPage()
-                    record.headings.add(section.id to pageNo)
                     block(heading, layout.marginLeft, 12f)
+                    record.headings["s:${section.id}"] = pageNo
                     for (e in snapshot.elementsOf(section.id)) {
                         val (t, _) = ThesisStructure.resolveCrossReferences(e.text, numbering, lang)
                         if (e.data.pageBreakBefore) newPage()
                         val ta = e.data.textAlign
                         when (e.type) {
-                            ElementType.HEADING -> text(t, headings[(level + e.data.headingLevel.coerceAtLeast(1) - 1).coerceIn(0, 3)], ta.ifEmpty { "start" }, 8f)
+                            ElementType.HEADING -> {
+                                val numbered = numbering.headings[e.id]?.let { "$it ${t.trim()}" } ?: t
+                                text(numbered, headings[(ThesisToc.headingLevel(level, e.data.headingLevel) - 1).coerceIn(0, 3)], ta.ifEmpty { "start" }, 8f)
+                                record.headings["e:${e.id}"] = pageNo
+                            }
                             ElementType.PARAGRAPH -> {
                                 if (profile.spacingBeforePt > 0 && y > bodyTop) y += profile.spacingBeforePt.coerceAtMost(48)
                                 val indent = profile.firstLineIndentPt.coerceIn(0, 144)

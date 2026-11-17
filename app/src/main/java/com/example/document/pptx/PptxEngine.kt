@@ -260,6 +260,12 @@ class PptxEngine {
         val primaryHex = cleanHex(template.primaryColorHex, "24D6E8")
         val secondaryHex = cleanHex(template.secondaryColorHex, "8665F7")
         val font = escapeXml(template.headingFont)
+        // Built-in Smart Templates styles add their own decoration; other profiles keep the classic look.
+        val decor = SlideDecor(
+            theme = if (template.isBuiltInStyle) template.slideThemeName else "",
+            accentHex = cleanHex(template.accentColorHex, primaryHex),
+            textHex = if (template.isBuiltInStyle) cleanHex(template.textColorHex, "1F2937") else "1F2937"
+        )
         val slides = listOf(SlideModel(title = model.title, subtitle = model.subtitle)) + model.slides
         val count = slides.size
 
@@ -277,7 +283,7 @@ class PptxEngine {
         put("ppt/theme/theme1.xml", buildThemeXml(primaryHex, secondaryHex, font))
         slides.forEachIndexed { i, slide ->
             val n = i + 1
-            val xml = if (i == 0) buildTitleSlideXml(slide, primaryHex, font) else buildSlideXml(slide, n, primaryHex, secondaryHex, font)
+            val xml = if (i == 0) buildTitleSlideXml(slide, primaryHex, font, decor) else buildSlideXml(slide, n, primaryHex, secondaryHex, font, decor)
             put("ppt/slides/slide$n.xml", xml)
             put("ppt/slides/_rels/slide$n.xml.rels", SLIDE_RELS)
         }
@@ -381,21 +387,49 @@ class PptxEngine {
 
     private fun slideClose(): String = """</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"""
 
-    private fun buildTitleSlideXml(slide: SlideModel, primaryHex: String, font: String): String = buildString {
+    /** Decoration of a built-in slide style ("Corporate Modern", "Academic Clean", "Minimal"); empty theme = classic look. */
+    private data class SlideDecor(val theme: String, val accentHex: String, val textHex: String)
+
+    private fun rect(id: Int, name: String, x: Long, y: Long, cx: Long, cy: Long, hex: String) =
+        """<p:sp><p:nvSpPr><p:cNvPr id="$id" name="$name"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="$x" y="$y"/><a:ext cx="$cx" cy="$cy"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="$hex"/></a:solidFill><a:ln><a:noFill/></a:ln></p:spPr></p:sp>"""
+
+    private fun buildTitleSlideXml(slide: SlideModel, primaryHex: String, font: String, decor: SlideDecor = SlideDecor("", primaryHex, "1F2937")): String = buildString {
         append(slideOpen())
-        // Accent bar
-        append("""<p:sp><p:nvSpPr><p:cNvPr id="2" name="Accent"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="685800" y="1600200"/><a:ext cx="1200000" cy="60000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="$primaryHex"/></a:solidFill></p:spPr></p:sp>""")
+        var titleHex = primaryHex
+        var subtitleHex = "4B5563"
+        when (decor.theme) {
+            "Corporate Modern" -> {
+                // Full-bleed color title slide with an accent strip.
+                append(rect(20, "Background", 0, 0, 9144000, 5143500, primaryHex))
+                append(rect(21, "Accent", 685800, 1600200, 1200000, 60000, decor.accentHex))
+                titleHex = "FFFFFF"; subtitleHex = "E5E7EB"
+            }
+            "Academic Clean" -> {
+                append(rect(2, "Accent", 685800, 1600200, 1200000, 60000, primaryHex))
+                append(rect(20, "Rule", 685800, 4400000, 7772400, 25400, decor.accentHex))
+            }
+            "Minimal" -> Unit
+            else -> append("""<p:sp><p:nvSpPr><p:cNvPr id="2" name="Accent"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="685800" y="1600200"/><a:ext cx="1200000" cy="60000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="$primaryHex"/></a:solidFill></p:spPr></p:sp>""")
+        }
         append(textBox(3, "Title", 685800, 1750000, 7772400, 1100000,
-            """<a:p>${alignedPPr(slide.title)}<a:r>${runProps(slide.title, 4000, primaryHex, font, """ b="1"""")}<a:t>${escapeXml(slide.title)}</a:t></a:r></a:p>"""))
+            """<a:p>${alignedPPr(slide.title)}<a:r>${runProps(slide.title, 4000, titleHex, font, """ b="1"""")}<a:t>${escapeXml(slide.title)}</a:t></a:r></a:p>"""))
         if (slide.subtitle.isNotBlank()) {
             append(textBox(4, "Subtitle", 685800, 2950000, 7772400, 700000,
-                """<a:p>${alignedPPr(slide.subtitle)}<a:r>${runProps(slide.subtitle, 2000, "4B5563", font)}<a:t>${escapeXml(slide.subtitle)}</a:t></a:r></a:p>"""))
+                """<a:p>${alignedPPr(slide.subtitle)}<a:r>${runProps(slide.subtitle, 2000, subtitleHex, font)}<a:t>${escapeXml(slide.subtitle)}</a:t></a:r></a:p>"""))
         }
         append(slideClose())
     }
 
-    private fun buildSlideXml(slide: SlideModel, slideNumber: Int, primaryHex: String, secondaryHex: String, font: String): String = buildString {
+    private fun buildSlideXml(slide: SlideModel, slideNumber: Int, primaryHex: String, secondaryHex: String, font: String, decor: SlideDecor = SlideDecor("", primaryHex, "1F2937")): String = buildString {
         append(slideOpen())
+        when (decor.theme) {
+            "Corporate Modern" -> append(rect(20, "Band", 0, 0, 9144000, 300000, primaryHex))
+            "Academic Clean" -> {
+                append(rect(20, "Side bar", 0, 0, 120000, 5143500, primaryHex))
+                append(rect(21, "Rule", 685800, 1340000, 1600000, 25400, decor.accentHex))
+            }
+            "Minimal" -> append(rect(20, "Rule", 685800, 1340000, 7772400, 9525, "D1D5DB"))
+        }
         append(textBox(2, "Title", 685800, 457200, 7772400, 914400,
             """<a:p>${alignedPPr(slide.title)}<a:r>${runProps(slide.title, 3200, primaryHex, font, """ b="1"""")}<a:t>${escapeXml(slide.title)}</a:t></a:r></a:p>"""))
         if (slide.subtitle.isNotBlank()) {
@@ -406,7 +440,7 @@ class PptxEngine {
             val width = if (slide.calloutMetric != null) 5000000L else 7772400L
             val body = slide.bulletPoints.joinToString("") { bullet ->
                 """<a:p>${alignedPPr(bullet, extra = """ marL="285750" indent="-285750"""", inner = """<a:buFont typeface="Arial"/><a:buChar char="•"/>""")}""" +
-                    """<a:r>${runProps(bullet, 1800, "1F2937", font)}<a:t>${escapeXml(bullet)}</a:t></a:r></a:p>"""
+                    """<a:r>${runProps(bullet, 1800, decor.textHex, font)}<a:t>${escapeXml(bullet)}</a:t></a:r></a:p>"""
             }
             append(textBox(4, "Bullets", 685800, 2000000, width, 2600000, body))
         }

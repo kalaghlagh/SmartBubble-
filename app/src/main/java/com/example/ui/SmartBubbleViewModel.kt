@@ -115,6 +115,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     private companion object {
         const val TAG = "SmartBubbleViewModel"
 
+        /** orchestratorNote of a Smart Templates clarification question: "smart-clarify|<choices>|<request>". */
+        const val CLARIFY_NOTE = "smart-clarify"
+
         /** DocumentEntity.providerUsed value of documents created by on-device OCR. */
         const val LOCAL_OCR_SOURCE = "OCR"
 
@@ -133,6 +136,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     /** Provider management + single source of truth for the default provider (Room flag). */
     val providerManager = ProviderManager(database, credentialStore)
     val orchestrator = CentralAiOrchestrator(context, database, deliveryManager, providerManager)
+
+    /** Smart Templates: the template library shared by Chat, My Templates and Thesis Builder. */
+    val smartTemplates = com.example.smarttemplates.SmartTemplateService(database)
     val templateAnalysisEngine = TemplateAnalysisEngine()
     val templatePreviewEngine = TemplatePreviewEngine()
     private val ocrEngine = DocumentOcrEngine(context)
@@ -288,6 +294,127 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     /** Prevents duplicate AI requests from repeated taps or voice input while one is running. */
     private val aiRequestInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
     val appLanguage = preferences.appLanguage.stateIn(viewModelScope, SharingStarted.Eagerly, "en")
+
+    // ------------------------------------------------------------------ Smart Templates
+
+    /** Built-in and uploaded templates with their categories, defaults and favorites. */
+    val templateLibrary: StateFlow<List<com.example.smarttemplates.LibraryTemplate>> =
+        smartTemplates.library().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val autoFormat: StateFlow<Boolean> = preferences.autoFormat.stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val documentLanguage: StateFlow<String> = preferences.documentLanguage.stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
+    val documentFormat: StateFlow<String> = preferences.documentFormat.stateIn(viewModelScope, SharingStarted.Eagerly, "DOCX")
+
+    fun setAutoFormat(enabled: Boolean) = launchSafely("setAutoFormat") { preferences.setAutoFormat(enabled) }
+    fun setDocumentLanguage(language: String) = launchSafely("setDocumentLanguage") { preferences.setDocumentLanguage(language) }
+    fun setDocumentFormat(format: String) = launchSafely("setDocumentFormat") { preferences.setDocumentFormat(format) }
+
+    /** Makes [templateId] the default of a subcategory or category (one default per scope). */
+    fun setDefaultTemplateFor(scopeId: String, templateId: String) = launchSafely("setDefaultTemplateFor") {
+        smartTemplates.setDefault(scopeId, templateId)
+        _snackBarMessage.value = str(R.string.st_default_set)
+    }
+
+    fun clearDefaultTemplateFor(scopeId: String) = launchSafely("clearDefaultTemplateFor") { smartTemplates.clearDefault(scopeId) }
+
+    fun setTemplateFavorite(templateId: String, favorite: Boolean) = launchSafely("setTemplateFavorite") { smartTemplates.setFavorite(templateId, favorite) }
+
+    /** Category and subcategory of an uploaded template (asked after import, changeable later). */
+    fun classifyTemplate(templateId: String, categoryId: String?, subcategoryId: String?) = launchSafely("classifyTemplate") {
+        smartTemplates.classify(templateId, categoryId, subcategoryId)
+        _pendingTemplateClassification.value = null
+    }
+
+    /** An uploaded template waiting for its category (suggested category and subcategory). */
+    data class PendingClassification(val template: TemplateEntity, val categoryId: String, val subcategoryId: String?)
+    private val _pendingTemplateClassification = MutableStateFlow<PendingClassification?>(null)
+    val pendingTemplateClassification: StateFlow<PendingClassification?> = _pendingTemplateClassification.asStateFlow()
+    fun dismissTemplateClassification() { _pendingTemplateClassification.value = null }
+
+    /** Renders a Smart Templates document again with another template, for this document only (the default is unchanged). */
+    fun changeDocumentTemplate(doc: DocumentEntity, templateId: String) = launchSafely("changeDocumentTemplate") {
+        val format = com.example.ai.orchestrator.DocumentFormat.parse(doc.fileType) ?: com.example.ai.orchestrator.DocumentFormat.DOCX
+        val newDoc = orchestrator.rerenderDocument(doc, format, templateId, smartTemplates)
+        addDocumentChatMessage(newDoc, str(R.string.st_template_changed, templateDisplayName(newDoc.templateId)))
+    }
+
+    /** PDF of a Smart Templates document, drawn with its template (saved to the Library). */
+    private suspend fun smartPdf(doc: DocumentEntity) {
+        val pdf = orchestrator.rerenderDocument(doc, com.example.ai.orchestrator.DocumentFormat.PDF, doc.templateId, smartTemplates)
+        addDocumentChatMessage(pdf, str(R.string.st_pdf_ready, pdf.title))
+        openDocument(pdf)
+    }
+
+    /** Generates the document again from its original request, same kind and template. */
+    fun regenerateDocument(doc: DocumentEntity) {
+        val request = doc.sourceRequest ?: return
+        executePrompt(request, forceFormat = doc.fileType, displayText = str(R.string.st_regenerate_request, request),
+            forcedSubcategory = doc.documentKind, overrideTemplateId = doc.templateId)
+    }
+
+    /** The user picked a kind of document offered in a clarification question. */
+    fun resolveClarification(originalRequest: String, subcategoryId: String) {
+        executePrompt(originalRequest, displayText = templateKindName(subcategoryId), forcedSubcategory = subcategoryId)
+    }
+
+    /**
+     * First page of a sample document drawn with a built-in document template (cached), for the
+     * template details; null for spreadsheet and presentation templates.
+     */
+    suspend fun builtInSamplePage(id: String, widthPx: Int): android.graphics.Bitmap? = withContext(Dispatchers.IO) {
+        val t = com.example.smarttemplates.BuiltInTemplates.byId(id) ?: return@withContext null
+        if (t.kind != com.example.smarttemplates.OutputKind.DOCUMENT) return@withContext null
+        val dir = File(context.cacheDir, "template_samples").apply { mkdirs() }
+        val pdf = File(dir, "${t.id}-${appLanguage.value}.pdf")
+        try {
+            if (!pdf.isFile) com.example.document.pdf.PdfEngine().generatePdf(
+                com.example.smarttemplates.SampleContent.word(t.categoryId, str(SmartTemplateStrings.builtInName(t.id))), pdf, t.profile)
+            TemplateThumbnails.renderPage(pdf, 0, widthPx)
+        } catch (e: Exception) {
+            Log.w(TAG, "Sample page failed for ${t.id}", e)
+            pdf.delete()
+            null
+        }
+    }
+
+    /** Writes a sample file in the template's own format (DOCX, XLSX or PPTX) and opens it. */
+    fun openBuiltInSample(id: String) = launchSafely("openBuiltInSample") {
+        val t = com.example.smarttemplates.BuiltInTemplates.byId(id) ?: return@launchSafely
+        val name = str(SmartTemplateStrings.builtInName(t.id))
+        val dir = File(context.cacheDir, "pdf_exports").apply { mkdirs() }
+        val (file, mime) = withContext(Dispatchers.IO) {
+            val base = DocumentFileNames.sanitizeBaseName(name)
+            when (t.kind) {
+                com.example.smarttemplates.OutputKind.SPREADSHEET -> File(dir, "$base.xlsx").also {
+                    com.example.document.xlsx.XlsxEngine().generateXlsx(com.example.smarttemplates.SampleContent.sheet(name), it, t.profile) } to DeliveryManager.MIME_XLSX
+                com.example.smarttemplates.OutputKind.PRESENTATION -> File(dir, "$base.pptx").also {
+                    com.example.document.pptx.PptxEngine().generatePptx(com.example.smarttemplates.SampleContent.slides(name), it, t.profile) } to DeliveryManager.MIME_PPTX
+                com.example.smarttemplates.OutputKind.DOCUMENT -> File(dir, "$base.docx").also {
+                    com.example.document.docx.DocxEngine().generateDocx(com.example.smarttemplates.SampleContent.word(t.categoryId, name), it, t.profile) } to DeliveryManager.MIME_DOCX
+            }
+        }
+        deliveryManager.openFile(file, mime)
+    }
+
+    /** Localized display name of a template id (built-in or uploaded). */
+    fun templateDisplayName(id: String?): String {
+        if (id == null) return str(R.string.st_neutral_formatting)
+        com.example.smarttemplates.BuiltInTemplates.byId(id)?.let { return str(SmartTemplateStrings.builtInName(it.id)) }
+        return templateLibrary.value.firstOrNull { it.id == id }?.uploaded?.name ?: id
+    }
+
+    fun templateKindName(subcategoryId: String): String = str(SmartTemplateStrings.subcategory(subcategoryId))
+
+    private suspend fun addDocumentChatMessage(doc: DocumentEntity, text: String) {
+        val sessionId = _currentSessionId.value
+        if (database.conversationDao().getConversationById(sessionId) == null) {
+            database.conversationDao().insertConversation(ConversationEntity(id = sessionId, title = str(R.string.new_conversation)))
+        }
+        database.chatDao().insertMessage(
+            ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = sessionId, isUser = false, content = text,
+                attachedDocId = doc.id, attachedDocTitle = doc.title, attachedDocType = doc.fileType)
+        )
+        database.conversationDao().updateLastMessage(sessionId, text.take(60))
+    }
     val appTheme = preferences.appTheme.stateIn(viewModelScope, SharingStarted.Eagerly, "dark")
 
     /** What the voice conversation is doing, for the Chat UI. */
@@ -429,9 +556,11 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         prompt: String,
         forceFormat: String? = null,
         fromVoice: Boolean = false,
-        displayText: String? = null
+        displayText: String? = null,
+        forcedSubcategory: String? = null,
+        overrideTemplateId: String? = null
     ): Boolean {
-        val text = prompt.trim()
+        var text = prompt.trim()
         if (text.isEmpty()) return false
         // What the conversation shows and stores as the user's message (e.g. "/docx ...").
         val shown = displayText?.trim()?.ifEmpty { null } ?: text
@@ -462,6 +591,22 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 // Conversation context = messages stored BEFORE this one (restored after restart too).
                 val history = buildContextHistory(sessionId)
 
+                // Smart Templates: an answer to the last clarification question picks the kind of
+                // document and continues the original request.
+                var kind = forcedSubcategory
+                if (kind == null && forceFormat == null) {
+                    val last = database.chatDao().getMessagesForSessionOnce(sessionId).lastOrNull()
+                    val note = last?.orchestratorNote
+                    if (last != null && !last.isUser && note != null && note.startsWith(CLARIFY_NOTE)) {
+                        val parts = note.split('|', limit = 3)
+                        val choices = parts.getOrNull(1)?.split(',').orEmpty()
+                        com.example.smarttemplates.DocumentIntentDetector.resolveChoice(text, choices)?.let { picked ->
+                            kind = picked
+                            text = parts.getOrNull(2)?.ifBlank { null } ?: text
+                        }
+                    }
+                }
+
                 database.conversationDao().updateLastMessage(sessionId, shown.take(60))
                 database.chatDao().insertMessage(
                     ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = sessionId, isUser = true, content = shown)
@@ -473,20 +618,54 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     uiLanguage = appLanguage.value,
                     selectedTemplate = _selectedTemplateForChat.value,
                     forceFormat = DocumentFormat.parse(forceFormat),
-                    listener = listener
+                    listener = listener,
+                    smart = com.example.ai.orchestrator.SmartTemplateOptions(
+                        service = smartTemplates,
+                        autoFormat = autoFormat.value,
+                        preferredDocumentFormat = documentFormat.value,
+                        documentLanguage = documentLanguage.value.takeIf { it != "auto" },
+                        forcedSubcategory = kind,
+                        overrideTemplateId = overrideTemplateId
+                    )
                 )
+
+                // The kind of document is unclear: one short question with choices (no AI request was made).
+                result.clarification?.let { c ->
+                    ensureActive()
+                    val question = buildString {
+                        append(str(R.string.st_clarify_question))
+                        c.choices.forEachIndexed { i, id -> append("\n").append(i + 1).append(". ").append(templateKindName(id)) }
+                    }
+                    database.chatDao().insertMessage(
+                        ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = sessionId, isUser = false, content = question,
+                            orchestratorNote = CLARIFY_NOTE + "|" + c.choices.joinToString(",") + "|" + text)
+                    )
+                    database.conversationDao().updateLastMessage(sessionId, question.take(60))
+                    return@launchChatOperation
+                }
 
                 // Only the provider's real answer is stored; failures are never saved as replies.
                 // A cancelled operation stops here and stores nothing.
                 ensureActive()
                 val doc = result.document
                 val replyId = UUID.randomUUID().toString()
+                // Smart Templates: say which kind of document and template were used, and how to
+                // fill in what was left as [placeholders].
+                val replyText = buildString {
+                    append(result.reply)
+                    result.intent?.subcategoryId?.let { sub ->
+                        append("\n\n").append(str(R.string.st_reply_kind, templateKindName(sub),
+                            if (result.needsTemplateChoice) str(R.string.st_neutral_formatting) else templateDisplayName(result.template?.templateId)))
+                    }
+                    if (result.needsTemplateChoice) append("\n").append(str(R.string.st_reply_choose_template))
+                    if (doc != null && result.intent != null && Regex("""\[[^\]\n]{2,40}\]""").containsMatchIn(doc.textContent)) append("\n").append(str(R.string.st_reply_placeholders))
+                }
                 database.chatDao().insertMessage(
                     ChatMessageEntity(
                         id = replyId,
                         sessionId = sessionId,
                         isUser = false,
-                        content = result.reply,
+                        content = replyText,
                         attachedDocId = doc?.id,
                         attachedDocTitle = doc?.title,
                         attachedDocType = doc?.fileType,
@@ -598,7 +777,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         ),
         exporter = ThesisExporter(
             repository = thesisRepository,
-            templates = RoomTemplateRepository(database.templateDao()),
+            templates = RoomTemplateRepository(database.templateDao(), database.smartTemplateDao()),
             outputDir = File(context.cacheDir, "thesis_exports"),
             pdfRenderer = { profile, snapshot, assets, file -> ThesisPdfRenderer(profile).render(snapshot, assets, file) }
         ),
@@ -1087,6 +1266,11 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             openDocument(doc)
             return
         }
+        // A Smart Templates document is drawn again from its content with its template.
+        if (doc.contentJson != null && doc.fileType == "DOCX") {
+            launchSafely("smartPdf") { smartPdf(doc) }
+            return
+        }
         viewModelScope.launch {
             try {
                 val pdfFile = withContext(Dispatchers.IO) {
@@ -1211,6 +1395,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     entity.compatibilityStatus == "Review" -> str(R.string.template_pdf_imported_no_text, entity.name)
                     else -> str(R.string.msg_template_imported, entity.name)
                 }
+                // Smart Templates: suggest a category from the file name; the user confirms it.
+                val (category, sub) = smartTemplates.suggestClassification(sourceFileName ?: entity.name, entity.fileType)
+                _pendingTemplateClassification.value = PendingClassification(entity, category, sub)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: TemplateImportException) {
@@ -1269,6 +1456,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             }
             // Remove the record first, then its file (off the main thread).
             database.templateDao().deleteTemplate(template)
+            // Its Smart Templates defaults and favorite go with it (the built-in best match applies again).
+            smartTemplates.forget(template.id)
+            if (_pendingTemplateClassification.value?.template?.id == template.id) _pendingTemplateClassification.value = null
             if (template.originalFilePath.isNotBlank()) {
                 withContext(Dispatchers.IO) { File(template.originalFilePath).delete() }
             }

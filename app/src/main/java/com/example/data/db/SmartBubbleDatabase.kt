@@ -28,9 +28,11 @@ import com.example.data.model.ThesisSectionEntity
         ThesisElementEntity::class,
         ThesisAssetEntity::class,
         ThesisRevisionEntity::class,
-        ThesisProposalEntity::class
+        ThesisProposalEntity::class,
+        com.example.data.model.TemplateDefaultEntity::class,
+        com.example.data.model.TemplateFavoriteEntity::class
     ],
-    version = 5,
+    version = 7,
     // Schema JSON is exported to app/schemas (see `ksp { room.schemaLocation }` in
     // app/build.gradle.kts) and must be committed so future migrations can be verified.
     exportSchema = true
@@ -42,6 +44,7 @@ abstract class SmartBubbleDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
     abstract fun conversationDao(): ConversationDao
     abstract fun thesisDao(): ThesisDao
+    abstract fun smartTemplateDao(): SmartTemplateDao
 
     companion object {
         const val DATABASE_NAME = "smart_bubble_db"

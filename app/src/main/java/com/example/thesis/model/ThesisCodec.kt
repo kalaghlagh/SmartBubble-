@@ -57,7 +57,8 @@ object ThesisCodec {
         "specialization" to m.specialization, "supervisor" to m.supervisor, "coSupervisor" to m.coSupervisor,
         "year" to m.academicYear, "jury" to m.juryMembers, "extra" to m.extraMetadata,
         "logo" to m.logoAssetId, "template" to m.templateId,
-        "subtitle" to m.subtitle, "studentId" to m.studentId, "submitted" to m.submissionDate
+        "subtitle" to m.subtitle, "studentId" to m.studentId, "submitted" to m.submissionDate,
+        "tocDepth" to m.tocDepth, "roman" to m.frontMatterRoman, "pageStart" to m.mainPageStart
     )
 
     fun metaFromMap(m: Map<String, Any?>?): ThesisMeta {
@@ -70,7 +71,10 @@ object ThesisCodec {
             department = s(m["department"]), specialization = s(m["specialization"]), supervisor = s(m["supervisor"]),
             coSupervisor = s(m["coSupervisor"]), academicYear = s(m["year"]), juryMembers = s(m["jury"]),
             extraMetadata = s(m["extra"]), logoAssetId = m["logo"] as? String, templateId = m["template"] as? String,
-            subtitle = s(m["subtitle"]), studentId = s(m["studentId"]), submissionDate = s(m["submitted"])
+            subtitle = s(m["subtitle"]), studentId = s(m["studentId"]), submissionDate = s(m["submitted"]),
+            tocDepth = (m["tocDepth"] as? Number)?.toInt()?.coerceIn(1, 4) ?: 3,
+            frontMatterRoman = m["roman"] == true,
+            mainPageStart = (m["pageStart"] as? Number)?.toInt()?.coerceIn(1, 9999) ?: 1
         )
     }
 

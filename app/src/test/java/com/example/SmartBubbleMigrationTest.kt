@@ -294,6 +294,10 @@ class SmartBubbleMigrationTest {
         assertEquals("Amina", p.studentName)
         assertEquals("", p.subtitle)
         assertEquals("", p.studentId)
+        // v7 columns: table of contents depth and page numbering defaults.
+        assertEquals(3, p.tocDepth)
+        assertFalse(p.frontMatterRoman)
+        assertEquals(1, p.mainPageStart)
         val sections = db.thesisDao().sections("t-1")
         assertEquals("مقدمة عامة", sections.single().title)
         assertFalse(sections.single().completed)
@@ -303,6 +307,41 @@ class SmartBubbleMigrationTest {
         assertTrue(db.thesisDao().sections("t-1").single().completed)
         db.thesisDao().updateProject(p.copy(subtitle = "Étude", studentId = "42", submissionDate = "2026-06-15"))
         assertEquals("Étude", db.thesisDao().project("t-1")!!.subtitle)
+    }
+
+    /** v5 -> v6 (Smart Templates): templates and documents keep their data; defaults and favorites work. */
+    @Test
+    fun migrateFromVersion5_addsSmartTemplatesAndKeepsData() = runBlocking {
+        val thesisV5 = thesisV4Ddl + arrayOf(
+            "ALTER TABLE `thesis_sections` ADD COLUMN `completed` INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE `thesis_sections` ADD COLUMN `description` TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE `thesis_projects` ADD COLUMN `subtitle` TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE `thesis_projects` ADD COLUMN `studentId` TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE `thesis_projects` ADD COLUMN `submissionDate` TEXT NOT NULL DEFAULT ''"
+        )
+        createRawDatabase(5, documentsDdl, templatesV2Ddl, providersDdl, chatMessagesDdl, conversationsDdl, *thesisV5) { db ->
+            insertDocument(db, "doc-1", "رسالة توصية.docx", "/data/generated_docs/a.docx")
+            insertTemplateV2(db, "tpl-1", "Letterhead", "DOCX", 10L, defaultPpt = false)
+        }
+        val db = openProduction() // Room validates the migrated schema against the entities
+        val doc = db.documentDao().getDocumentById("doc-1")!!
+        assertEquals("رسالة توصية.docx", doc.title)
+        assertEquals(null, doc.documentKind)
+        assertEquals(null, doc.contentJson)
+        val tpl = db.templateDao().getTemplateById("tpl-1")!!
+        assertEquals("Letterhead", tpl.name)
+        assertEquals(null, tpl.subcategoryId)
+        // The new tables and columns work.
+        val dao = db.smartTemplateDao()
+        dao.classify("tpl-1", "letters", "letters.recommendation")
+        dao.setDefault(com.example.data.model.TemplateDefaultEntity("letters.recommendation", "tpl-1"))
+        dao.setDefault(com.example.data.model.TemplateDefaultEntity("letters", "builtin.letters.formal"))
+        dao.addFavorite(com.example.data.model.TemplateFavoriteEntity("builtin.reports.modern"))
+        assertEquals("letters.recommendation", db.templateDao().getTemplateById("tpl-1")!!.subcategoryId)
+        assertEquals(mapOf("letters.recommendation" to "tpl-1", "letters" to "builtin.letters.formal"), dao.defaults().associate { it.scopeId to it.templateId })
+        assertEquals(listOf("builtin.reports.modern"), dao.favorites().map { it.templateId })
+        db.documentDao().insertDocument(doc.copy(id = "doc-2", documentKind = "letters.recommendation", contentJson = "{}", sourceRequest = "r", documentLanguage = "ar"))
+        assertEquals("letters.recommendation", db.documentDao().getDocumentById("doc-2")!!.documentKind)
     }
 
     /** Data written through Room survives closing and reopening with the production config. */

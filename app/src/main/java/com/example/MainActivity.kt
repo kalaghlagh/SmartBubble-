@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
         if (!isChangingConfigurations) viewModel.onAppBackgrounded()
     }
 
+    @OptIn(ExperimentalLayoutApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         // Before anything else: a crash from here on is kept and shown on the next launch.
         com.example.diagnostics.CrashLog.install(this)
@@ -112,10 +113,16 @@ class MainActivity : ComponentActivity() {
                             viewModel.setNavTab(AppNavTab.CHAT)
                         }
 
+                        // Edge to edge: the window is not resized for the keyboard (Android 11+), so
+                        // the screens use imePadding(). The Scaffold's padding (bottom bar, system
+                        // bars) is marked as consumed so imePadding() and statusBarsPadding() inside
+                        // only add what is not covered yet (no gap above the keyboard, no double
+                        // status bar padding).
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(innerPadding)
+                                .consumeWindowInsets(innerPadding)
                                 .statusBarsPadding()
                         ) {
                             when (currentTab) {

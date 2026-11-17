@@ -157,11 +157,29 @@ class ThesisEditorDeviceTest {
     }
 
     /** A tap through the window manager (as a finger): it also gives the focus to the app window. */
-    private fun systemTap(tag: String) {
+    /**
+     * Bounds of [tag] once the layout has stopped moving: after text input the keyboard opens and
+     * the viewport shrinks over a few hundred milliseconds, and a tap computed from bounds taken
+     * during that animation lands somewhere else (run #47). Waits until the node is on screen
+     * (not clipped) and its bounds are the same on two reads 200 ms apart.
+     */
+    private fun settledBounds(tag: String): androidx.compose.ui.geometry.Rect {
         await("node $tag") { exists(tag) }
-        try { compose.onNodeWithTag(tag).performScrollTo() } catch (e: AssertionError) { }
-        compose.waitForIdle()
-        val b = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+        var last: androidx.compose.ui.geometry.Rect? = null
+        val deadline = android.os.SystemClock.uptimeMillis() + 5_000
+        while (true) {
+            try { compose.onNodeWithTag(tag).performScrollTo() } catch (e: AssertionError) { }
+            compose.waitForIdle()
+            val b = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            if (b.width > 0 && b.height > 0 && b == last) return b
+            if (android.os.SystemClock.uptimeMillis() > deadline) throw AssertionError("$tag did not settle on screen: $b (before: $last)\n" + diagnostics())
+            last = b
+            Thread.sleep(200)
+        }
+    }
+
+    private fun systemTap(tag: String) {
+        val b = settledBounds(tag)
         val loc = IntArray(2)
         compose.runOnUiThread { compose.activity.window.decorView.findViewById<android.view.View>(android.R.id.content).getLocationOnScreen(loc) }
         val x = loc[0] + b.center.x
@@ -310,6 +328,8 @@ class ThesisEditorDeviceTest {
         openEditor()
         field().performTextInput("Before.")
         compose.waitForIdle()
+        // The keyboard has finished opening before the copy, so the tap right after it is immediate.
+        settledBounds("thesis_paste_text")
         setClipNoWait(ClipData.newPlainText("t", "Pasted right after copying"))
         systemTap("thesis_paste_text")
         try { await("pasted after the focus came back", 20_000) { text.contains("Pasted right after copying") } }

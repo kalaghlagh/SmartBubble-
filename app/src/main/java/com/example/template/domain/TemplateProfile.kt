@@ -127,6 +127,9 @@ data class TemplateProfile(
     /** Codes of template features that are not reproduced everywhere, ";"-separated. */
     val extractionWarnings: String = ""
 ) {
+    /** A built-in Smart Templates style: drawn from these values by the profile writers. */
+    val isBuiltInStyle: Boolean get() = layoutSource == "BUILTIN"
+
     /** True for profiles measured on a PDF template. */
     val isPdfLayout: Boolean get() = layoutSource == "PDF"
 

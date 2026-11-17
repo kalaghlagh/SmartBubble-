@@ -8,7 +8,24 @@ data class WordDocumentModel(
     val sections: List<WordSection> = emptyList(),
     val table: WordTable? = null,
     val signatoryName: String = "",
-    val signatoryTitle: String = ""
+    val signatoryTitle: String = "",
+    /** Letter and request layout (sender, recipient, subject, closing, signature); null for other documents. */
+    val letter: LetterParts? = null
+)
+
+/** The parts of a letter or a request laid out around its body (the body is in the sections). */
+data class LetterParts(
+    val sender: List<String> = emptyList(),
+    val recipient: List<String> = emptyList(),
+    val place: String = "",
+    val date: String = "",
+    val subject: String = "",
+    val salutation: String = "",
+    val closing: String = "",
+    val signatureName: String = "",
+    val signatureTitle: String = "",
+    /** A request shows its title centered above the body ("Leave request", "طلب إجازة"). */
+    val showTitle: Boolean = false
 )
 
 data class WordSection(

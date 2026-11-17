@@ -60,6 +60,7 @@ internal object PdfProfileDocxWriter {
             val headerDist = ((p.headerOffsetPt - p.headerFontSizePt).takeIf { p.headerOffsetPt > 0 } ?: 36).coerceAtLeast(12) * 20
             val footerDist = ((p.footerOffsetPt - 2).takeIf { p.footerOffsetPt > 0 } ?: 36).coerceAtLeast(12) * 20
             append("""<w:pgMar w:top="${p.marginTopPt * 20}" w:right="${p.marginRightPt * 20}" w:bottom="${p.marginBottomPt * 20}" w:left="${p.marginLeftPt * 20}" w:header="$headerDist" w:footer="$footerDist" w:gutter="0"/>""")
+            append(pageBorders(p))
             if (p.rtl) append("<w:bidi/>")
             append("</w:sectPr>")
         }
@@ -79,6 +80,27 @@ internal object PdfProfileDocxWriter {
                 zip.closeEntry()
             }
         }
+    }
+
+    /**
+     * Page borders ("side:style:widthPt:spacePt:#color;..."), measured from the page edge or the
+     * text as the profile says. Word takes widths in eighths of a point (2..96) and spacing in points (0..31).
+     */
+    internal fun pageBorders(p: TemplateProfile): String {
+        val sides = p.pageBorders.split(';').mapNotNull { part ->
+            val f = part.split(':')
+            if (f.size != 5 || f[0] !in setOf("top", "left", "bottom", "right")) null else f
+        }
+        if (sides.isEmpty()) return ""
+        val sb = StringBuilder("""<w:pgBorders w:offsetFrom="${if (p.pageBorderOffsetFrom == "page") "page" else "text"}">""")
+        for (side in listOf("top", "left", "bottom", "right")) {
+            val f = sides.firstOrNull { it[0] == side } ?: continue
+            val style = f[1].takeIf { Regex("[A-Za-z]{3,30}").matches(it) } ?: "single"
+            val size = ((f[2].toFloatOrNull() ?: 0.5f) * 8).toInt().coerceIn(2, 96)
+            val space = (f[3].toFloatOrNull() ?: 24f).toInt().coerceIn(0, 31)
+            sb.append("""<w:$side w:val="$style" w:sz="$size" w:space="$space" w:color="${hex(f[4])}"/>""")
+        }
+        return sb.append("</w:pgBorders>").toString()
     }
 
     private fun hex(value: String): String {
@@ -120,7 +142,10 @@ internal object PdfProfileDocxWriter {
         return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">""" +
             """<w:docDefaults><w:rPrDefault><w:rPr>${fonts(p.bodyFont)}<w:color w:val="$text"/><w:sz w:val="$body"/><w:szCs w:val="$body"/></w:rPr></w:rPrDefault>""" +
             """<w:pPrDefault><w:pPr><w:spacing w:after="$after"$line/></w:pPr></w:pPrDefault></w:docDefaults>""" +
-            """<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:jc w:val="$bodyJc"/></w:pPr></w:style>""" +
+            """<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr>""" +
+            (if (p.firstLineIndentPt > 0) """<w:ind w:firstLine="${p.firstLineIndentPt.coerceAtMost(144) * 20}"/>""" else "") +
+            """<w:jc w:val="$bodyJc"/></w:pPr></w:style>""" +
+            """<w:style w:type="paragraph" w:styleId="LetterBlock"><w:name w:val="Letter Block"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="0"/><w:ind w:firstLine="0"/></w:pPr></w:style>""" +
             headingStyle("Title", "Title", h1, 0) +
             headingStyle("Heading1", "heading 1", h2, 0) +
             headingStyle("Heading2", "heading 2", ((h2 + body) / 2).coerceAtLeast(body), 1) +
@@ -137,7 +162,7 @@ internal object PdfProfileDocxWriter {
     private fun headerXml(p: TemplateProfile, top: Boolean): String? {
         val text = if (top) p.headerText else p.footerText
         val zone = if (top) "header-" else "footer-"
-        val pageNumber = p.pageNumberPosition.startsWith(zone)
+        val pageNumber = p.pageNumberPosition.startsWith(zone) && !(p.headerText + p.footerText).contains("{PAGE}")
         if (text.isBlank() && !pageNumber) return null
         val tag = if (top) "hdr" else "ftr"
         val style = if (top) "Header" else "Footer"
@@ -148,7 +173,18 @@ internal object PdfProfileDocxWriter {
         sb.append("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:$tag xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">""")
         if (text.isNotBlank()) {
             val rtl = isArabic(text)
-            sb.append(para("""<w:r><w:rPr><w:color w:val="$color"/>${if (rtl) "<w:rtl/>" else ""}</w:rPr><w:t xml:space="preserve">${esc(text)}</w:t></w:r>""", if (top) p.headerAlignment else p.footerAlignment, rtl))
+            val rPr = """<w:rPr><w:color w:val="$color"/>${if (rtl) "<w:rtl/>" else ""}</w:rPr>"""
+            for (lineText in text.lines().filter { it.isNotBlank() }) {
+                // "{PAGE}" / "{NUMPAGES}" (from a Word template) become live fields.
+                val runs = Regex("""\{(PAGE|NUMPAGES)\}""").split(lineText).let { pieces ->
+                    val fields = Regex("""\{(PAGE|NUMPAGES)\}""").findAll(lineText).map { it.groupValues[1] }.toList()
+                    pieces.mapIndexed { i, piece ->
+                        (if (piece.isNotEmpty()) """<w:r>$rPr<w:t xml:space="preserve">${esc(piece)}</w:t></w:r>""" else "") +
+                            (fields.getOrNull(i)?.let { f -> """<w:fldSimple w:instr=" $f "><w:r>$rPr<w:t>1</w:t></w:r></w:fldSimple>""" } ?: "")
+                    }.joinToString("")
+                }
+                sb.append(para(runs, if (top) p.headerAlignment else p.footerAlignment, rtl))
+            }
         }
         if (pageNumber) {
             sb.append(para("""<w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:color w:val="$color"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple>""", p.pageNumberPosition.removePrefix(zone), p.rtl))
@@ -159,22 +195,31 @@ internal object PdfProfileDocxWriter {
 
     private fun body(model: WordDocumentModel, p: TemplateProfile): String {
         val sb = StringBuilder()
-        fun para(text: String, style: String?, extraPPr: String = "") {
+        // A leading "\u0000B" marks a bold line (letter subject and signature).
+        fun para(raw: String, style: String?, extraPPr: String = "") {
+            val bold = raw.startsWith("\u0000B")
+            val text = raw.removePrefix("\u0000B")
             val rtl = isArabic(text)
             sb.append("<w:p><w:pPr>")
             if (style != null) sb.append("""<w:pStyle w:val="$style"/>""")
             if (rtl) sb.append("<w:bidi/>")
             sb.append(extraPPr)
             sb.append("</w:pPr><w:r>")
-            if (rtl) sb.append("<w:rPr><w:rtl/></w:rPr>")
+            val rPr = (if (bold) "<w:b/><w:bCs/>" else "") + (if (rtl) "<w:rtl/>" else "")
+            if (rPr.isNotEmpty()) sb.append("<w:rPr>$rPr</w:rPr>")
             sb.append("""<w:t xml:space="preserve">${esc(text)}</w:t></w:r></w:p>""")
         }
         // An Arabic paragraph's alignment follows its own direction.
         fun dirJc(text: String, alignment: String) = if (isArabic(text) != p.rtl) """<w:jc w:val="${jc(alignment, isArabic(text))}"/>""" else ""
 
-        if (model.title.isNotBlank()) para(model.title, "Title", dirJc(model.title, p.headingAlignment))
-        if (model.subtitle.isNotBlank()) para(model.subtitle, null)
-        if (model.date.isNotBlank()) para(model.date, null)
+        val letter = model.letter
+        if (letter != null) {
+            letterOpening(letter, model, p, ::para)
+        } else {
+            if (model.title.isNotBlank()) para(model.title, "Title", dirJc(model.title, p.headingAlignment))
+            if (model.subtitle.isNotBlank()) para(model.subtitle, null)
+            if (model.date.isNotBlank()) para(model.date, null)
+        }
         val marker = p.listMarker.takeIf { it.isNotBlank() && it.length <= 2 && it[0] !in "1a" } ?: "•"
         for (section in model.sections) {
             if (section.isPageBreakBefore) sb.append("""<w:p><w:r><w:br w:type="page"/></w:r></w:p>""")
@@ -184,11 +229,37 @@ internal object PdfProfileDocxWriter {
             section.table?.let { table(sb, it, p) }
         }
         model.table?.let { table(sb, it, p) }
-        if (model.signatoryName.isNotBlank()) para(model.signatoryName, null)
-        if (model.signatoryTitle.isNotBlank()) para(model.signatoryTitle, null)
+        if (letter != null) {
+            letterClosing(letter, p, ::para)
+        } else {
+            if (model.signatoryName.isNotBlank()) para(model.signatoryName, null)
+            if (model.signatoryTitle.isNotBlank()) para(model.signatoryTitle, null)
+        }
         // Word requires at least one paragraph in the body.
         if (sb.isEmpty()) sb.append("<w:p/>")
         return sb.toString()
+    }
+
+    /** Paragraph alignment for a letter block: [alignment] in the direction of its own text. */
+    private fun blockJc(text: String, alignment: String, p: TemplateProfile) = """<w:jc w:val="${jc(alignment, isArabic(text) || (p.rtl && text.none { it.isLetter() && it.code < 0x0600 }))}"/>"""
+
+    /** Sender (start), place and date (end), recipient (start), title of a request (center), subject (bold) and salutation. */
+    private fun letterOpening(l: com.example.document.model.LetterParts, model: WordDocumentModel, p: TemplateProfile, para: (String, String?, String) -> Unit) {
+        l.sender.filter { it.isNotBlank() }.forEach { para(it, "LetterBlock", blockJc(it, "start", p)) }
+        val dateLine = listOf(l.place, l.date.ifBlank { model.date }).filter { it.isNotBlank() }.joinToString(", ")
+        if (dateLine.isNotBlank()) para(dateLine, "LetterBlock", """<w:spacing w:before="240" w:after="240"/>""" + blockJc(dateLine, "end", p))
+        l.recipient.filter { it.isNotBlank() }.forEachIndexed { i, line ->
+            para(line, "LetterBlock", (if (i == l.recipient.lastIndex) """<w:spacing w:after="240"/>""" else "") + blockJc(line, "start", p))
+        }
+        if (l.showTitle && model.title.isNotBlank()) para(model.title, "Title", """<w:jc w:val="center"/>""")
+        if (l.subject.isNotBlank()) para("\u0000B" + l.subject, null, """<w:spacing w:before="120" w:after="240"/>""" + blockJc(l.subject, "start", p))
+        if (l.salutation.isNotBlank()) para(l.salutation, null, blockJc(l.salutation, "start", p))
+    }
+
+    private fun letterClosing(l: com.example.document.model.LetterParts, p: TemplateProfile, para: (String, String?, String) -> Unit) {
+        if (l.closing.isNotBlank()) para(l.closing, null, """<w:spacing w:before="240"/>""" + blockJc(l.closing, "start", p))
+        if (l.signatureName.isNotBlank()) para("\u0000B" + l.signatureName, "LetterBlock", """<w:spacing w:before="480"/>""" + blockJc(l.signatureName, "end", p))
+        if (l.signatureTitle.isNotBlank()) para(l.signatureTitle, "LetterBlock", blockJc(l.signatureTitle, "end", p))
     }
 
     private fun table(sb: StringBuilder, table: WordTable, p: TemplateProfile) {

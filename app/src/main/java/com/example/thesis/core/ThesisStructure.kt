@@ -59,7 +59,9 @@ data class ThesisNumbering(
     /** Image element id -> figure number (1, 2, ...). */
     val figures: Map<String, Int>,
     /** Table element id -> table number. */
-    val tables: Map<String, Int>
+    val tables: Map<String, Int>,
+    /** Inline heading element id -> "2.1", "2.1.1" (headings inside numbered chapters and sections). */
+    val headings: Map<String, String> = emptyMap()
 )
 
 object ThesisStructure {
@@ -91,28 +93,59 @@ object ThesisStructure {
         return out
     }
 
+    /** A heading the user numbered by hand ("1.2 Data", "II- Méthodes", "3) ..."): kept as written. */
+    private val MANUAL_NUMBER = Regex("""^\s*(\d+([.\-]\d+)*[.)\-]?|[IVXLC]+[.)\-])\s+\S""")
+
+    fun hasManualNumber(text: String): Boolean = MANUAL_NUMBER.containsMatchIn(text)
+
     fun numbering(snapshot: ThesisSnapshot): ThesisNumbering {
         val numbers = HashMap<String, String>()
+        val headingNumbers = HashMap<String, String>()
         var part = 0
         var chapter = 0
-        fun walk(parentId: String?, prefix: String?) {
-            var counter = 0
+
+        /**
+         * Numbers the inline headings of a numbered section: in chapter 2, a level-1 heading is
+         * 2.1, a level-2 heading under it 2.1.1, a level-3 heading 2.1.1.1. A level that skips a
+         * parent ("###" right after the chapter title) is attached one level below the last one.
+         * Returns how many level-1 headings were numbered, so sub-sections continue after them.
+         */
+        fun numberHeadings(section: ThesisSection, prefix: String): Int {
+            val counters = IntArray(4)
+            for (e in snapshot.elementsOf(section.id)) {
+                if (e.type != ElementType.HEADING || e.text.isBlank() || hasManualNumber(e.text)) continue
+                val depth = counters.indexOfFirst { it == 0 }.let { if (it < 0) 4 else it }
+                val level = e.data.headingLevel.coerceIn(1, 4).coerceAtMost(depth + 1)
+                counters[level - 1]++
+                for (i in level until 4) counters[i] = 0
+                headingNumbers[e.id] = prefix + "." + (0 until level).joinToString(".") { counters[it].toString() }
+            }
+            return counters[0]
+        }
+
+        fun walk(parentId: String?, prefix: String?, start: Int) {
+            var counter = start
             for (s in snapshot.children(parentId)) {
                 if (!s.enabled) continue
                 when (s.kind) {
-                    SectionKind.PART -> { part++; numbers[s.id] = roman(part); walk(s.id, null) }
-                    SectionKind.CHAPTER -> { chapter++; numbers[s.id] = chapter.toString(); walk(s.id, chapter.toString()) }
+                    SectionKind.PART -> { part++; numbers[s.id] = roman(part); walk(s.id, null, 0) }
+                    SectionKind.CHAPTER -> {
+                        chapter++
+                        val n = chapter.toString()
+                        numbers[s.id] = n
+                        walk(s.id, n, numberHeadings(s, n))
+                    }
                     SectionKind.SECTION, SectionKind.SUBSECTION -> {
                         counter++
                         val n = if (prefix != null) "$prefix.$counter" else counter.toString()
                         numbers[s.id] = n
-                        walk(s.id, n)
+                        walk(s.id, n, numberHeadings(s, n))
                     }
-                    else -> walk(s.id, prefix)
+                    else -> walk(s.id, prefix, 0)
                 }
             }
         }
-        walk(null, null)
+        walk(null, null, 0)
         val figures = HashMap<String, Int>()
         val tables = HashMap<String, Int>()
         for (e in snapshot.orderedElements()) {
@@ -122,7 +155,7 @@ object ThesisStructure {
                 else -> Unit
             }
         }
-        return ThesisNumbering(numbers, figures, tables)
+        return ThesisNumbering(numbers, figures, tables, headingNumbers)
     }
 
     private fun roman(n: Int): String {
@@ -156,6 +189,12 @@ object ThesisStructure {
         var p = section.parentId
         while (p != null && depth < 6) { depth++; p = snapshot.section(p)?.parentId }
         return depth.coerceAtMost(4)
+    }
+
+    /** Text of an inline heading with its number: "2.1.1 Sampling" (unchanged when not numbered). */
+    fun headingText(element: ThesisElement, numbering: ThesisNumbering): String {
+        val n = numbering.headings[element.id] ?: return element.text
+        return "$n ${element.text.trim()}"
     }
 
     /** "Figure 3: caption" in the thesis language. */

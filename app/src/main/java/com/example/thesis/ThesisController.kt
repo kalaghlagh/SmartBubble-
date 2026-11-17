@@ -137,9 +137,27 @@ data class AiAssist(
     val result: String? = null,
     val warnings: List<String> = emptyList(),
     val failed: Boolean = false,
-    val unchanged: Boolean = false
+    val unchanged: Boolean = false,
+    /** Heading of the section the assistant writes for ("Dédicace", "Chapitre 2 : Méthodologie"). */
+    val sectionTitle: String = "",
+    /** Semantic type the section was classified as (DEDICATION, METHODOLOGY...). */
+    val sectionType: com.example.thesis.ai.SectionType? = null
 ) {
     val hasSelection: Boolean get() = end > start
+}
+
+/** Where the assistant's result goes in the section draft. */
+enum class AssistInsert {
+    /** After the selection, or at the end when nothing is selected (the default "Insert"). */
+    AFTER_SELECTION,
+    /** At the cursor position (the end of the selection). */
+    AT_CURSOR,
+    /** At the end of the section. */
+    APPEND,
+    /** Instead of the selected text. */
+    REPLACE_SELECTION,
+    /** Instead of the whole section text (asked for confirmation in the interface). */
+    REPLACE_SECTION
 }
 
 sealed class ThesisMessage {
@@ -899,7 +917,11 @@ class ThesisController(
         val a = start.coerceIn(0, d.text.length)
         val b = end.coerceIn(a, d.text.length)
         val source = if (b > a) d.text.substring(a, b) else d.text
-        update { it.copy(screen = ThesisScreen.AI, assist = AiAssist(source, a, b)) }
+        val snapshot = _state.value.snapshot
+        val section = snapshot?.section(d.sectionId)
+        val title = if (snapshot != null && section != null) ThesisStructure.displayTitle(section, ThesisStructure.numbering(snapshot), snapshot.meta.language) else ""
+        val type = if (snapshot != null && section != null) com.example.thesis.ai.SectionClassifier.classify(snapshot, section).type else null
+        update { it.copy(screen = ThesisScreen.AI, assist = AiAssist(source, a, b, sectionTitle = title, sectionType = type)) }
         if (mode != null) runAssistant(mode, "")
     }
 
@@ -911,12 +933,20 @@ class ThesisController(
      */
     fun runAssistant(mode: EditMode, instruction: String) {
         val a = _state.value.assist ?: return
-        if (mode != EditMode.GENERATE && a.source.isBlank()) return
+        if (mode != EditMode.GENERATE && mode != EditMode.CONTINUE && a.source.isBlank()) return
         update { st -> st.copy(assist = a.copy(mode = mode, instruction = instruction, result = null, warnings = emptyList(), failed = false, unchanged = false)) }
         launch(ThesisBusy.ASKING_AI) {
             try {
                 val snapshot = _state.value.snapshot ?: return@launch
-                val r = ai.edit(snapshot, mode, listOf("text" to a.source), instruction.ifBlank { defaultInstruction(mode) }, listener)
+                val draft = _state.value.draft ?: return@launch
+                // The provider is told which section it writes for (its kind, title, chapter and
+                // place), with that section's rules and focused excerpts of related sections.
+                val context = com.example.thesis.ai.SectionContextBuilder.build(
+                    snapshot, draft.sectionId, mode, draft.text,
+                    selection = if (a.hasSelection) a.source else "",
+                    instruction = instruction.ifBlank { defaultInstruction(mode) }
+                )
+                val r = ai.write(snapshot, context, listener)
                 val text = r.edits["text"]
                 update { st -> st.copy(assist = st.assist?.copy(result = text, warnings = r.warnings.map { it.substringBefore(':') }.distinct(), unchanged = text == null)) }
             } catch (e: CancellationException) {
@@ -931,6 +961,7 @@ class ThesisController(
 
     private fun defaultInstruction(mode: EditMode) = when (mode) {
         EditMode.GENERATE -> "Suggest content for this section."
+        EditMode.CONTINUE -> "Continue this section."
         else -> "Apply the task to the text."
     }
 
@@ -939,19 +970,32 @@ class ThesisController(
      * otherwise the result is inserted after it. Figures and tables whose placeholder the result
      * dropped are kept at the end, so nothing is lost. The thesis changes only on "Save changes".
      */
-    fun insertAssistResult(replace: Boolean) {
+    fun insertAssistResult(replace: Boolean) = insertAssistResult(if (replace) (if (_state.value.assist?.hasSelection == true) AssistInsert.REPLACE_SELECTION else AssistInsert.REPLACE_SECTION) else AssistInsert.AFTER_SELECTION)
+
+    /** Puts the AI result into the draft at the chosen place; the thesis changes only on "Save changes". */
+    fun insertAssistResult(where: AssistInsert) {
         val st = _state.value
         val a = st.assist ?: return
         val result = a.result ?: return
         val d = st.draft ?: return
         val text = d.text
-        val newText = if (replace) {
-            val replaced = if (a.hasSelection && a.end <= text.length) text.substring(0, a.start) + result + text.substring(a.end) else result
+        fun insertAt(at: Int) = listOf(text.substring(0, at).trimEnd(), result.trim(), text.substring(at).trimStart()).filter { it.isNotEmpty() }.joinToString("\n\n")
+        fun keepMedia(replaced: String): String {
             val lost = d.media.keys.filter { token -> text.lines().any { it.trim() == token } && replaced.lines().none { it.trim() == token } }
-            if (lost.isEmpty()) replaced else replaced.trimEnd() + "\n\n" + lost.joinToString("\n\n")
-        } else {
-            val at = (if (a.hasSelection) a.end else text.length).coerceIn(0, text.length)
-            listOf(text.substring(0, at).trimEnd(), result.trim(), text.substring(at).trimStart()).filter { it.isNotEmpty() }.joinToString("\n\n")
+            return if (lost.isEmpty()) replaced else replaced.trimEnd() + "\n\n" + lost.joinToString("\n\n")
+        }
+        val newText = when (where) {
+            AssistInsert.REPLACE_SELECTION ->
+                keepMedia(if (a.hasSelection && a.end <= text.length) text.substring(0, a.start) + result + text.substring(a.end) else result)
+            AssistInsert.REPLACE_SECTION -> keepMedia(result)
+            AssistInsert.AFTER_SELECTION -> insertAt((if (a.hasSelection) a.end else text.length).coerceIn(0, text.length))
+            AssistInsert.AT_CURSOR -> {
+                // The cursor inside a line: the result goes after that line's end, never mid-word.
+                val cursor = a.end.coerceIn(0, text.length)
+                val lineEnd = text.indexOf('\n', cursor).let { if (it < 0) text.length else it }
+                insertAt(if (cursor == 0) 0 else lineEnd)
+            }
+            AssistInsert.APPEND -> insertAt(text.length)
         }
         update { it.copy(draft = d.copy(text = newText), assist = null, screen = ThesisScreen.SECTION) }
     }

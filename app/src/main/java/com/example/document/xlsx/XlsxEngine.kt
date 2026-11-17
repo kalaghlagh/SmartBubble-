@@ -60,7 +60,8 @@ class XlsxEngine {
     }
 
     /** Cell style indices (cellXfs) used for body text, header cells and numbers. */
-    private data class CellStyles(val body: Int, val header: Int, val number: Int)
+    /** Cell style indexes; [bodyAlt]/[numberAlt] are the banded rows (same as body/number when not banded). */
+    private data class CellStyles(val body: Int, val header: Int, val number: Int, val bodyAlt: Int = body, val numberAlt: Int = number, val styled: Boolean = false)
 
     /**
      * Uses the template workbook: keeps its styles, theme and shared parts; replaces only the
@@ -258,15 +259,21 @@ class XlsxEngine {
             zip.write(buildWorkbookRelsXml(model.sheets.size).toByteArray(Charsets.UTF_8))
             zip.closeEntry()
 
+            // Built-in Smart Templates styles: banded rows, the style's border color, number
+            // format with thousands separators, frozen header row and filters.
+            val styled = template.isBuiltInStyle
             zip.putNextEntry(ZipEntry("xl/styles.xml"))
-            zip.write(buildStylesXml(font, headerFillHex).toByteArray(Charsets.UTF_8))
+            zip.write(buildStylesXml(font, headerFillHex,
+                altFillHex = if (styled) template.tableAlternateRowBgHex.removePrefix("#") else null,
+                borderHex = if (styled) template.tableBorderHex.removePrefix("#") else "D1D5DB").toByteArray(Charsets.UTF_8))
             zip.closeEntry()
 
             for (i in model.sheets.indices) {
                 val sheet = model.sheets[i]
                 val sheetNum = i + 1
                 zip.putNextEntry(ZipEntry("xl/worksheets/sheet$sheetNum.xml"))
-                zip.write(buildSheetXml(sheet, CellStyles(body = 0, header = 1, number = 2)).toByteArray(Charsets.UTF_8))
+                val cellStyles = if (styled) CellStyles(body = 0, header = 1, number = 2, bodyAlt = 3, numberAlt = 4, styled = true) else CellStyles(body = 0, header = 1, number = 2)
+                zip.write(buildSheetXml(sheet, cellStyles).toByteArray(Charsets.UTF_8))
                 zip.closeEntry()
             }
         }
@@ -331,7 +338,8 @@ class XlsxEngine {
         return sb.toString()
     }
 
-    private fun buildStylesXml(font: String, headerFillHex: String): String {
+    private fun buildStylesXml(font: String, headerFillHex: String, altFillHex: String? = null, borderHex: String = "D1D5DB"): String {
+        if (altFillHex != null) return buildBandedStylesXml(font, headerFillHex, altFillHex, borderHex)
         return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
     <fonts count="2">
@@ -367,12 +375,37 @@ class XlsxEngine {
 </styleSheet>""".trimIndent()
     }
 
+    /** Styles of a built-in sheet style: body, header, number, banded body, banded number. */
+    private fun buildBandedStylesXml(font: String, headerFillHex: String, altFillHex: String, borderHex: String): String {
+        val f = escapeXml(font)
+        val b = """<left style="thin"><color rgb="FF$borderHex"/></left><right style="thin"><color rgb="FF$borderHex"/></right><top style="thin"><color rgb="FF$borderHex"/></top><bottom style="thin"><color rgb="FF$borderHex"/></bottom><diagonal/>"""
+        return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>""" +
+            """<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">""" +
+            """<numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.##"/></numFmts>""" +
+            """<fonts count="2"><font><name val="$f"/><sz val="11"/><color rgb="FF1F2937"/></font><font><b/><name val="$f"/><sz val="11"/><color rgb="FFFFFFFF"/></font></fonts>""" +
+            """<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>""" +
+            """<fill><patternFill patternType="solid"><fgColor rgb="FF$headerFillHex"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF$altFillHex"/></patternFill></fill></fills>""" +
+            """<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border>$b</border></borders>""" +
+            """<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>""" +
+            """<cellXfs count="5">""" +
+            """<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>""" +
+            """<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>""" +
+            """<xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>""" +
+            """<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>""" +
+            """<xf numFmtId="164" fontId="0" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>""" +
+            """</cellXfs></styleSheet>"""
+    }
+
     private fun buildSheetXml(sheet: SheetModel, styles: CellStyles): String {
         val sb = StringBuilder()
         val rtl = (sheet.headers + sheet.rows.flatten().map { it.toString() }).any { t -> t.any { it in '\u0600'..'\u06FF' } }
         sb.append("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">""")
-        if (rtl) sb.append("""
+        if (styles.styled) {
+            // Header row frozen.
+            sb.append("""
+    <sheetViews><sheetView ${if (rtl) "rightToLeft=\"1\" " else ""}workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>""")
+        } else if (rtl) sb.append("""
     <sheetViews><sheetView rightToLeft="1" workbookViewId="0"/></sheetViews>""")
         sb.append("""
     <cols>""")
@@ -394,6 +427,7 @@ class XlsxEngine {
         var rowNum = 2
         for (row in sheet.rows) {
             sb.append("\n        <row r=\"$rowNum\" ht=\"20\" customHeight=\"1\">")
+            val banded = styles.styled && rowNum % 2 == 1
             for ((colIdx, cell) in row.withIndex()) {
                 val colLetter = getColumnLetter(colIdx + 1)
                 val str = cell.toString()
@@ -405,9 +439,9 @@ class XlsxEngine {
                     !(numeric.length > 1 && numeric.startsWith("0") && !numeric.startsWith("0."))
                 if (isNum && !str.startsWith("+") && !sheet.keepValuesAsText) {
                     val cleanNum = str.replace(",", "").replace("$", "").trim()
-                    sb.append("\n            <c r=\"$colLetter$rowNum\" s=\"${styles.number}\"><v>$cleanNum</v></c>")
+                    sb.append("\n            <c r=\"$colLetter$rowNum\" s=\"${if (banded) styles.numberAlt else styles.number}\"><v>$cleanNum</v></c>")
                 } else {
-                    sb.append("\n            <c r=\"$colLetter$rowNum\" s=\"${styles.body}\" t=\"inlineStr\"><is><t>${escapeXml(str)}</t></is></c>")
+                    sb.append("\n            <c r=\"$colLetter$rowNum\" s=\"${if (banded) styles.bodyAlt else styles.body}\" t=\"inlineStr\"><is><t>${escapeXml(str)}</t></is></c>")
                 }
             }
             sb.append("\n        </row>")
@@ -425,7 +459,11 @@ class XlsxEngine {
         }
 
         sb.append("""
-    </sheetData>
+    </sheetData>""")
+        if (styles.styled && sheet.headers.isNotEmpty()) {
+            sb.append("\n    <autoFilter ref=\"A1:${getColumnLetter(sheet.headers.size)}${(sheet.rows.size + 1).coerceAtLeast(1)}\"/>")
+        }
+        sb.append("""
 </worksheet>""")
         return sb.toString()
     }

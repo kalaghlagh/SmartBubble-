@@ -93,7 +93,32 @@ ${templateNote?.let { "- $it" } ?: ""}
     private const val XLSX_SCHEMA =
         """{"title":"string","sheets":[{"name":"string (max 31 chars)","headers":["string"],"rows":[["string or number"]],"total_label":"string (optional)","total_formula":"SUM/AVERAGE/MIN/MAX/COUNT over a cell range, e.g. SUM(B2:B9) (optional)"}]}"""
 
-    fun documentWriter(format: DocumentFormat, uiLanguage: String, templateDescription: String?): String {
+    private const val LETTER_SCHEMA =
+        """{"title":"string (short, used as the file name)","letter":{"sender":["line"],"recipient":["line"],"place":"string","date":"string","subject":"string","salutation":"string","closing":"string","signature_name":"string","signature_title":"string","show_title":false},"sections":[{"heading":"string (usually empty in a letter)","paragraphs":["string"]}]}"""
+
+    /**
+     * Writing guidance for a Smart Templates kind of document ([layout] of its category,
+     * [subcategoryName] in English), the document language and the facts usually needed.
+     */
+    fun kindGuidance(layout: String, subcategoryName: String, documentLanguage: String, missing: List<String>): String = buildString {
+        append("- This document is a ").append(subcategoryName).append(". Write it as a real, complete ").append(subcategoryName).append(" with the structure professionals expect.\n")
+        append("- Write the whole document in ").append(languageName(documentLanguage)).append(", whatever language the interface uses.\n")
+        when (layout) {
+            "LETTER", "REQUEST" -> {
+                append("- Use this JSON structure (the \"letter\" object holds the parts around the body; the body paragraphs go in \"sections\" without headings):\n")
+                append(LETTER_SCHEMA).append("\n")
+                if (layout == "REQUEST") append("- Set \"show_title\" to true and give a short title such as the kind of request.\n")
+            }
+            "ACADEMIC" -> append("- Use an academic structure (introduction, numbered parts or chapters, conclusion, references when relevant) and a formal register.\n")
+            "REPORT" -> append("- Use a report structure (summary or introduction, sections with headings, tables for figures, conclusion or recommendations).\n")
+        }
+        if (missing.isNotEmpty()) {
+            append("- Details that may be missing: ").append(missing.joinToString(", "))
+            append(". Use what the user gave; for anything personal that is unknown (names, dates, figures), write a short placeholder in square brackets in the document language, for example [Name], never invented facts.\n")
+        }
+    }
+
+    fun documentWriter(format: DocumentFormat, uiLanguage: String, templateDescription: String?, kindGuidance: String? = null): String {
         val (kind, schema, guidance) = when (format) {
             DocumentFormat.DOCX, DocumentFormat.PDF -> Triple(
                 if (format == DocumentFormat.PDF) "a PDF document" else "a Word document",
@@ -121,8 +146,13 @@ $guidance
 - Write the content in the language requested by the user; if not specified, in the language of the request (default ${languageName(uiLanguage)}). Keep Arabic text as Arabic.
 - Base the content only on the user's request, the brief and the supplied conversation/document text. Do not invent facts presented as real data about the user (names, figures) unless asked to draft illustrative content.
 ${templateDescription?.let { "- The document will be rendered with the user's template. Fit the content to it: $it" } ?: ""}
+${kindGuidance ?: ""}
 """.trim()
     }
+
+    /** Planner rule asking the AI to classify a document request in the Smart Templates catalog. */
+    fun plannerCategories(ids: List<String>): String =
+        "For a document, also add \"category\": the best matching id from this list: ${ids.joinToString(", ")}. Use the id ending in \".general\" of the right kind when none fits better."
 
     fun repair(error: String): String =
         "Your previous response could not be used: $error Return ONLY the corrected JSON object with the same structure, and nothing else."

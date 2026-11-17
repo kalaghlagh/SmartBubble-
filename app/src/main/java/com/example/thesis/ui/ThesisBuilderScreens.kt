@@ -26,6 +26,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -836,7 +840,7 @@ private fun SmallAction(icon: ImageVector, label: Int, tag: String, enabled: Boo
 
 // =================================================================== 4. section editor
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ThesisSectionEditor(host: ThesisHost) {
     val controller = host.thesis
@@ -904,6 +908,8 @@ private fun ThesisSectionEditor(host: ThesisHost) {
         } else applyOp { EditorOps.setHeading(it, level) }
     }
 
+    var editorFocused by remember { mutableStateOf(false) }
+    val editorArea = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
     Column(Modifier.fillMaxSize()) {
         BlueTopBar(title, onBack = { controller.back() }) {
             IconButton(onClick = { controller.saveDraft() }, enabled = idle && draft?.dirty == true, modifier = Modifier.testTag("thesis_save_icon")) {
@@ -923,7 +929,15 @@ private fun ThesisSectionEditor(host: ThesisHost) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             return@Column
         }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // Keyboard: while the editor has the focus and the keyboard is open, the toolbar and the
+        // text field are kept in the visible area above the keyboard, and the field's height is
+        // bounded to that area so it scrolls inside to the cursor (a field taller than the screen
+        // inside the page scroll could leave the cursor under the keyboard).
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f)) {
+        val viewport = maxHeight
+        val typing = editorFocused && WindowInsets.isImeVisible
+        LaunchedEffect(typing, viewport) { if (typing) editorArea.bringIntoView() }
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SaveStatus(saving = state.busy == com.example.thesis.ThesisBusy.SAVING, dirty = draft.dirty, onPrimary = false)
                 Spacer(Modifier.weight(1f))
@@ -953,6 +967,7 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                 )
             }
             state.sectionHistory?.let { SectionHistoryCard(controller, it, onClose = { controller.selectSection(section.id) }) }
+            Column(Modifier.bringIntoViewRequester(editorArea), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // Formatting toolbar. The heading menu is anchored to the toolbar itself (not to an icon
             // inside the scrolling row), so it opens whatever the row's scroll position.
             Box {
@@ -991,8 +1006,12 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                 placeholder = { Text(stringResource(R.string.thesis_paste_placeholder)) },
                 textStyle = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content, lineHeight = 24.sp),
                 shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp).testTag("thesis_editor_text")
+                modifier = Modifier.fillMaxWidth()
+                    .then(if (typing) Modifier.height((viewport - 96.dp).coerceAtLeast(140.dp)) else Modifier.heightIn(min = 260.dp))
+                    .onFocusChanged { editorFocused = it.isFocused }
+                    .testTag("thesis_editor_text")
             )
+            }
             Text(stringResource(R.string.thesis_format_help), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (draft.media.isNotEmpty()) MediaStrip(state.assets, draft, onEdit = { editingMedia = it })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1004,8 +1023,11 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                             val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.primaryClip
                             clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
                         } catch (e: Exception) { android.util.Log.w("ThesisEditor", "Clipboard could not be read", e); null }
+                        // Evidence for device tests and crash reports: lengths only, never the text.
+                        android.util.Log.i("ThesisEditor", "Paste Text: clipboard read, ${text?.length ?: -1} chars")
                         if (text.isNullOrBlank()) toast(R.string.thesis_clipboard_empty) else insertAtCursor(text)
                     }
+                    android.util.Log.i("ThesisEditor", "Paste Text tapped: windowFocus=${view.hasWindowFocus()}")
                     // Android 10+ lets only the focused window read the clipboard. Right after a copy,
                     // the system "copied" preview is a separate window that holds the focus, and the
                     // tap on this button arrives before the focus comes back: reading then returns
@@ -1041,6 +1063,7 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                 ContentAction(Icons.Filled.Title, R.string.thesis_add_heading, "thesis_add_heading", true) { headingMenu = true }
                 ContentAction(Icons.Filled.HorizontalRule, R.string.thesis_page_break, "thesis_page_break", true) { insertAtCursor(com.example.thesis.core.SectionText.pageBreakToken(language)) }
             }
+        }
         }
         HorizontalDivider()
         Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1238,6 +1261,7 @@ private fun ThesisAiAssistant(host: ThesisHost) {
     val provider = providers?.firstOrNull()
     val idle = state.busy == null
     var confirmReplace by remember { mutableStateOf(false) }
+    var confirmReplaceSection by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
         BlueTopBar(stringResource(R.string.thesis_ai_assistant), onBack = { controller.closeAssistant() })
         state.busy?.let { BusyBar(controller, it) }
@@ -1246,6 +1270,15 @@ private fun ThesisAiAssistant(host: ThesisHost) {
             return@Column
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // The section the assistant writes for (its rules and context come from it).
+            if (assist.sectionTitle.isNotBlank()) {
+                val writing = state.busy == com.example.thesis.ThesisBusy.ASKING_AI
+                Text(
+                    stringResource(if (writing) R.string.thesis_ai_generating_for else R.string.thesis_ai_writing_for, assist.sectionTitle),
+                    style = MaterialTheme.typography.titleSmall.copy(textDirection = TextDirection.Content), fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("thesis_ai_section_label")
+                )
+            }
             Card(Modifier.fillMaxWidth().testTag("thesis_ai_provider"), shape = RoundedCornerShape(16.dp)) {
                 Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
@@ -1279,7 +1312,9 @@ private fun ThesisAiAssistant(host: ThesisHost) {
                     Triple(EditMode.EXPAND, Icons.Outlined.UnfoldMore, R.string.thesis_ai_expand_content),
                     Triple(EditMode.REWRITE, Icons.Outlined.Autorenew, R.string.thesis_ai_rewrite),
                     Triple(EditMode.CORRECT, Icons.Outlined.Spellcheck, R.string.thesis_ai_correct_grammar),
-                    Triple(EditMode.ORGANIZE, Icons.Outlined.Reorder, R.string.thesis_ai_organize)
+                    Triple(EditMode.ORGANIZE, Icons.Outlined.Reorder, R.string.thesis_ai_organize),
+                    Triple(EditMode.CONTINUE, Icons.Outlined.Edit, R.string.thesis_ai_continue),
+                    Triple(EditMode.SUMMARIZE, Icons.Outlined.UnfoldMore, R.string.thesis_ai_summarize)
                 ).forEach { (mode, icon, label) ->
                     OutlinedButton(onClick = { controller.runAssistant(mode, assist.instruction) }, enabled = canRun && hasText, shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_ai_${mode.name}")) {
@@ -1311,8 +1346,17 @@ private fun ThesisAiAssistant(host: ThesisHost) {
                     modifier = Modifier.fillMaxWidth().height(52.dp).testTag("thesis_ai_insert")) {
                     Icon(Icons.Default.Check, contentDescription = null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.thesis_ai_insert))
                 }
+                // Other places: at the cursor, at the end, or instead of the whole section.
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(onClick = { controller.insertAssistResult(com.example.thesis.AssistInsert.AT_CURSOR) }, enabled = idle && result.isNotBlank(),
+                        shape = RoundedCornerShape(12.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_ai_insert_cursor")) { Text(stringResource(R.string.thesis_ai_insert_cursor)) }
+                    OutlinedButton(onClick = { controller.insertAssistResult(com.example.thesis.AssistInsert.APPEND) }, enabled = idle && result.isNotBlank(),
+                        shape = RoundedCornerShape(12.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_ai_append")) { Text(stringResource(R.string.thesis_ai_append)) }
+                    if (hasText && assist.hasSelection) OutlinedButton(onClick = { confirmReplaceSection = true }, enabled = idle && result.isNotBlank(),
+                        shape = RoundedCornerShape(12.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("thesis_ai_replace_section")) { Text(stringResource(R.string.thesis_ai_replace_whole)) }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (hasText && assist.mode != EditMode.GENERATE) OutlinedButton(onClick = { confirmReplace = true }, enabled = idle && result.isNotBlank(), shape = RoundedCornerShape(14.dp),
+                    if (hasText && assist.mode != EditMode.GENERATE && assist.mode != EditMode.CONTINUE) OutlinedButton(onClick = { confirmReplace = true }, enabled = idle && result.isNotBlank(), shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("thesis_ai_replace")) {
                         Icon(Icons.Outlined.Autorenew, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.thesis_ai_replace_short), maxLines = 1)
                     }
@@ -1336,6 +1380,16 @@ private fun ThesisAiAssistant(host: ThesisHost) {
             text = { Text(stringResource(R.string.thesis_ai_replace_confirm_text)) },
             confirmButton = { Button(onClick = { confirmReplace = false; controller.insertAssistResult(replace = true) }, modifier = Modifier.testTag("thesis_ai_replace_confirm")) { Text(stringResource(R.string.thesis_ai_replace_short)) } },
             dismissButton = { TextButton(onClick = { confirmReplace = false }) { Text(stringResource(R.string.action_cancel)) } }
+        )
+    }
+    if (confirmReplaceSection) {
+        AlertDialog(
+            onDismissRequest = { confirmReplaceSection = false },
+            title = { Text(stringResource(R.string.thesis_ai_replace_section)) },
+            text = { Text(stringResource(R.string.thesis_ai_replace_confirm_text)) },
+            confirmButton = { Button(onClick = { confirmReplaceSection = false; controller.insertAssistResult(com.example.thesis.AssistInsert.REPLACE_SECTION) },
+                modifier = Modifier.testTag("thesis_ai_replace_section_confirm")) { Text(stringResource(R.string.thesis_ai_replace_short)) } },
+            dismissButton = { TextButton(onClick = { confirmReplaceSection = false }) { Text(stringResource(R.string.action_cancel)) } }
         )
     }
 }
