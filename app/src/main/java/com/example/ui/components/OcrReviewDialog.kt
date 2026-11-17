@@ -53,7 +53,9 @@ fun OcrReviewDialog(
     /** Name of the default AI provider, or blank when none is configured. */
     aiProviderName: String = "",
     /** Called only after the user confirmed sending the recognized text to the AI provider. */
-    onEnhanceWithAi: () -> Unit = {}
+    onEnhanceWithAi: () -> Unit = {},
+    /** Puts the reviewed text (all pages) into the chat composer and closes the review. */
+    onInsertIntoChat: ((String) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val pages = reviewState.pages
@@ -166,6 +168,25 @@ fun OcrReviewDialog(
                             .navigationBarsPadding()
                             .padding(16.dp)
                     ) {
+                        // The reviewed text of every page, in page order (what Copy and Insert use).
+                        val allText = pages.mapIndexed { i, p -> if (i == activeIndex) currentText else p.rawText }
+                            .map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n\n")
+                        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager)
+                                        ?.setPrimaryClip(android.content.ClipData.newPlainText("SmartBubble OCR", allText))
+                                    android.widget.Toast.makeText(context, context.getString(R.string.scan_text_copied), android.widget.Toast.LENGTH_SHORT).show()
+                                },
+                                enabled = allText.isNotEmpty(),
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("ocr_copy_text_btn")
+                            ) { Text(stringResource(R.string.scan_copy_text)) }
+                            if (onInsertIntoChat != null) OutlinedButton(
+                                onClick = { onInsertIntoChat(allText) },
+                                enabled = allText.isNotEmpty(),
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("ocr_insert_chat_btn")
+                            ) { Text(stringResource(R.string.scan_insert_into_chat)) }
+                        }
                         Button(
                             onClick = onGenerateDocx,
                             modifier = Modifier
@@ -533,6 +554,8 @@ fun OcrReviewDialog(
                         .heightIn(min = 220.dp)
                         .testTag("ocr_extracted_text_editor"),
                     shape = RoundedCornerShape(12.dp),
+                    // Arabic lines right-to-left, French/English left-to-right, each by its content.
+                    textStyle = androidx.compose.material3.LocalTextStyle.current.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Content),
                     placeholder = { Text(stringResource(R.string.scan_text_placeholder)) }
                 )
 

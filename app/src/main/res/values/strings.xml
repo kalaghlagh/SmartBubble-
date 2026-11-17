@@ -993,4 +993,7 @@
     <string name="thesis_front_roman">Roman numbers for the preliminary pages</string>
     <string name="thesis_front_roman_desc">Cover to abbreviations numbered i, ii, iii; the introduction starts the main numbering.</string>
     <string name="thesis_page_start">First page number of the main text</string>
+    <string name="scan_copy_text">Copy text</string>
+    <string name="scan_insert_into_chat">Insert into chat</string>
+    <string name="scan_text_copied">Text copied</string>
 </resources>

@@ -993,4 +993,7 @@
     <string name="thesis_front_roman">أرقام رومانية للصفحات التمهيدية</string>
     <string name="thesis_front_roman_desc">من صفحة الغلاف إلى المختصرات: i، ii، iii؛ ويبدأ الترقيم الرئيسي من المقدمة.</string>
     <string name="thesis_page_start">رقم أول صفحة في المتن</string>
+    <string name="scan_copy_text">نسخ النص</string>
+    <string name="scan_insert_into_chat">إدراج في المحادثة</string>
+    <string name="scan_text_copied">تم نسخ النص</string>
 </resources>

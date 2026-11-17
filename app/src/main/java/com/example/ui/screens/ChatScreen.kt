@@ -897,7 +897,13 @@ fun ChatScreen(
             ocrLanguage = ocrLanguage,
             onChangeOcrLanguage = { viewModel.changeOcrLanguage(it) },
             aiProviderName = defaultProvider,
-            onEnhanceWithAi = { viewModel.enhanceScannedTextWithAi() }
+            onEnhanceWithAi = { viewModel.enhanceScannedTextWithAi() },
+            onInsertIntoChat = { text ->
+                // The reviewed text goes into the composer (not sent): the user can edit or send it.
+                val merged = if (inputField.text.isBlank()) text else inputField.text.trimEnd() + "\n\n" + text
+                inputField = TextFieldValue(merged, androidx.compose.ui.text.TextRange(merged.length))
+                viewModel.dismissScanReview()
+            }
         )
     }
 

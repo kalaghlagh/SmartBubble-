@@ -72,7 +72,14 @@ class OcrDeviceTest {
     }
 
     private fun ocr(vararg uris: Uri, language: OcrLanguage = OcrLanguage.AUTO) =
-        runBlocking { DocumentOcrEngine(context).processPages(uris.toList(), language, "en") }
+        runBlocking { DocumentOcrEngine(context).processPages(uris.toList(), language, "en") }.also { r ->
+            if (r.failedPages > 0) {
+                val line = "OCR errors: ${r.errors}"
+                Log.e("OcrDeviceTest", line)
+                File(dir, "results.txt").appendText(line + "\n")
+            }
+            assertEquals("pages that failed: ${r.errors}", 0, r.failedPages)
+        }
 
     private val results = StringBuilder()
 
@@ -83,6 +90,33 @@ class OcrDeviceTest {
         results.append(line).append('\n')
         File(dir, "results.txt").appendText(line + "\n")
         assertTrue("$case: only ${"%.0f".format(r * 100)}% of the words recognized: $text", r >= minimum)
+    }
+
+    /**
+     * The recognizer itself, without the app's pipeline: the bundled English model reads a clean
+     * page. Isolates the native engine and model files from image loading and assembly.
+     */
+    @Test fun engineReadsAPlainBitmap() {
+        val bmp = Bitmap.createBitmap(1240, 600, Bitmap.Config.ARGB_8888)
+        Canvas(bmp).apply {
+            drawColor(Color.WHITE)
+            val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 48f }
+            drawText("Groundwater quality of wells", 80f, 200f, paint)
+            drawText("in the region was analysed", 80f, 300f, paint)
+        }
+        val root = com.example.ocr.TessDataInstaller.ensureInstalled(context, listOf("eng"))
+        val tess = com.googlecode.tesseract.android.TessBaseAPI()
+        try {
+            assertTrue("init", tess.init(root.absolutePath, "eng"))
+            tess.setImage(bmp)
+            val text = tess.getUTF8Text().orEmpty()
+            val line = "OCR raw-engine: confidence=${tess.meanConfidence()} text=${text.replace('\n', ' ')}"
+            Log.i("OcrDeviceTest", line)
+            File(dir, "results.txt").appendText(line + "\n")
+            check("raw-engine", "Groundwater quality of wells in the region was analysed", text, 0.8)
+        } finally {
+            tess.recycle()
+        }
     }
 
     @Test fun arabicPage() { val r = ocr(page("arabic", listOf(arabic))); check("arabic", arabic, r.pages.single().rawText, 0.6) }
