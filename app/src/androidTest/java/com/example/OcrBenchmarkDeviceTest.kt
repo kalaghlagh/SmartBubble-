@@ -33,6 +33,8 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -62,6 +64,9 @@ class OcrBenchmarkDeviceTest {
         File(dir, "bench.txt").appendText(line + "\n")
         InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply { putString("bench", line.take(3800)) })
     }
+
+    @Before fun traceOn() { com.example.extraction.OcrPageReader.trace = { emit("TRACE ${it.take(1500)}") } }
+    @After fun traceOff() { com.example.extraction.OcrPageReader.trace = null }
 
     // ------------------------------------------------------------------ fixtures
 
@@ -135,7 +140,8 @@ class OcrBenchmarkDeviceTest {
 
     // ------------------------------------------------------------------ metrics
 
-    private fun norm(s: String) = TextMetrics.normalizeSpaces(s)
+    /** Spaces normalized; the invisible direction marks set around Latin terms in Arabic lines do not count. */
+    private fun norm(s: String) = TextMetrics.normalizeSpaces(s.replace(Regex("[\u200E\u200F\u061C\u202A-\u202E\u2066-\u2069]"), ""))
 
     /** Text of the document without markup: blocks in order, list markers kept, table cells separated by spaces. */
     private fun plain(d: ExtractedDocument): String = d.pages.flatMap { it.blocks }.mapNotNull { b ->
@@ -184,8 +190,8 @@ class OcrBenchmarkDeviceTest {
         val ms = (SystemClock.elapsedRealtime() - t) / doc.pages.size.coerceAtLeast(1)
         sampler.interrupt(); sampler.join()
         val text = plain(doc)
-        val cer = TextMetrics.cer(expect.text, text)
-        val wer = TextMetrics.wer(expect.text, text)
+        val cer = TextMetrics.cer(norm(expect.text), norm(text))
+        val wer = TextMetrics.wer(norm(expect.text), norm(text))
         // Script of each expected line, from the best-matching block.
         val blocks = doc.pages.flatMap { it.blocks }.map { b ->
             when (b) {
@@ -227,7 +233,8 @@ class OcrBenchmarkDeviceTest {
             "numeric=$numOk/$numAll shape=$shape lists=$itemOk/${expect.items.size} order=${"%.2f".format(order)} ms/page=$ms peakMB=${"%.1f".format(mem)} " +
             "loads=${ocr.lastLoadTimes} stages=${doc.pages.map { it.timingsMs }} notes=${doc.pages.map { it.notes }}")
         emit("BENCH $name expected: ${expect.text.take(600)}")
-        emit("BENCH $name actual:   ${text.take(600)}")
+        emit("BENCH $name actual:   ${norm(text).take(600)}")
+        got.forEachIndexed { k, t -> emit("BENCH $name table$k: ${t.rows.joinToString(" / ") { r -> r.joinToString(" | ") { c -> c.text + (if (c.colSpan > 1) "{${c.colSpan}}" else "") + (if (c.needsReview) "?" else "") } }}") }
         return doc
     }
 
@@ -255,14 +262,17 @@ class OcrBenchmarkDeviceTest {
     private fun mlkit(name: String, uri: Uri, expected: String) {
         try {
             val bmp = BitmapFactory.decodeFile(uri.path)
+            // The test APK's ML Kit start-up provider does not run in the app's process.
+            com.google.mlkit.common.sdkinternal.MlKitContext.initializeIfNeeded(context)
             val client = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
             val t = SystemClock.elapsedRealtime()
             val res = Tasks.await(client.process(InputImage.fromBitmap(bmp, 0)))
             val ms = SystemClock.elapsedRealtime() - t
             client.close()
-            emit("MLKIT $name: cer=${"%.3f".format(TextMetrics.cer(expected, res.text.replace('\n', ' ')))} wer=${"%.3f".format(TextMetrics.wer(expected, res.text.replace('\n', ' ')))} ms=$ms text=${res.text.replace('\n', ' ').take(300)}")
+            val got = norm(res.text.replace('\n', ' '))
+            emit("MLKIT $name: cer=${"%.3f".format(TextMetrics.cer(norm(expected), got))} wer=${"%.3f".format(TextMetrics.wer(norm(expected), got))} ms=$ms text=${got.take(300)}")
         } catch (e: Throwable) {
-            emit("MLKIT $name: not available (${e.javaClass.simpleName})")
+            emit("MLKIT $name: not available ($e at ${e.stackTrace.take(3).joinToString(" < ")})")
         }
     }
 
@@ -342,8 +352,9 @@ class OcrBenchmarkDeviceTest {
         val right = "The second column presents the sampling of the wells."
         val f = Fixture()
         f.text("Two columns", size = 44f, bold = true)
-        val h = f.text(left, left = 120f, width = 480, advance = false)
-        f.text(right, left = 640f, width = 480, advance = false)
+        // A gutter of 120 px (1 cm at 300 dpi).
+        val h = f.text(left, left = 120f, width = 440, advance = false)
+        f.text(right, left = 680f, width = 440, advance = false)
         f.y += h + 20f
         val cells = listOf(listOf("Ion", "Min", "Max"), listOf("Ca", "12", "40"), listOf("Mg", "Not measured"))
         f.table(cells, rtl = false, borders = true, spans = listOf(listOf(1, 1, 1), listOf(1, 1, 1), listOf(1, 2)))

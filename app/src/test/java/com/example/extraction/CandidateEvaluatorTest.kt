@@ -124,10 +124,42 @@ class CandidateEvaluatorTest {
         val l1 = listOf(w("P1", 20f, 50f), w("120m", 320f, 50f), w("اروم", 620f, 50f))
         val lines = listOf(TextLine(l0, Box.of(l0.map { it.box })!!), TextLine(l1, Box.of(l1.map { it.box })!!))
         val asked = ArrayList<Pair<String, Script?>>()
-        TableReconstructor.fromRulings(rules, lines, cellReader = CellReader { _, words, _, expected ->
+        TableReconstructor.fromRulings(rules, lines, cellReader = CellReader { _, words, _, expected, _ ->
             asked += words.joinToString(" ") { it.text } to expected; null
         })
         assertEquals(Script.ARABIC, asked.first { it.first == "sal" }.second)
         assertEquals(Script.LATIN, asked.first { it.first == "اروم" }.second)
+    }
+
+    @Test
+    fun arabicLabelReadAsDigits_losesToTheArabicModel_inAnArabicColumn() {
+        // Run #70: "ب1" in an Arabic table was read "15" by the page, digits and Latin models.
+        assertEquals(listOf(OcrConfig.NUMERIC, OcrConfig.ARABIC), OcrRouting.plan("15", Script.ARABIC, numericOnly = true))
+        val e = CandidateEvaluator.evaluate(listOf(
+            c("15", 0.80f, "page"), c("15", 0.85f, "numeric", Script.NUMERIC), c("ب1", 0.82f, "ara", Script.ARABIC)
+        ), expected = Script.ARABIC, numericExpected = true)
+        assertEquals("ب1", e.chosen!!.text)
+        // A real number in an Arabic table keeps its digits: every model reads them alike.
+        val n = CandidateEvaluator.evaluate(listOf(
+            c("120", 0.9f, "page"), c("120", 0.9f, "numeric", Script.NUMERIC), c("120", 0.85f, "ara", Script.ARABIC)
+        ), expected = Script.ARABIC, numericExpected = true)
+        assertEquals("120", n.chosen!!.text)
+        assertFalse(n.needsReview)
+    }
+
+    @Test
+    fun columnPattern_breaksACaseTie() {
+        // Run #69/#70: "P1" read "p1" while the same column holds "P2".
+        assertEquals("Ad", CandidateEvaluator.shape("P1"))
+        val e = CandidateEvaluator.evaluate(listOf(c("p1", 0.86f, "fra", Script.LATIN), c("P1", 0.84f, "page")),
+            expected = Script.LATIN, context = listOf("Puits", "P2"))
+        assertEquals("P1", e.chosen!!.text)
+    }
+
+    @Test
+    fun tableCells_getTheScriptOfTheirColumn_whenTheRowHasOnlyNumbers() {
+        fun w(t: String) = TextWord(t, Box(0f, 0f, 10f, 10f), 0.9f)
+        val script = TableReconstructor.expectedScript(listOf(listOf(w("120")), listOf(w("35"))), listOf(w("120")), listOf(listOf(w("البئر"))))
+        assertEquals(Script.ARABIC, script)
     }
 }

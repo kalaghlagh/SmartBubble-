@@ -100,6 +100,14 @@ object CandidateEvaluator {
         m.value.map { c -> when (c) { in '٠'..'٩' -> '0' + (c - '٠'); in '۰'..'۹' -> '0' + (c - '۰'); else -> c } }.joinToString("")
     }.toList()
 
+    /** Pattern of a short text: capital, small letter, digit, other ("P1" gives "Ad"); empty for long texts. */
+    fun shape(text: String): String {
+        val t = text.filter { !it.isWhitespace() }
+        if (t.isEmpty() || t.length > 12) return ""
+        return t.map { c -> when { c.isDigit() -> 'd'; c.isUpperCase() -> 'A'; c.isLowerCase() -> 'a'; c.isLetter() -> 'L'; else -> c } }
+            .joinToString("").replace(Regex("d+"), "d").replace(Regex("a+"), "a").replace(Regex("L+"), "L")
+    }
+
     private fun similarity(a: String, b: String): Double {
         val x = a.lowercase().filter { !it.isWhitespace() }
         val y = b.lowercase().filter { !it.isWhitespace() }
@@ -112,11 +120,28 @@ object CandidateEvaluator {
      * Picks the reading of a region. [expected] is the script the region's context expects
      * (null when unknown); [numericExpected] marks a region that should hold a number.
      */
-    fun evaluate(candidates: List<RecognitionCandidate>, expected: Script? = null, numericExpected: Boolean = false): Evaluation {
+    fun evaluate(
+        candidates: List<RecognitionCandidate>,
+        expected: Script? = null,
+        numericExpected: Boolean = false,
+        /** Texts of neighbouring regions of the same kind (the other cells of a table column). */
+        context: List<String> = emptyList()
+    ): Evaluation {
         val usable = candidates.filter { it.text.isNotBlank() }
         if (usable.isEmpty()) return Evaluation(null, 0.0, needsReview = true, reasons = listOf("no_text"))
-        // Numbers: the digit groups most readings agree on.
-        val numberVotes = usable.map { numbers(it.text).joinToString("|") }.groupingBy { it }.eachCount()
+        // Only readings by configurations able to read the expected script vote on numbers: a
+        // digits-only or Latin model agreeing on "15" does not confirm it against the Arabic
+        // model's "ب1".
+        fun canRead(c: RecognitionCandidate) = c.engineScript == null || expected == null || expected == Script.MIXED || expected == Script.UNKNOWN ||
+            c.engineScript == expected || (expected == Script.LATIN && c.engineScript == Script.NUMERIC) || expected == Script.NUMERIC
+        val voters = usable.filter { canRead(it) }
+        val numberVotes = voters.map { numbers(it.text).joinToString("|") }.groupingBy { it }.eachCount()
+        // Letters of the expected script found by that script's own model with good confidence:
+        // digit-only readings of the same region by other models replaced them.
+        val scriptLetters = expected == Script.ARABIC && usable.any { it.engineScript == Script.ARABIC && (it.confidence ?: 0f) >= 0.7f &&
+            ScriptDetector.count(it.text).arabic > 0 } ||
+            expected == Script.LATIN && usable.any { it.engineScript == Script.LATIN && (it.confidence ?: 0f) >= 0.7f && ScriptDetector.count(it.text).latin > 0 }
+        val shapes = context.map { shape(it) }.filter { it.isNotEmpty() }
         val agreedNumbers = numberVotes.filter { it.value >= 2 }.maxByOrNull { it.value }?.key
         val scored = usable.map { c ->
             val script = ScriptDetector.classify(c.text)
@@ -132,6 +157,9 @@ object CandidateEvaluator {
             // A configuration that reads one script producing the other script is guessing.
             if (c.engineScript == Script.ARABIC && script == Script.LATIN || c.engineScript == Script.LATIN && script == Script.ARABIC) s -= 0.3
             if (numericExpected && !OcrRouting.isNumeric(c.text) && c.text.count { it.isLetter() } > 2) s -= 0.3
+            if (scriptLetters && OcrRouting.isNumeric(c.text) && c.text.none { it.isLetter() }) { s -= 0.3; reasons += "letters_read_as_digits" }
+            // Same pattern of capitals, small letters and digits as the other cells of the column ("P1" beside "P2").
+            if (shapes.isNotEmpty() && shape(c.text) in shapes) s += 0.1
             // Agreement with the other readings.
             val others = usable.filter { it !== c }
             if (others.isNotEmpty()) s += 0.2 * others.maxOf { similarity(c.text, it.text) }
@@ -146,7 +174,7 @@ object CandidateEvaluator {
         if (plausibility(best.text) < 0.5) review += "implausible"
         if (margin < 0.05 && scored.size > 1 && similarity(best.text, scored[1].first.text) < 0.8) review += "close_alternatives"
         val bestNums = numbers(best.text).joinToString("|")
-        if (bestNums.isNotEmpty() && usable.size > 1 && numberVotes[bestNums] == 1 && numberVotes.size > 1) review += "number_unconfirmed"
+        if (bestNums.isNotEmpty() && voters.size > 1 && (numberVotes[bestNums] ?: 0) <= 1 && numberVotes.size > 1) review += "number_unconfirmed"
         return Evaluation(best, score, needsReview = review.isNotEmpty(), reasons = review)
     }
 }

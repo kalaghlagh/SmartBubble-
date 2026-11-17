@@ -48,12 +48,15 @@ class OcrPageReader(private val engines: OcrEngineRegistry) {
         return Bitmap.createBitmap(page, l, t, r - l, b - t) to intArrayOf(l, t)
     }
 
-    /** One region read by [config] (whole words: margins of a line height around the box). */
-    private fun readRegion(config: OcrConfig, page: Bitmap, box: Box, mode: Segmentation, margin: Boolean = true): RecognitionCandidate? {
+    /**
+     * One region read by [config] (whole words: margins of a line height around the box, and
+     * [vMargin] above and below, a third of the height by default).
+     */
+    private fun readRegion(config: OcrConfig, page: Bitmap, box: Box, mode: Segmentation, vMargin: Float? = null): RecognitionCandidate? {
         val engine = engines.get(config) ?: return null
         val h = box.height.coerceAtLeast(8f)
-        val cropped = if (margin) crop(page, box.left - h, box.top - h * 0.35f, box.right + h, box.bottom + h * 0.35f)
-        else crop(page, box.left, box.top, box.right, box.bottom)
+        val v = vMargin ?: (h * 0.35f)
+        val cropped = crop(page, box.left - h, box.top - v, box.right + h, box.bottom + v)
         val (img, origin) = cropped ?: return null
         return try {
             val got = engine.lines(img, mode, origin[0], origin[1], config.languages)
@@ -83,12 +86,16 @@ class OcrPageReader(private val engines: OcrEngineRegistry) {
         val conf = line.confidence ?: 0f
         // A confident line already in the script its context shows, read Arabic-first when
         // Arabic, is kept as is (fewer recognitions on long documents).
-        val settled = conf >= 0.88f && expected != null && script == expected && !ScriptDetector.suspiciousLatinInArabic(line) &&
+        // Every word must be confident too: one weak word ("2890" for an Arabic word) is enough
+        // to read the line again.
+        val weakest = line.words.minOfOrNull { it.confidence ?: 0f } ?: 0f
+        val settled = conf >= 0.88f && weakest >= 0.75f && expected != null && script == expected && !ScriptDetector.suspiciousLatinInArabic(line) &&
             (script != Script.ARABIC || engines.pageArabicFirst)
         if (settled) return line.copy(engines = listOf("page"))
         val configs = OcrRouting.plan(line.text, expected, OcrRouting.isNumeric(line.text))
         val candidates = listOf(pageCandidate(line)) + configs.mapNotNull { readRegion(it, page, line.box, Segmentation.LINE) }
         val e = CandidateEvaluator.evaluate(candidates, expected, OcrRouting.isNumeric(line.text))
+        trace { "line expected=$expected candidates=${candidates.map { "${it.engine}:${it.confidence}:${it.text}" }} chosen=${e.chosen?.engine} review=${e.reasons}" }
         val chosen = e.chosen ?: return line.copy(needsReview = true, engines = candidates.map { it.engine })
         val base = chosen.lines.firstOrNull() ?: line
         return base.copy(needsReview = e.needsReview, engines = candidates.map { it.engine }, source = chosen.engine.takeIf { it != "page" })
@@ -99,7 +106,7 @@ class OcrPageReader(private val engines: OcrEngineRegistry) {
      * page reading found there. Bordered cells are read inside their borders; cells of tables
      * without borders get a margin around their words so no letter is cut.
      */
-    private fun readCell(page: Bitmap, box: Box, words: List<TextWord>, bordered: Boolean, expected: Script?): TableCell? {
+    private fun readCell(page: Bitmap, box: Box, words: List<TextWord>, bordered: Boolean, expected: Script?, column: List<String>): TableCell? {
         val pageText = words.joinToString(" ") { it.text }
         val pageConf = words.mapNotNull { it.confidence }.takeIf { it.isNotEmpty() }?.average()?.toFloat()
         val numeric = OcrRouting.isNumeric(pageText)
@@ -117,23 +124,34 @@ class OcrPageReader(private val engines: OcrEngineRegistry) {
                 img.recycle()
             }
         }
-        val e = CandidateEvaluator.evaluate(candidates, expected, numeric)
+        val e = CandidateEvaluator.evaluate(candidates, expected, numeric, column)
+        trace { "cell expected=$expected column=$column candidates=${candidates.map { "${it.engine}:${it.confidence}:${it.text}" }} chosen=${e.chosen?.text} review=${e.reasons}" }
         val chosen = e.chosen ?: return null
         return TableCell(chosen.text, confidence = chosen.confidence, needsReview = e.needsReview)
     }
 
-    /** A row of the image no line covers, read by every configuration and checked. */
-    private fun recoverBand(page: Bitmap, g: IntArray, band: IntRange, existing: List<TextLine>): TextLine? {
+    /**
+     * A row of the image no line covers, read by every configuration and checked. The crop keeps
+     * only a few pixels above and below the row so that the neighbouring lines (list items set
+     * close together) are not read with it. [blockLines] are the lines of a whole-page reading
+     * in uniform-block mode, which does not drop short lines.
+     */
+    private fun recoverBand(page: Bitmap, g: IntArray, band: IntRange, existing: List<TextLine>, blockLines: List<TextLine>): TextLine? {
         // Horizontal extent of the ink in the band (not the whole page width).
         var minX = page.width
         var maxX = 0
         for (y in band) for (x in 0 until page.width) if (g[y * page.width + x] < 110) { if (x < minX) minX = x; if (x > maxX) maxX = x }
         if (maxX <= minX) return null
         val box = Box(minX.toFloat(), band.first.toFloat(), maxX.toFloat(), band.last.toFloat())
-        val candidates = listOf(OcrConfig.PAGE, OcrConfig.ARABIC, OcrConfig.LATIN).flatMap { c ->
-            listOfNotNull(readRegion(c, page, box, Segmentation.LINE), readRegion(c, page, box, Segmentation.BLOCK))
+        val bandBox = Box(0f, band.first.toFloat(), page.width.toFloat(), band.last.toFloat())
+        val fromBlock = blockLines.filter { it.box.verticalOverlap(bandBox) > 0.5f }.map {
+            RecognitionCandidate(it.text, it.confidence, "page-block", null, listOf(it))
+        }
+        val candidates = fromBlock + listOf(OcrConfig.PAGE, OcrConfig.ARABIC, OcrConfig.LATIN).flatMap { c ->
+            listOfNotNull(readRegion(c, page, box, Segmentation.LINE, vMargin = 4f), readRegion(c, page, box, Segmentation.BLOCK, vMargin = 4f))
         }
         val e = CandidateEvaluator.evaluate(candidates, expected = null)
+        trace { "band ${band.first}-${band.last} candidates=${candidates.map { "${it.engine}:${it.confidence}:${it.text}" }} chosen=${e.chosen?.text} review=${e.reasons}" }
         val chosen = e.chosen ?: return null
         val line = chosen.lines.firstOrNull() ?: return null
         val plausible = CandidateEvaluator.plausibility(line.text) >= 0.6
@@ -172,6 +190,7 @@ class OcrPageReader(private val engines: OcrEngineRegistry) {
             currentCoroutineContext().ensureActive()
             // B. Layout pass.
             var lines = pageEngine.lines(page, Segmentation.PAGE)
+            trace { "page lines=${lines.map { "${it.box.top.toInt()}-${it.box.bottom.toInt()}:${it.confidence}:${it.text}" }}" }
             if (OcrPreprocessor.isWeak(lines.joinToString(" ") { it.text }, mean(lines) ?: 0f)) {
                 for (deg in listOf(90, 270, 180)) {
                     currentCoroutineContext().ensureActive()
@@ -197,10 +216,18 @@ class OcrPageReader(private val engines: OcrEngineRegistry) {
             val g = gray(page)
             val allBands = OcrPreprocessor.textLineBands(page)
             val missed = OcrDecisions.missedBands(allBands, lines.map { it.box })
+            trace { "bands=${allBands.map { "${it.first}-${it.last}" }} missed=${missed.map { "${it.first}-${it.last}" }}" }
+            // One reading of the whole page as a uniform block (short lines are not dropped), by
+            // the Arabic model on Arabic pages, only when rows were missed.
+            val blockLines = if (missed.isEmpty()) emptyList() else {
+                val arabicPage = ScriptDetector.classify(lines.joinToString(" ") { it.text }) == Script.ARABIC
+                val engine = (if (arabicPage) engines.get(OcrConfig.ARABIC) else null) ?: pageEngine
+                engine.lines(page, Segmentation.BLOCK)
+            }
             var recovered = 0
             for (band in missed) {
                 currentCoroutineContext().ensureActive()
-                val line = recoverBand(page, g, band, lines) ?: continue
+                val line = recoverBand(page, g, band, lines, blockLines) ?: continue
                 lines = lines.toMutableList().apply { add(OcrDecisions.insertionIndex(this, line.box.top), line) }
                 recovered++
             }
@@ -212,7 +239,7 @@ class OcrPageReader(private val engines: OcrEngineRegistry) {
             // Structure, with table cells read in the script of their row.
             val rulings = TableReconstructor.detectRulings(g, page.width, page.height)
             val blocks = LayoutAnalyzer.analyze(lines, page.width.toFloat(), page.height.toFloat(), rulings,
-                CellReader { box, ws, bordered, expected -> readCell(page, box, ws, bordered, expected) })
+                CellReader { box, ws, bordered, expected, column -> readCell(page, box, ws, bordered, expected, column) })
             lap("structure")
             if (blocks.any { it is ExtractedBlock.Table && it.uncertain }) notes += "table_uncertain"
             val words = lines.flatMap { it.words }
@@ -235,5 +262,15 @@ class OcrPageReader(private val engines: OcrEngineRegistry) {
         }
     }
 
-    private companion object { const val TAG = "OcrPageReader" }
+    private fun trace(message: () -> String) { trace?.invoke(message()) }
+
+    companion object {
+        private const val TAG = "OcrPageReader"
+
+        /**
+         * Receives the readings considered for each line, row and cell, for the device tests'
+         * reports only. Null in the app: page text is never logged.
+         */
+        @Volatile var trace: ((String) -> Unit)? = null
+    }
 }

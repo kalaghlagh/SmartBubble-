@@ -61,7 +61,10 @@ object OcrRouting {
     fun plan(hint: String, expected: Script?, numericOnly: Boolean = false): List<OcrConfig> {
         if (numericOnly) {
             val easternDigits = hint.any { it in '٠'..'٩' || it in '۰'..'۹' }
-            return if (easternDigits) listOf(OcrConfig.ARABIC) else listOf(OcrConfig.NUMERIC, OcrConfig.LATIN)
+            if (easternDigits) return listOf(OcrConfig.ARABIC)
+            // A cell read as digits in an Arabic column may be an Arabic label ("ب1" read "15"):
+            // the Arabic model reads it too.
+            return if (expected == Script.ARABIC) listOf(OcrConfig.NUMERIC, OcrConfig.ARABIC) else listOf(OcrConfig.NUMERIC, OcrConfig.LATIN)
         }
         val script = when {
             expected == Script.ARABIC || expected == Script.LATIN -> expected

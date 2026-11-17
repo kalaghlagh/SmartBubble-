@@ -44,6 +44,49 @@ object LayoutAnalyzer {
         if (words.isEmpty()) null else l.copy(words = words, box = Box.of(words.map { it.box }) ?: l.box)
     }
 
+    /**
+     * Two columns of running text read as single lines across the gutter: each such line is
+     * split at the gutter and the page is put in reading order, the whole first column then the
+     * second (the right one first for Arabic). Lines of one column only next to the run (a column
+     * ending lower than the other) belong to it. Table rows (short cells) are left alone.
+     */
+    fun splitColumns(lines: List<TextLine>): List<TextLine> {
+        val segs = lines.map { TableReconstructor.segments(it) }
+        fun prose(s: List<List<TextWord>>) = s.size == 2 && s.all { it.size >= 3 }
+        val out = ArrayList<TextLine>()
+        var i = 0
+        while (i < lines.size) {
+            if (!prose(segs[i])) { out += lines[i]; i++; continue }
+            var gl = segs[i][0].maxOf { it.box.right }
+            var gr = segs[i][1].minOf { it.box.left }
+            var j = i
+            while (j + 1 < lines.size && prose(segs[j + 1])) {
+                val l = segs[j + 1][0].maxOf { it.box.right }
+                val r = segs[j + 1][1].minOf { it.box.left }
+                if (r <= gl || l >= gr) break
+                gl = maxOf(gl, l); gr = minOf(gr, r); j++
+            }
+            if (j == i) { out += lines[i]; i++; continue }
+            val left = ArrayList<List<TextWord>>()
+            val right = ArrayList<List<TextWord>>()
+            for (k in i..j) { left += segs[k][0]; right += segs[k][1] }
+            // A column that ends lower: the next lines lying on one side of the gutter only.
+            var k = j
+            while (k + 1 < lines.size && lines[k + 1].box.top - lines[k].box.bottom < lines[k].box.height &&
+                (lines[k + 1].box.right <= gr || lines[k + 1].box.left >= gl)) {
+                k++
+                if (lines[k].box.right <= gr) left += lines[k].words else right += lines[k].words
+            }
+            fun line(ws: List<TextWord>) = TextLine(ws, Box.of(ws.map { it.box })!!, source = lines[i].source)
+            val rtl = ScriptDetector.isRtl(lines.subList(i, k + 1).joinToString(" ") { it.text })
+            val first = (if (rtl) right else left).map { line(it) }.sortedBy { it.box.top }
+            val second = (if (rtl) left else right).map { line(it) }.sortedBy { it.box.top }
+            out += first; out += second
+            i = k + 1
+        }
+        return out
+    }
+
     fun analyze(
         rawLines: List<TextLine>,
         pageWidth: Float,
@@ -52,7 +95,7 @@ object LayoutAnalyzer {
         /** Reads the text inside a table cell on its own (OCR), or null to use the page words. */
         cellReader: CellReader? = null
     ): List<ExtractedBlock> {
-        val lines = clean(rawLines)
+        val lines = splitColumns(clean(rawLines))
         if (lines.isEmpty()) return emptyList()
         val lineH = median(lines.map { it.box.height }).coerceAtLeast(1f)
         val fontSize = median(lines.mapNotNull { it.fontSize })
@@ -130,10 +173,13 @@ object LayoutAnalyzer {
             val cur = para
             if (cur != null) {
                 val last = cur.last()
-                val indented = if (rtl) textRight - line.box.right > lineH * 1.2f else line.box.left - textLeft > lineH * 1.2f
+                // Indented against the previous line (columns do not start at the page margin).
+                val indented = if (rtl) last.box.right - line.box.right > lineH * 1.2f else line.box.left - last.box.left > lineH * 1.2f
+                // The next column starts higher up the page.
+                val newColumn = gapBefore < -lineH
                 val lastShort = last.box.width < textWidth * 0.7f && last.text.trimEnd().lastOrNull()?.let { it in ".!?:؟。" } == true
                 val sameDir = last.rtl == rtl
-                if (gapBefore > lineH * 0.75f || !sameDir || indented || lastShort) flush()
+                if (gapBefore > lineH * 0.75f || !sameDir || indented || lastShort || newColumn) flush()
             }
             (para ?: mutableListOf<TextLine>().also { para = it }) += line
         }

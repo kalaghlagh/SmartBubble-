@@ -27,6 +27,8 @@ import com.example.ocr.OcrLanguage
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -49,6 +51,11 @@ class ExtractionDeviceTest {
     private val context: Context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val dir: File by lazy { File(context.getExternalFilesDir(null), "extraction-device").apply { mkdirs() } }
     private val engine by lazy { DocumentExtractionEngine(context) }
+
+    @Before fun traceOn() {
+        com.example.extraction.OcrPageReader.trace = { InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply { putString("extraction_result", "TRACE " + it.take(1500)) }) }
+    }
+    @After fun traceOff() { com.example.extraction.OcrPageReader.trace = null }
 
     private fun report(case: String, doc: ExtractedDocument, extra: String = "") {
         val pages = doc.pages.joinToString(" || ") { p ->
