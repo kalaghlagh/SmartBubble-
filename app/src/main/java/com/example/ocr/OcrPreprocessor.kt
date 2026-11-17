@@ -81,6 +81,13 @@ object OcrPreprocessor {
      */
     fun score(text: String, confidence: Float): Double = confidence.toDouble() * text.count { it.isLetter() }
 
+    /** Share of the letters of [text] that are Arabic. */
+    fun arabicShare(text: String): Double {
+        val letters = text.filter { it.isLetter() }
+        if (letters.isEmpty()) return 0.0
+        return letters.count { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }.toDouble() / letters.length
+    }
+
     /** A result too weak to trust the page's orientation (another rotation is tried). */
     fun isWeak(text: String, confidence: Float): Boolean = confidence < 0.55f || text.count { it.isLetter() } < 15
 }

@@ -48,6 +48,14 @@ class OcrPreprocessorTest {
     }
 
     @Test
+    fun arabicShare_decidesTheArabicFirstPass() {
+        assertTrue(OcrPreprocessor.arabicShare("المياه الجوفية مصدر أساسي") > 0.9)
+        assertTrue(OcrPreprocessor.arabicShare("Les eaux souterraines") == 0.0)
+        assertTrue(OcrPreprocessor.arabicShare("المياه الجوفية eau") > 0.3)
+        assertEquals(0.0, OcrPreprocessor.arabicShare("123 ..."), 0.0)
+    }
+
+    @Test
     fun weakResults_triggerAnotherOrientation() {
         assertTrue(OcrPreprocessor.isWeak("", 0.9f))
         assertTrue(OcrPreprocessor.isWeak("x.;- ,", 0.2f))
