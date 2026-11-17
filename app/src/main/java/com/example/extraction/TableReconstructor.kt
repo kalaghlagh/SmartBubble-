@@ -7,6 +7,13 @@ data class Ruling(val horizontal: Boolean, val position: Float, val start: Float
     val length: Float get() = end - start
 }
 
+/**
+ * Reads a table cell again on its own (OCR): [box] is the cell inside its borders ([bordered])
+ * or the words' own box, [words] what the page reading found there. Returns a better text, or
+ * null to keep the page reading.
+ */
+fun interface CellReader { fun read(box: Box, words: List<TextWord>, bordered: Boolean): String? }
+
 /** A table found on a page and the lines whose words went into it. */
 data class FoundTable(val table: ExtractedBlock.Table, val region: Box, val consumedLines: Set<Int>)
 
@@ -32,7 +39,7 @@ object TableReconstructor {
      * Tables drawn with borders: groups of at least two horizontal and two vertical rules that
      * cross. A vertical rule missing over a row merges the cells it would have separated.
      */
-    fun fromRulings(rulings: List<Ruling>, lines: List<TextLine>, tolerance: Float = 4f, cellReader: ((Box) -> String?)? = null): List<FoundTable> {
+    fun fromRulings(rulings: List<Ruling>, lines: List<TextLine>, tolerance: Float = 4f, cellReader: CellReader? = null): List<FoundTable> {
         val hs = rulings.filter { it.horizontal && it.length > 0 }
         val vs = rulings.filter { !it.horizontal && it.length > 0 }
         if (hs.size < 2 || vs.size < 2) return emptyList()
@@ -75,7 +82,7 @@ object TableReconstructor {
                     val inCell = words.filter { it.box.centerX in l..rgt && it.box.centerY in top..bottom }
                     // A cell read on its own (inside its borders) is more reliable than words cut
                     // from page lines that run across the borders; the page words are the fallback.
-                    val own = cellReader?.invoke(Box(l, top, rgt, bottom))?.trim()?.trim('|', '[', ']')?.trim()
+                    val own = cellReader?.read(Box(l, top, rgt, bottom), inCell, true)?.trim()?.trim('|', '[', ']')?.trim()
                     cells += TableCell(own?.takeIf { it.isNotEmpty() } ?: cellText(inCell, rtl), span)
                 }
                 rows += if (rtl) cells.reversed() else cells
@@ -128,7 +135,7 @@ object TableReconstructor {
      * Borderless tables: runs of at least two consecutive lines that split into aligned columns.
      * Two wide columns of running text (a two-column page) are not a table.
      */
-    fun fromLayout(lines: List<TextLine>, skip: Set<Int> = emptySet(), cellReader: ((Box) -> String?)? = null): List<FoundTable> {
+    fun fromLayout(lines: List<TextLine>, skip: Set<Int> = emptySet(), cellReader: CellReader? = null): List<FoundTable> {
         val segs = lines.map { segments(it) }
         val out = ArrayList<FoundTable>()
         var i = 0
@@ -143,7 +150,7 @@ object TableReconstructor {
         return out
     }
 
-    private fun build(lines: List<TextLine>, segs: List<List<List<TextWord>>>, range: IntRange, cellReader: ((Box) -> String?)?): FoundTable? {
+    private fun build(lines: List<TextLine>, segs: List<List<List<TextWord>>>, range: IntRange, cellReader: CellReader?): FoundTable? {
         val rowSegs = range.map { r -> segs[r].map { s -> Box.of(s.map { it.box })!! to s } }
         // Column ranges: overlapping cell spans across all rows merged.
         val spans = rowSegs.flatten().map { it.first.left to it.first.right }.sortedBy { it.first }
@@ -168,7 +175,7 @@ object TableReconstructor {
                 val seg = segsOfRow.firstOrNull { (b, _) -> b.left <= col[1] && b.right >= col[0] }
                 if (seg == null) { cells += TableCell(""); c++; continue }
                 val covered = columns.count { b -> seg.first.left <= b[1] && seg.first.right >= b[0] }.coerceAtLeast(1)
-                val own = cellReader?.invoke(seg.first)?.trim()?.trim('|')?.trim()
+                val own = cellReader?.read(seg.first, seg.second, false)?.trim()?.trim('|')?.trim()
                 cells += TableCell(own?.takeIf { it.isNotEmpty() } ?: cellText(seg.second, rtl), covered)
                 c += covered
             }

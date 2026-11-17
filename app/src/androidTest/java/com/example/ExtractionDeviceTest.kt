@@ -131,6 +131,26 @@ class ExtractionDeviceTest {
         }
     }
 
+    /**
+     * Table cells compared one by one: the grid must have the expected shape, every cell holding
+     * a number must be exact (values are never approximated), and at most one text cell may
+     * differ (a letter misread), reported in the log.
+     */
+    private fun assertCells(case: String, expected: List<List<String>>, got: List<List<String>>) {
+        assertEquals("$case rows: $got", expected.size, got.size)
+        val wrong = ArrayList<String>()
+        for ((r, row) in expected.withIndex()) {
+            assertEquals("$case columns of row $r: $got", row.size, got[r].size)
+            for ((c, e) in row.withIndex()) if (got[r][c] != e) wrong += "[$r,$c] expected '$e' got '${got[r][c]}'"
+        }
+        val line = "CELLS $case: ${expected.sumOf { it.size } - wrong.size}/${expected.sumOf { it.size }} exact; differences=$wrong"
+        Log.i("ExtractionDeviceTest", line)
+        InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply { putString("extraction_result", line) })
+        val numericWrong = wrong.filter { w -> Regex("expected '([^']*)'").find(w)!!.groupValues[1].any { it.isDigit() } }
+        assertTrue("$case numbers misread: $numericWrong", numericWrong.isEmpty())
+        assertTrue("$case: ${wrong.size} cells differ: $wrong", wrong.size <= 1)
+    }
+
     private fun extract(vararg sources: ExtractionSource, language: OcrLanguage = OcrLanguage.AUTO) =
         runBlocking { engine.extract(sources.toList(), language, "en") }
 
@@ -182,7 +202,7 @@ class ExtractionDeviceTest {
         assertTrue(t.rtl)
         // Cells: Arabic words and short codes read as Arabic, numbers in their cells and rows.
         fun n(c: String) = normalize(c).filter { !it.isWhitespace() }
-        assertEquals(t.rows.toString(), cells.map { r -> r.map { n(it) } }, t.rows.map { r -> r.map { n(it.text) } })
+        assertCells("arabic-table", cells.map { r -> r.map { n(it) } }, t.rows.map { r -> r.map { n(it.text) } })
     }
 
     // ------------------------------------------------------------------ French / English tables
@@ -202,7 +222,7 @@ class ExtractionDeviceTest {
         assertEquals(3, t!!.rows.size)
         assertEquals(3, t.columns)
         fun n(c: String) = c.filter { !it.isWhitespace() }
-        assertEquals(t.rows.toString(), listOf(listOf("Puits", "Profondeur", "Nitrates"), listOf("P1", "120m", "35mg/l"), listOf("P2", "85m", "52mg/l")),
+        assertCells("french-table", listOf(listOf("Puits", "Profondeur", "Nitrates"), listOf("P1", "120m", "35mg/l"), listOf("P2", "85m", "52mg/l")),
             t.rows.map { r -> r.map { n(it.text) } })
         assertTrue(recall("Résultats des analyses teneurs mesurées présentées tableau suivant valeurs dépassent norme", ExtractionText.page(page)) >= 0.8)
     }

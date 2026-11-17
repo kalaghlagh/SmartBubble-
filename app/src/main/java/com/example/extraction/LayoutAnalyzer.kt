@@ -36,7 +36,7 @@ object LayoutAnalyzer {
         pageHeight: Float,
         rulings: List<Ruling> = emptyList(),
         /** Reads the text inside a table cell on its own (OCR), or null to use the page words. */
-        cellReader: ((Box) -> String?)? = null
+        cellReader: CellReader? = null
     ): List<ExtractedBlock> {
         val lines = clean(rawLines)
         if (lines.isEmpty()) return emptyList()

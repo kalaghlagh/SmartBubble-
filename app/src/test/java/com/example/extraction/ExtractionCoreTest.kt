@@ -289,4 +289,39 @@ class ExtractionCoreTest {
         assertTrue(text, text.contains("Monthly report"))
         assertTrue(text, text.contains("The measurements of March."))
     }
+
+    @Test
+    fun cidFontWithoutWidths_oneGlyphPerRun_wordsStillSeparated() {
+        // A Type0 font with a character map but no /W or /DW: every glyph is assumed 1000 units
+        // wide, so the runs overlap; real advances (Roboto-like) with spaces between words.
+        val chars = "MonthlyrepTsauIdci."
+        val pdf = TestPdf()
+        val cmap = buildString {
+            append("/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n1 begincodespacerange <0000> <FFFF> endcodespacerange\n")
+            append("${chars.length} beginbfchar\n")
+            chars.forEachIndexed { i, c -> append(String.format("<%04X> <%04X>\n", i + 1, c.code)) }
+            append("endbfchar\nendcmap CMapName currentdict /CMap defineresource pop end end\n")
+        }
+        val toUnicode = pdf.stream("", cmap.toByteArray(Charsets.ISO_8859_1))
+        val desc = pdf.add("<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+Roboto-Regular /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>")
+        val font = pdf.add("<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+Roboto-Regular /Encoding /Identity-H /DescendantFonts [$desc 0 R] /ToUnicode $toUnicode 0 R >>")
+        val adv = mapOf('M' to 10.4, 'o' to 6.8, 'n' to 6.6, 't' to 4.0, 'h' to 6.6, 'l' to 2.9, 'y' to 5.8, 'r' to 4.1, 'e' to 6.4, 'p' to 6.7,
+            'T' to 7.3, 's' to 6.2, 'a' to 6.5, 'u' to 6.6, 'I' to 2.9, 'd' to 6.7, 'c' to 6.3, 'i' to 2.8, '.' to 3.1)
+        val c = StringBuilder()
+        fun glyphs(text: String, y: Int) {
+            var x = 60.0
+            for (ch in text) {
+                if (ch == ' ') { x += 3.0; continue }
+                c.append("BT /F9 12 Tf $x $y Td <${String.format("%04X", chars.indexOf(ch) + 1)}> Tj ET\n")
+                x += adv.getValue(ch)
+            }
+        }
+        glyphs("Monthly report", 760)
+        glyphs("This is a reported study.", 740)
+        pdf.page(c.toString(), extraFonts = mapOf("F9" to font))
+        val reader = PdfDocumentReader.open(pdf.build())
+        val text = ExtractionText.page(PdfTextExtraction.page(0, PdfContentScanner(reader).scan(reader.pages().single())))
+        assertTrue(text, text.contains("Monthly report"))
+        assertTrue(text, text.contains("This is a reported study."))
+    }
 }

@@ -52,6 +52,33 @@ object PdfTextExtraction {
         return parts.reversed().joinToString("")
     }
 
+    /** Helvetica advance widths (1/1000 em) of ASCII characters, for runs whose font has no widths. */
+    private val HELVETICA: Map<Char, Int> = run {
+        val m = HashMap<Char, Int>()
+        val table = " 278!278\"355#556$556%889&667'191(333)333*389+584,278-333.278/278:278;278<584=584>584?556@1015[278\\278]278^469_556`333"
+        var i = 0
+        while (i < table.length) {
+            val c = table[i]; i++
+            val start = i
+            while (i < table.length && table[i].isDigit()) i++
+            m[c] = table.substring(start, i).toInt()
+        }
+        for (c in '0'..'9') m[c] = 556
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ".toList().zip(listOf(667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611)).forEach { (c, w) -> m[c] = w }
+        "abcdefghijklmnopqrstuvwxyz".toList().zip(listOf(556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500)).forEach { (c, w) -> m[c] = w }
+        m
+    }
+
+    /**
+     * Width of [text] at [fontSize] when the font gave none (the reader then assumes 1000 units
+     * per glyph, as wide as the font size, and words could not be told apart): standard Latin
+     * metrics, an average width for other characters.
+     */
+    private fun estimatedWidth(text: String, fontSize: Double): Double = text.sumOf { ch ->
+        val base = Normalizer.normalize(ch.toString(), Normalizer.Form.NFD).firstOrNull() ?: ch
+        (HELVETICA[base] ?: 556).toDouble()
+    } * fontSize / 1000.0
+
     /** A piece of a run between spaces, in page coordinates (y downwards). */
     private class Piece(val text: String, val box: Box, val run: com.example.template.pdf.PdfTextRun, val spaceBefore: Boolean)
 
@@ -69,6 +96,8 @@ object PdfTextExtraction {
             val bottom = (scan.height - r.y + r.fontSize * 0.2).toFloat()
             val total = text.length.coerceAtLeast(1)
             val rtl = ScriptDetector.isRtl(text)
+            // Widths of 0.95 em per glyph or more mean the font had no widths (1000 units assumed).
+            val runWidth = if (!rtl && r.width >= r.fontSize * 0.95 * text.count { !it.isWhitespace() }) estimatedWidth(text, r.fontSize) else r.width
             // Segments between spaces with their character positions (visual left-to-right for boxes).
             var i = 0
             while (i < text.length) {
@@ -76,8 +105,8 @@ object PdfTextExtraction {
                 val start = i
                 while (i < text.length && !text[i].isWhitespace()) i++
                 val (a, b) = if (rtl) (total - i) to (total - start) else start to i
-                val x0 = r.x + r.width * a / total
-                val x1 = r.x + r.width * b / total
+                val x0 = r.x + runWidth * a / total
+                val x1 = r.x + runWidth * b / total
                 pieces += Piece(text.substring(start, i), Box(x0.toFloat(), top, x1.toFloat(), bottom), r, spaceBefore = start > 0)
             }
         }

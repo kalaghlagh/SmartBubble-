@@ -121,23 +121,31 @@ class OcrPageReader(
     }
 
     /**
-     * One table cell read inside its borders, by the page model and by the Arabic and the Latin
-     * models alone; the reading with the highest confidence is kept (a short Arabic word read by
-     * the Latin model, or "mg/l" read by the Arabic one, comes out with a low confidence).
+     * One table cell read on its own by the page model and by the Arabic and the Latin models
+     * alone. The new reading replaces what the page reading found there only when it is clearly
+     * more confident (a short Arabic word read "sal" by the Latin model, "mg/l" read as Arabic
+     * letters). Bordered cells are read inside their borders; cells of tables without borders
+     * get a margin around their words so no letter is cut.
      */
-    private fun readCell(page: Bitmap, box: Box): String? {
-        val inset = 5
-        val left = (box.left + inset).toInt().coerceAtLeast(0)
-        val top = (box.top + inset).toInt().coerceAtLeast(0)
-        val right = (box.right - inset).toInt().coerceAtMost(page.width)
-        val bottom = (box.bottom - inset).toInt().coerceAtMost(page.height)
-        if (right - left < 8 || bottom - top < 8) return null
-        val crop = Bitmap.createBitmap(page, left, top, right - left, bottom - top)
+    private fun readCell(page: Bitmap, box: Box, words: List<TextWord>, bordered: Boolean): String? {
+        val h = box.height.coerceAtLeast(8f)
+        val edges: List<Float> =
+            if (bordered) listOf(box.left + 5, box.top + 5, box.right - 5, box.bottom - 5)
+            else listOf(box.left - h * 0.6f, box.top - h * 0.4f, box.right + h * 0.6f, box.bottom + h * 0.4f)
+        val (left, top, right, bottom) = edges.map { it.toInt() }
+        val l = left.coerceAtLeast(0)
+        val t = top.coerceAtLeast(0)
+        val r = right.coerceAtMost(page.width)
+        val b = bottom.coerceAtMost(page.height)
+        if (r - l < 8 || b - t < 8) return null
+        val baseline = words.mapNotNull { it.confidence }.takeIf { it.isNotEmpty() }?.average()?.toFloat() ?: 0f
+        val crop = Bitmap.createBitmap(page, l, t, r - l, b - t)
         return try {
-            listOfNotNull(pageEngine, arabicEngine(), latinEngine()).distinct()
+            val best = listOfNotNull(pageEngine, arabicEngine(), latinEngine()).distinct()
                 .map { readBlock(it, crop) }
                 .filter { it.first.isNotBlank() }
-                .maxByOrNull { it.second }?.first
+                .maxByOrNull { it.second }
+            if (best != null && (words.isEmpty() || best.second > baseline + 0.1f)) best.first else null
         } finally {
             crop.recycle()
         }
@@ -209,7 +217,9 @@ class OcrPageReader(
 
             // 3. Text rows nobody read (Tesseract's layout analysis can drop whole lines).
             val g = gray(page)
-            val missed = OcrDecisions.missedBands(OcrPreprocessor.textLineBands(page), lines.map { it.box })
+            val allBands = OcrPreprocessor.textLineBands(page)
+            val missed = OcrDecisions.missedBands(allBands, lines.map { it.box })
+            notes += "ink_lines:${allBands.size}/read:${lines.size}/missed:${missed.size}"
             var recovered = 0
             for (band in missed) {
                 currentCoroutineContext().ensureActive()
@@ -224,7 +234,7 @@ class OcrPageReader(
 
             // 4. Structure.
             val rulings = TableReconstructor.detectRulings(g, page.width, page.height)
-            val blocks = LayoutAnalyzer.analyze(lines, page.width.toFloat(), page.height.toFloat(), rulings) { box -> readCell(page, box) }
+            val blocks = LayoutAnalyzer.analyze(lines, page.width.toFloat(), page.height.toFloat(), rulings) { box, ws, bordered -> readCell(page, box, ws, bordered) }
             if (blocks.any { it is ExtractedBlock.Table && it.uncertain }) notes += "table_uncertain"
             val words = lines.flatMap { it.words }
             Log.i(TAG, "Page ${index + 1}: ${lines.size} lines, ${words.size} words, ${blocks.size} blocks, notes=$notes")
