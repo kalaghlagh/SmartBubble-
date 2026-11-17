@@ -144,6 +144,20 @@ class OcrDeviceTest {
         } finally {
             tess.recycle()
         }
+        // How many text lines the image shows, and whether the second line alone is readable.
+        val gray = com.example.ocr.OcrPreprocessor.prepare(bmp)
+        val inkLines = com.example.ocr.OcrPreprocessor.countTextLines(gray)
+        val tess2 = com.googlecode.tesseract.android.TessBaseAPI()
+        try {
+            tess2.init(root.absolutePath, "ara")
+            val crop = Bitmap.createBitmap(bmp, 0, 175, bmp.width, 260)
+            FileOutputStream(File(dir, "arabic-line2.png")).use { crop.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            tess2.setImage(crop)
+            outputs += "ink lines on the image=$inkLines; second line alone=" + tess2.getUTF8Text().orEmpty().replace('\n', ' ')
+        } finally {
+            tess2.recycle()
+        }
+        File(dir, "results.txt").appendText(outputs.last() + "\n")
         assertTrue("the Arabic model reads the page in no mode: $outputs", outputs.any { o -> Regex("recall=([0-9.]+)").find(o)!!.groupValues[1].toDouble() >= 0.6 })
     }
 

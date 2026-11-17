@@ -101,7 +101,9 @@ class DocumentOcrEngine(private val context: Context) {
                     val ok = try { t.init(dataPath, arabicFirst, TessBaseAPI.OEM_LSTM_ONLY) } catch (e: Throwable) { false }
                     if (!ok) { t.recycle(); return null }
                     t.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO)
-                    t.setVariable("preserve_interword_spaces", "1")
+                    // Not preserve_interword_spaces here: with it, Arabic words at a line end
+                    // came back joined ("تعتمدالمدن" instead of "تعتمد المدن").
+                    t.setVariable("preserve_interword_spaces", "0")
                     t.setVariable("user_defined_dpi", "300")
                     synchronized(lock) { if (recycled) { t.recycle(); return null } }
                     arabicTess = t
