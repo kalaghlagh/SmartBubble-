@@ -29,6 +29,19 @@ interface ThesisHost {
     suspend fun aiProviderInfo(): Pair<String, String>?
     /** Recent Chat messages (newest first) for "Insert from Chat". */
     suspend fun recentChatMessages(limit: Int = 30): List<ChatSnippet>
+    /** OCR language mode chosen in Settings / the scanner ("auto", "ar", "fr", "en"). */
+    val ocrLanguageCode: String get() = "auto"
+    /** True when the picked file is a PDF. */
+    fun isPdf(uri: android.net.Uri): Boolean = false
+    /**
+     * Extracts images and PDFs on the device (text pages of PDFs read directly, the rest by
+     * OCR). Throws [com.example.ocr.OcrUnavailableException] when OCR is needed but cannot start.
+     */
+    suspend fun extractDocument(
+        sources: List<com.example.extraction.ExtractionSource>,
+        languageCode: String,
+        progress: (page: Int, total: Int) -> Unit
+    ): com.example.extraction.ExtractedDocument = throw UnsupportedOperationException("Document extraction is not available")
 }
 
 /** A Chat message offered by "Insert from Chat". */

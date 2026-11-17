@@ -84,6 +84,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
@@ -222,7 +223,7 @@ private val CompletedGreen = Color(0xFF1E9E5A)
 
 /** Blue top bar of the Thesis Builder screens (back follows the layout direction). */
 @Composable
-private fun BlueTopBar(title: String, onBack: (() -> Unit)?, actions: @Composable RowScope.() -> Unit = {}) {
+internal fun BlueTopBar(title: String, onBack: (() -> Unit)?, actions: @Composable RowScope.() -> Unit = {}) {
     Surface(color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) {
         Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if (onBack != null) {
@@ -908,6 +909,7 @@ private fun ThesisSectionEditor(host: ThesisHost) {
         } else applyOp { EditorOps.setHeading(it, level) }
     }
 
+    var extracting by remember { mutableStateOf(false) }
     var editorFocused by remember { mutableStateOf(false) }
     val editorArea = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
     Column(Modifier.fillMaxSize()) {
@@ -1063,6 +1065,10 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                 ContentAction(Icons.Filled.Title, R.string.thesis_add_heading, "thesis_add_heading", true) { headingMenu = true }
                 ContentAction(Icons.Filled.HorizontalRule, R.string.thesis_page_break, "thesis_page_break", true) { insertAtCursor(com.example.thesis.core.SectionText.pageBreakToken(language)) }
             }
+            // Extract text, lists and tables from photos, scans or PDFs into this section.
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ContentAction(Icons.Outlined.DocumentScanner, R.string.dx_extract_action, "thesis_extract_document", idle && state.extraction == null) { extracting = true }
+            }
         }
         }
         HorizontalDivider()
@@ -1084,6 +1090,8 @@ private fun ThesisSectionEditor(host: ThesisHost) {
         }
     }
     if (pickChat) ChatPickerDialog(host, onDismiss = { pickChat = false }) { text -> pickChat = false; insertAtCursor(text) }
+    if (extracting) ExtractChooser(host, cursor = { value.selection.end }, sync = { controller.updateDraft(value.text) }, onDismiss = { extracting = false })
+    if (state.extraction != null) ExtractionReviewDialog(host)
     pendingImage?.let { uri ->
         MediaDataDialog(ElementData(), isImage = true, onDismiss = { pendingImage = null }) { data ->
             pendingImage = null

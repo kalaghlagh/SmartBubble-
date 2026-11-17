@@ -34,7 +34,7 @@ import com.example.data.model.TemplateEntity
 import com.example.document.model.ScannedDocumentReviewState
 import com.example.document.model.ScannedPageData
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun OcrReviewDialog(
     reviewState: ScannedDocumentReviewState,
@@ -55,7 +55,9 @@ fun OcrReviewDialog(
     /** Called only after the user confirmed sending the recognized text to the AI provider. */
     onEnhanceWithAi: () -> Unit = {},
     /** Puts the reviewed text (all pages) into the chat composer and closes the review. */
-    onInsertIntoChat: ((String) -> Unit)? = null
+    onInsertIntoChat: ((String) -> Unit)? = null,
+    /** Reads the current page again with a language mode (other pages and corrections kept). */
+    onRetryPage: ((pageIndex: Int, code: String) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val pages = reviewState.pages
@@ -68,6 +70,26 @@ fun OcrReviewDialog(
     }
 
     var showTemplateMenu by remember { mutableStateOf(false) }
+    var pendingLanguage by remember { mutableStateOf<String?>(null) }
+    var pendingRetry by remember { mutableStateOf(false) }
+    pendingLanguage?.let { code ->
+        AlertDialog(
+            onDismissRequest = { pendingLanguage = null },
+            title = { Text(stringResource(R.string.dx_language_change_title)) },
+            text = { Text(stringResource(R.string.dx_language_change_text)) },
+            confirmButton = { TextButton(onClick = { pendingLanguage = null; onChangeOcrLanguage(code) }, modifier = Modifier.testTag("ocr_language_confirm")) { Text(stringResource(R.string.dx_retry_anyway)) } },
+            dismissButton = { TextButton(onClick = { pendingLanguage = null }) { Text(stringResource(R.string.action_cancel)) } }
+        )
+    }
+    if (pendingRetry) {
+        AlertDialog(
+            onDismissRequest = { pendingRetry = false },
+            title = { Text(stringResource(R.string.dx_retry_this_page)) },
+            text = { Text(stringResource(R.string.dx_retry_discards)) },
+            confirmButton = { TextButton(onClick = { pendingRetry = false; onRetryPage?.invoke(activeIndex, ocrLanguage) }) { Text(stringResource(R.string.dx_retry_anyway)) } },
+            dismissButton = { TextButton(onClick = { pendingRetry = false }) { Text(stringResource(R.string.action_cancel)) } }
+        )
+    }
     var showAiConsent by remember { mutableStateOf(false) }
 
     if (showAiConsent) {
@@ -263,12 +285,20 @@ fun OcrReviewDialog(
                     ).forEach { (code, label) ->
                         FilterChip(
                             selected = ocrLanguage == code,
-                            onClick = { onChangeOcrLanguage(code) },
+                            // Reading every page again replaces the corrections: asked first.
+                            onClick = { if (code != ocrLanguage && reviewState.editedPages.isNotEmpty()) pendingLanguage = code else onChangeOcrLanguage(code) },
                             label = { Text(label, fontSize = 12.sp) },
                             modifier = Modifier.testTag("ocr_language_$code")
                         )
                     }
                 }
+                if (onRetryPage != null && currentPage != null) {
+                    TextButton(
+                        onClick = { if (activeIndex in reviewState.editedPages) pendingRetry = true else onRetryPage(activeIndex, ocrLanguage) },
+                        modifier = Modifier.testTag("ocr_retry_page")
+                    ) { Text(stringResource(R.string.dx_retry_this_page)) }
+                }
+                currentPage?.extraction?.let { ExtractionPageReport(it) }
                 Text(
                     text = stringResource(R.string.scan_ocr_on_device_note),
                     style = MaterialTheme.typography.bodySmall,
@@ -320,27 +350,27 @@ fun OcrReviewDialog(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Formatting Chips
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        // Formatting options. A FlowRow (not a Row): in a Row the first chip took its
+                        // full width and the second was squeezed into what was left, so its label
+                        // broke inside words ("Sma / rtBu / bble / Defa / ult / Style"). Each chip
+                        // now keeps a usable width and moves to the next line when space is short;
+                        // a long label wraps between words only (at most two lines).
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth().testTag("ocr_style_options"),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            FilterChip(
+                            StyleChip(
                                 selected = reviewState.selectedTemplateId == null,
-                                onClick = { onSelectTemplate(null) },
-                                label = { Text(stringResource(R.string.scan_template_original), fontSize = 12.sp) },
-                                leadingIcon = if (reviewState.selectedTemplateId == null) {
-                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                                } else null
+                                label = stringResource(R.string.scan_template_original),
+                                tag = "ocr_style_original",
+                                onClick = { onSelectTemplate(null) }
                             )
-
-                            FilterChip(
+                            StyleChip(
                                 selected = reviewState.selectedTemplateId == "default",
-                                onClick = { onSelectTemplate("default") },
-                                label = { Text(stringResource(R.string.scan_template_default), fontSize = 12.sp) },
-                                leadingIcon = if (reviewState.selectedTemplateId == "default") {
-                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                                } else null
+                                label = stringResource(R.string.scan_template_default),
+                                tag = "ocr_style_default",
+                                onClick = { onSelectTemplate("default") }
                             )
                         }
 
@@ -563,4 +593,31 @@ fun OcrReviewDialog(
             }
         }
     }
+}
+
+/**
+ * A formatting option chip whose label is never broken inside a word: minimum width for short
+ * labels, wrapping between words (two lines at most) when the screen is narrow, and a 48 dp
+ * touch target.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StyleChip(selected: Boolean, label: String, tag: String, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = {
+            Text(
+                text = label,
+                fontSize = 13.sp,
+                maxLines = 2,
+                softWrap = true,
+                modifier = Modifier.padding(vertical = 6.dp)
+            )
+        },
+        leadingIcon = if (selected) {
+            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+        } else null,
+        modifier = Modifier.widthIn(min = 120.dp, max = 260.dp).heightIn(min = 48.dp).testTag(tag)
+    )
 }

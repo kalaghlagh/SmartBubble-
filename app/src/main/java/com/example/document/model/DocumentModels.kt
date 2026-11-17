@@ -58,7 +58,9 @@ data class ScannedPageData(
      * The page content in reading order (headings, paragraphs, lists, tables). When present it
      * is used for document generation instead of the flattened fields above.
      */
-    val sections: List<WordSection> = emptyList()
+    val sections: List<WordSection> = emptyList(),
+    /** The page as the extraction engine rebuilt it (structure, scripts, tables, diagnostics). */
+    val extraction: com.example.extraction.ExtractedPage? = null
 )
 
 data class ScannedDocumentReviewState(
@@ -68,7 +70,9 @@ data class ScannedDocumentReviewState(
     val selectedTemplateId: String? = null, // null = original reconstructed, "default" = default, or specific template id
     val isAiEnhanced: Boolean = true,
     val isProcessing: Boolean = false,
-    val processingMessage: String = ""
+    val processingMessage: String = "",
+    /** Pages whose text the user corrected (a new recognition of them asks before replacing it). */
+    val editedPages: Set<Int> = emptySet()
 )
 
 data class PresentationModel(

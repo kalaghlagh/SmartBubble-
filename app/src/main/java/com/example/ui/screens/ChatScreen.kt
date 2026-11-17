@@ -898,6 +898,7 @@ fun ChatScreen(
             onChangeOcrLanguage = { viewModel.changeOcrLanguage(it) },
             aiProviderName = defaultProvider,
             onEnhanceWithAi = { viewModel.enhanceScannedTextWithAi() },
+            onRetryPage = { index, code -> viewModel.retryScannedPage(index, code) },
             onInsertIntoChat = { text ->
                 // The reviewed text goes into the composer (not sent): the user can edit or send it.
                 val merged = if (inputField.text.isBlank()) text else inputField.text.trimEnd() + "\n\n" + text

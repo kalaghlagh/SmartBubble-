@@ -12,6 +12,8 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
@@ -931,6 +933,98 @@ class ThesisAndroidTest {
         assertTrue(before != controller.state.value.draft!!.text)
         // Nothing is saved before "Save changes".
         assertEquals("To my parents.", runBlocking { repo.snapshot(id) }.element("d1")!!.text)
+    }
+
+    /** A stand-in for the on-device extractor: what a page with a heading, a paragraph and a table gives. */
+    private val extracted = com.example.extraction.ExtractedDocument(listOf(
+        com.example.extraction.ExtractedPage(0, com.example.extraction.PageSource.IMAGE_OCR, listOf(
+            com.example.extraction.ExtractedBlock.Heading("1.2 Sampling", 2, rtl = false),
+            com.example.extraction.ExtractedBlock.Paragraph("Twenty wells were sampled.", rtl = false),
+            com.example.extraction.ExtractedBlock.Table(listOf(
+                listOf(com.example.extraction.TableCell("Well"), com.example.extraction.TableCell("Nitrates")),
+                listOf(com.example.extraction.TableCell("W1"), com.example.extraction.TableCell("35"))
+            ), header = true, rtl = false)
+        ), scripts = setOf(com.example.extraction.Script.LATIN), level = com.example.extraction.ReconstructionLevel.STRUCTURE, confidence = 0.91f)
+    ))
+    private val extractorCalls = CopyOnWriteArrayList<List<com.example.extraction.ExtractionSource>>()
+    private val fakeExtractor: com.example.thesis.Extractor = { sources, _, progress -> extractorCalls.add(sources); progress(1, 1); extracted }
+
+    /**
+     * Extract from Image/PDF: the review opens for the section the extraction was started from,
+     * corrections are kept, the content (with a real table) goes into that section only, and it
+     * is saved through the normal draft, surviving a new repository (app restart).
+     */
+    @Test
+    @Config(qualifiers = "en")
+    fun extraction_insertsIntoTheStartingSection_withATable_andPersists() {
+        val host = TestHost()
+        val id = runBlocking { repo.createProject(meta(), aiAssist = false) }
+        val introId = intro(runBlocking { repo.snapshot(id) })
+        runBlocking { repo.applyDirect(id, listOf(ThesisOp.AddElements(introId, null, listOf(NewElement("p1", ElementType.PARAGRAPH, "Existing text.")))), ChangeSource.USER, "x") }
+        controller.openProject(id)
+        showWorkspace(host)
+        await("snapshot") { controller.state.value.snapshot?.element("p1") != null }
+        controller.selectSection(introId)
+        await("editor") { tagExists("thesis_editor_text") && controller.state.value.draft != null }
+        // The editor offers the action; it opens the choice of images or PDF.
+        tap("thesis_extract_document")
+        await("chooser") { tagExists("dx_pick_images") && tagExists("dx_pick_pdf") }
+        compose.onAllNodesWithText("Cancel").onLast().performClick()
+        // The pickers are system screens: the extraction is started as they would start it.
+        val src = com.example.extraction.ExtractionSource(android.net.Uri.parse("file:///scan.jpg"), isPdf = false)
+        compose.runOnIdle { controller.startExtraction(listOf(src), "auto", 999, fakeExtractor) }
+        await("review") { tagExists("dx_review") && controller.state.value.extraction?.document != null }
+        assertEquals(listOf(listOf(src)), extractorCalls.toList())
+        assertEquals(introId, controller.state.value.extraction!!.sectionId)
+        assertTrue(tagExists("dx_page_report"))
+        // A correction in the review is kept.
+        compose.runOnIdle { controller.updateExtractedBlock(0, 1, com.example.extraction.ExtractedBlock.Paragraph("Twenty wells were sampled in 2024.", rtl = false)) }
+        tap("dx_insert_append")
+        await("inserted") { controller.state.value.extraction == null }
+        val draft = controller.state.value.draft!!
+        assertEquals(introId, draft.sectionId)
+        assertTrue(draft.text, draft.text.startsWith("Existing text.\n\n## 1.2 Sampling\n\nTwenty wells were sampled in 2024.\n\n[Table 1]"))
+        val table = draft.media.getValue("[Table 1]")
+        assertEquals(listOf("Well", "Nitrates"), table.data.tableHeader)
+        assertEquals(listOf(listOf("W1", "35")), table.data.tableRows)
+        // Nothing saved yet; "Save changes" writes it like typed text.
+        assertEquals(1, runBlocking { repo.snapshot(id) }.elementsOf(introId).size)
+        tap("thesis_save_changes")
+        awaitRepo("saved") { repo.snapshot(id).elementsOf(introId).any { it.type == ElementType.TABLE } }
+        // A new repository on the same database (as after a restart) reads the same content.
+        val reopened = ThesisRepository(db, tmp.root.resolve("thesis"), imageInspector = { null })
+        val els = runBlocking { reopened.snapshot(id) }.elementsOf(introId)
+        assertEquals(listOf(ElementType.PARAGRAPH, ElementType.HEADING, ElementType.PARAGRAPH, ElementType.TABLE), els.map { it.type })
+        assertEquals("1.2 Sampling", els[1].text)
+        assertEquals(2, els[1].data.headingLevel)
+        assertEquals(listOf("Well", "Nitrates"), els[3].data.tableHeader)
+        assertEquals(listOf(listOf("W1", "35")), els[3].data.tableRows)
+    }
+
+    /** Extracted content never lands in another section than the one it was started from. */
+    @Test
+    @Config(qualifiers = "en")
+    fun extraction_isNotInsertedIntoAnotherSection() {
+        val id = runBlocking { repo.createProject(meta(), aiAssist = false) }
+        val s = runBlocking { repo.snapshot(id) }
+        val introId = intro(s)
+        val chapterId = s.sections.first { it.kind == SectionKind.CHAPTER }.id
+        controller.openProject(id)
+        await("snapshot") { controller.state.value.snapshot != null }
+        controller.selectSection(introId)
+        await("intro draft") { controller.state.value.draft?.sectionId == introId }
+        controller.startExtraction(listOf(com.example.extraction.ExtractionSource(android.net.Uri.parse("file:///a.jpg"), false)), "auto", 0, fakeExtractor)
+        await("extracted") { controller.state.value.extraction?.document != null }
+        controller.selectSection(chapterId)
+        await("chapter draft") { controller.state.value.draft?.sectionId == chapterId }
+        val before = controller.state.value.draft!!.text
+        controller.insertExtraction(com.example.thesis.core.ExtractionInsertMode.AT_CURSOR)
+        await("refused") { messages.any { it == ThesisMessage.ExtractionWrongSection } }
+        assertEquals(before, controller.state.value.draft!!.text)
+        assertEquals(chapterId, controller.state.value.draft!!.sectionId)
+        // Cancel closes the review without inserting anything.
+        controller.cancelExtraction()
+        assertEquals(null, controller.state.value.extraction)
     }
 
     /** Screens 3 and 6: chapters with titles, order, sub-sections, status, preview and export of the saved content. */

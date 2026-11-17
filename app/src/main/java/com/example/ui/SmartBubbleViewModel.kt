@@ -821,6 +821,16 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     override suspend fun aiProviderInfo(): Pair<String, String>? = withContext(Dispatchers.IO) {
         database.providerDao().getDefaultProvider()?.let { it.name to it.modelName }
     }
+    private val extractionEngine by lazy { com.example.extraction.DocumentExtractionEngine(context, ocrEngine) }
+    override val ocrLanguageCode: String get() = ocrLanguage.value
+    override fun isPdf(uri: Uri): Boolean = extractionEngine.isPdf(uri)
+    override suspend fun extractDocument(
+        sources: List<com.example.extraction.ExtractionSource>,
+        languageCode: String,
+        progress: (page: Int, total: Int) -> Unit
+    ): com.example.extraction.ExtractedDocument =
+        extractionEngine.extract(sources, OcrLanguage.fromCode(languageCode), appLanguage.value) { page, total -> progress(page, total) }
+
     override suspend fun recentChatMessages(limit: Int): List<com.example.thesis.ui.ChatSnippet> = withContext(Dispatchers.IO) {
         database.chatDao().getRecentChatMessagesNow(limit)
             .filter { it.attachedDocType != THESIS_PROPOSAL_CARD && it.content.isNotBlank() }
@@ -958,6 +968,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         ThesisMessage.Saved -> str(R.string.thesis_msg_saved)
         ThesisMessage.DraftSaved -> str(R.string.thesis_msg_draft_saved)
         ThesisMessage.Renamed -> str(R.string.thesis_msg_renamed)
+        ThesisMessage.ExtractionWrongSection -> str(R.string.dx_wrong_section)
+        ThesisMessage.ExtractionNothing -> str(R.string.dx_nothing_to_insert)
+        ThesisMessage.ExtractionFailed -> str(R.string.dx_failed)
     }
 
     /** Copies an export into the Library folder and registers it (linked to the project). */
@@ -1936,7 +1949,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     onProgress = { page, total -> _scanProgress.value = str(R.string.scan_progress_page, page, total) }
                 )
                 _scannedReviewState.value?.let { state ->
-                    _scannedReviewState.value = state.copy(pages = result.pages, isAiEnhanced = false)
+                    _scannedReviewState.value = state.copy(pages = result.pages, isAiEnhanced = false, editedPages = emptySet())
                 }
                 reportScanOutcome(result.pages, result.failedPages)
             } catch (e: CancellationException) {
@@ -1996,6 +2009,42 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    /**
+     * Reads one page again with the language mode [code]; the other pages and their corrections
+     * are kept. (The review asks first when this page was corrected.)
+     */
+    fun retryScannedPage(pageIndex: Int, code: String) {
+        val current = _scannedReviewState.value ?: return
+        val page = current.pages.getOrNull(pageIndex) ?: return
+        if (_isScanning.value) return
+        scanJob = viewModelScope.launch {
+            _isScanning.value = true
+            _scanProgress.value = str(R.string.scan_progress_page, 1, 1)
+            try {
+                val result = ocrEngine.processPages(listOf(Uri.parse(page.imageUriString)), OcrLanguage.fromCode(code), appLanguage.value, firstPageIndex = pageIndex)
+                val again = result.pages.firstOrNull() ?: return@launch
+                _scannedReviewState.value?.let { state ->
+                    if (pageIndex in state.pages.indices) {
+                        _scannedReviewState.value = state.copy(
+                            pages = state.pages.toMutableList().also { it[pageIndex] = again },
+                            editedPages = state.editedPages - pageIndex
+                        )
+                    }
+                }
+                reportScanOutcome(result.pages, result.failedPages)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: OcrUnavailableException) {
+                _snackBarMessage.value = str(R.string.scan_ocr_unavailable)
+            } catch (e: Exception) {
+                reportError("retryScannedPage", e)
+            } finally {
+                _isScanning.value = false
+                _scanProgress.value = null
+            }
+        }
+    }
+
     fun updateScannedPageText(pageIndex: Int, updatedText: String) {
         val current = _scannedReviewState.value ?: return
         val currentPages = current.pages.toMutableList()
@@ -2005,9 +2054,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 pageIndex = pageIndex,
                 imageUriString = oldPage.imageUriString,
                 rawText = updatedText
-            )
+            ).copy(extraction = oldPage.extraction) // the page report stays (how the page was read)
             currentPages[pageIndex] = updatedPage
-            _scannedReviewState.value = current.copy(pages = currentPages)
+            _scannedReviewState.value = current.copy(pages = currentPages, editedPages = current.editedPages + pageIndex)
         }
     }
 
