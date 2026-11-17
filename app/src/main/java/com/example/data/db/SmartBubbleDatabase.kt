@@ -32,7 +32,7 @@ import com.example.data.model.ThesisSectionEntity
         com.example.data.model.TemplateDefaultEntity::class,
         com.example.data.model.TemplateFavoriteEntity::class
     ],
-    version = 6,
+    version = 7,
     // Schema JSON is exported to app/schemas (see `ksp { room.schemaLocation }` in
     // app/build.gradle.kts) and must be committed so future migrations can be verified.
     exportSchema = true

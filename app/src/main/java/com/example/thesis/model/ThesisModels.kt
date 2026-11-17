@@ -75,7 +75,13 @@ data class ThesisMeta(
     val subtitle: String = "",
     val studentId: String = "",
     /** Submission date as entered (ISO yyyy-MM-dd from the date picker). */
-    val submissionDate: String = ""
+    val submissionDate: String = "",
+    /** Deepest heading level listed in the table of contents (1 = chapters only .. 4). */
+    val tocDepth: Int = 3,
+    /** Front matter (cover to the last preliminary page) numbered i, ii, iii; the main text restarts at [mainPageStart]. */
+    val frontMatterRoman: Boolean = false,
+    /** Number of the first page of the main text (or of the first page when numbering is continuous). */
+    val mainPageStart: Int = 1
 ) {
     val rtl: Boolean get() = language == "ar"
 }

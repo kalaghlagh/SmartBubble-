@@ -169,6 +169,12 @@ fun ChatScreen(
         val last = messages.size - 1 + (if (generatingHere) 1 else 0)
         if (last >= 0) listState.animateScrollToItem(last)
     }
+    // The keyboard opened: keep the latest message visible above the composer.
+    val keyboardOpen = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
+    LaunchedEffect(keyboardOpen) {
+        val last = messages.size - 1 + (if (generatingHere) 1 else 0)
+        if (keyboardOpen && last >= 0) listState.scrollToItem(last)
+    }
     // Keep the streamed reply in view while it grows (only if the user is already at the bottom).
     LaunchedEffect(streamingReply.length / 200) {
         if (generatingHere && streamingReply.isNotEmpty()) {
@@ -303,7 +309,9 @@ fun ChatScreen(
         }
     ) {
         Column(
+            // The composer stays above the keyboard (the activity is edge to edge).
             modifier = modifier
+                .imePadding()
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
         ) {
@@ -655,7 +663,8 @@ fun ChatScreen(
                             focusedIndicatorColor = Color.Transparent,
                             unfocusedIndicatorColor = Color.Transparent
                         ),
-                        maxLines = 4
+                        // Grows with the text, then scrolls inside (the cursor stays visible).
+                        maxLines = 6
                     )
 
                     Spacer(modifier = Modifier.width(6.dp))

@@ -25,6 +25,9 @@ internal class PageDecor private constructor(
     class Border(val side: String, val style: String, val width: Float, val space: Float, val color: Int)
     class HeaderImage(val file: File, val width: Float, val height: Float, val align: String)
 
+    /** Overrides the template's numbering (the thesis page numbering options). */
+    var labeler: ((Int) -> String)? = null
+
     private val top: Float get() = (profile.headerOffsetPt - 9).coerceAtLeast(12).toFloat()
 
     /** Lowest point of the default header (image and text lines), for the start of the text area. */
@@ -92,6 +95,7 @@ internal class PageDecor private constructor(
 
     /** Page number in the template's format (decimal, roman or letters), counted from its start number. */
     fun number(pageNo: Int): String {
+        labeler?.let { return it(pageNo) }
         val n = pageNo - 1 + profile.pageNumberStart.coerceAtLeast(1)
         return when (profile.pageNumberFormat) {
             "upperRoman" -> roman(n)

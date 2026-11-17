@@ -12,7 +12,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *  - v3 (5651cb0): conversations added
  *  - v4: Thesis Builder tables added
  *  - v5: Thesis Builder section/project columns
- *  - v6: Smart Templates (template classification, defaults, favorites, document content) (current schema)
+ *  - v6: Smart Templates (template classification, defaults, favorites, document content)
+ *  - v7: thesis table of contents depth and page numbering options (current schema)
  *
  * Rules for future schema changes:
  *  1. Bump the @Database version.
@@ -156,6 +157,15 @@ object SmartBubbleMigrations {
         }
     }
 
+    /** v6 -> v7: table of contents depth and page numbering of a thesis (columns with defaults only). */
+    val MIGRATION_6_7 = object : Migration(6, 7) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `thesis_projects` ADD COLUMN `tocDepth` INTEGER NOT NULL DEFAULT 3")
+            db.execSQL("ALTER TABLE `thesis_projects` ADD COLUMN `frontMatterRoman` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `thesis_projects` ADD COLUMN `mainPageStart` INTEGER NOT NULL DEFAULT 1")
+        }
+    }
+
     /** Every migration, in order. Always pass this to the database builder. */
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
 }

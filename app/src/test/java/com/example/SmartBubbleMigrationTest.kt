@@ -294,6 +294,10 @@ class SmartBubbleMigrationTest {
         assertEquals("Amina", p.studentName)
         assertEquals("", p.subtitle)
         assertEquals("", p.studentId)
+        // v7 columns: table of contents depth and page numbering defaults.
+        assertEquals(3, p.tocDepth)
+        assertFalse(p.frontMatterRoman)
+        assertEquals(1, p.mainPageStart)
         val sections = db.thesisDao().sections("t-1")
         assertEquals("مقدمة عامة", sections.single().title)
         assertFalse(sections.single().completed)

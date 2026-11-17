@@ -41,7 +41,11 @@ data class ThesisProjectEntity(
     // Added in database version 5.
     @ColumnInfo(defaultValue = "") val subtitle: String = "",
     @ColumnInfo(defaultValue = "") val studentId: String = "",
-    @ColumnInfo(defaultValue = "") val submissionDate: String = ""
+    @ColumnInfo(defaultValue = "") val submissionDate: String = "",
+    // Added in database version 7: table of contents depth and page numbering.
+    @ColumnInfo(defaultValue = "3") val tocDepth: Int = 3,
+    @ColumnInfo(defaultValue = "0") val frontMatterRoman: Boolean = false,
+    @ColumnInfo(defaultValue = "1") val mainPageStart: Int = 1
 )
 
 @Entity(tableName = "thesis_sections", indices = [Index("projectId")])

@@ -988,4 +988,9 @@
     <string name="st_card_template">Modèle : %1$s</string>
     <string name="st_pick_template_title">Modèle pour ce document</string>
     <string name="st_pick_template_note">Seul ce document change ; votre modèle par défaut reste le même.</string>
+    <string name="thesis_toc_options">Table des matières et numérotation des pages</string>
+    <string name="thesis_toc_depth">Niveaux de titres dans la table des matières</string>
+    <string name="thesis_front_roman">Chiffres romains pour les pages liminaires</string>
+    <string name="thesis_front_roman_desc">De la page de garde aux abréviations : i, ii, iii ; l\'introduction commence la numérotation principale.</string>
+    <string name="thesis_page_start">Numéro de la première page du texte principal</string>
 </resources>

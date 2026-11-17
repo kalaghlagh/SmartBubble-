@@ -26,6 +26,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -836,7 +840,7 @@ private fun SmallAction(icon: ImageVector, label: Int, tag: String, enabled: Boo
 
 // =================================================================== 4. section editor
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ThesisSectionEditor(host: ThesisHost) {
     val controller = host.thesis
@@ -904,6 +908,8 @@ private fun ThesisSectionEditor(host: ThesisHost) {
         } else applyOp { EditorOps.setHeading(it, level) }
     }
 
+    var editorFocused by remember { mutableStateOf(false) }
+    val editorArea = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
     Column(Modifier.fillMaxSize()) {
         BlueTopBar(title, onBack = { controller.back() }) {
             IconButton(onClick = { controller.saveDraft() }, enabled = idle && draft?.dirty == true, modifier = Modifier.testTag("thesis_save_icon")) {
@@ -923,7 +929,15 @@ private fun ThesisSectionEditor(host: ThesisHost) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             return@Column
         }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // Keyboard: while the editor has the focus and the keyboard is open, the toolbar and the
+        // text field are kept in the visible area above the keyboard, and the field's height is
+        // bounded to that area so it scrolls inside to the cursor (a field taller than the screen
+        // inside the page scroll could leave the cursor under the keyboard).
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f)) {
+        val viewport = maxHeight
+        val typing = editorFocused && WindowInsets.isImeVisible
+        LaunchedEffect(typing, viewport) { if (typing) editorArea.bringIntoView() }
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SaveStatus(saving = state.busy == com.example.thesis.ThesisBusy.SAVING, dirty = draft.dirty, onPrimary = false)
                 Spacer(Modifier.weight(1f))
@@ -953,6 +967,7 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                 )
             }
             state.sectionHistory?.let { SectionHistoryCard(controller, it, onClose = { controller.selectSection(section.id) }) }
+            Column(Modifier.bringIntoViewRequester(editorArea), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // Formatting toolbar. The heading menu is anchored to the toolbar itself (not to an icon
             // inside the scrolling row), so it opens whatever the row's scroll position.
             Box {
@@ -991,8 +1006,12 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                 placeholder = { Text(stringResource(R.string.thesis_paste_placeholder)) },
                 textStyle = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content, lineHeight = 24.sp),
                 shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp).testTag("thesis_editor_text")
+                modifier = Modifier.fillMaxWidth()
+                    .then(if (typing) Modifier.height((viewport - 96.dp).coerceAtLeast(140.dp)) else Modifier.heightIn(min = 260.dp))
+                    .onFocusChanged { editorFocused = it.isFocused }
+                    .testTag("thesis_editor_text")
             )
+            }
             Text(stringResource(R.string.thesis_format_help), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (draft.media.isNotEmpty()) MediaStrip(state.assets, draft, onEdit = { editingMedia = it })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1044,6 +1063,7 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                 ContentAction(Icons.Filled.Title, R.string.thesis_add_heading, "thesis_add_heading", true) { headingMenu = true }
                 ContentAction(Icons.Filled.HorizontalRule, R.string.thesis_page_break, "thesis_page_break", true) { insertAtCursor(com.example.thesis.core.SectionText.pageBreakToken(language)) }
             }
+        }
         }
         HorizontalDivider()
         Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

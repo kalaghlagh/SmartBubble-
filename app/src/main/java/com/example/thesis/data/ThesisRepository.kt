@@ -85,7 +85,8 @@ class ThesisRepository(
         department = p.department, specialization = p.specialization, supervisor = p.supervisor, coSupervisor = p.coSupervisor,
         academicYear = p.academicYear, juryMembers = p.juryMembers, extraMetadata = p.extraMetadata,
         logoAssetId = p.logoAssetId, templateId = p.templateId,
-        subtitle = p.subtitle, studentId = p.studentId, submissionDate = p.submissionDate
+        subtitle = p.subtitle, studentId = p.studentId, submissionDate = p.submissionDate,
+        tocDepth = p.tocDepth, frontMatterRoman = p.frontMatterRoman, mainPageStart = p.mainPageStart
     )
 
     private fun ThesisProjectEntity.withMeta(m: ThesisMeta, now: Long) = copy(
@@ -93,7 +94,8 @@ class ThesisRepository(
         faculty = m.faculty, department = m.department, specialization = m.specialization, supervisor = m.supervisor,
         coSupervisor = m.coSupervisor, academicYear = m.academicYear, juryMembers = m.juryMembers, extraMetadata = m.extraMetadata,
         logoAssetId = m.logoAssetId, templateId = m.templateId, updatedAt = now,
-        subtitle = m.subtitle, studentId = m.studentId, submissionDate = m.submissionDate
+        subtitle = m.subtitle, studentId = m.studentId, submissionDate = m.submissionDate,
+        tocDepth = m.tocDepth, frontMatterRoman = m.frontMatterRoman, mainPageStart = m.mainPageStart
     )
 
     private fun sectionEntity(projectId: String, s: ThesisSection) =
@@ -176,7 +178,8 @@ class ThesisRepository(
                 ThesisProjectEntity(id, meta.title, meta.level.name, meta.language, meta.studentName, meta.university, meta.faculty,
                     meta.department, meta.specialization, meta.supervisor, meta.coSupervisor, meta.academicYear, meta.juryMembers,
                     meta.extraMetadata, meta.logoAssetId, meta.templateId, aiAssist, null, 0, now, now,
-                    subtitle = meta.subtitle, studentId = meta.studentId, submissionDate = meta.submissionDate)
+                    subtitle = meta.subtitle, studentId = meta.studentId, submissionDate = meta.submissionDate,
+                    tocDepth = meta.tocDepth, frontMatterRoman = meta.frontMatterRoman, mainPageStart = meta.mainPageStart)
             )
         }
         val empty = ThesisSnapshot(meta, emptyList(), emptyList())

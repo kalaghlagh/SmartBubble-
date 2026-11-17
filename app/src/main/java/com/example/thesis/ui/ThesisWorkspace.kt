@@ -320,6 +320,33 @@ internal fun ThesisMetaForm(
             field(R.string.thesis_field_submission_date, meta.submissionDate, "thesis_field_submission_date") { meta = meta.copy(submissionDate = it) }
             field(R.string.thesis_field_jury, meta.juryMembers, "thesis_field_jury", 3) { meta = meta.copy(juryMembers = it) }
             field(R.string.thesis_field_extra, meta.extraMetadata, "thesis_field_extra", 2) { meta = meta.copy(extraMetadata = it) }
+            // Table of contents and page numbering (applied to the PDF, the preview and the DOCX).
+            Text(stringResource(R.string.thesis_toc_options), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+            Text(stringResource(R.string.thesis_toc_depth), style = MaterialTheme.typography.labelLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                (1..4).forEach { d ->
+                    FilterChip(selected = meta.tocDepth == d, onClick = { meta = meta.copy(tocDepth = d) },
+                        label = { Text(d.toString()) }, modifier = Modifier.testTag("thesis_toc_depth_$d"))
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.thesis_front_roman), style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.thesis_front_roman_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = meta.frontMatterRoman, onCheckedChange = { meta = meta.copy(frontMatterRoman = it) }, modifier = Modifier.testTag("thesis_front_roman"))
+            }
+            var startText by remember(initial) { mutableStateOf(meta.mainPageStart.toString()) }
+            OutlinedTextField(
+                value = startText,
+                onValueChange = { v ->
+                    startText = v.filter { it.isDigit() }.take(4)
+                    startText.toIntOrNull()?.takeIf { it >= 1 }?.let { meta = meta.copy(mainPageStart = it) }
+                },
+                label = { Text(stringResource(R.string.thesis_page_start)) }, singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth().testTag("thesis_page_start")
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(stringResource(R.string.thesis_ai_assist), style = MaterialTheme.typography.bodyMedium)

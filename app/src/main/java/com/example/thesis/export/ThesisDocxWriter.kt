@@ -4,6 +4,7 @@ import com.example.thesis.core.InlineFormat
 import com.example.thesis.core.ThesisLabels
 import com.example.thesis.core.ThesisNumbering
 import com.example.thesis.core.ThesisStructure
+import com.example.thesis.core.ThesisToc
 import com.example.thesis.model.ElementType
 import com.example.thesis.model.SectionKind
 import com.example.thesis.model.ThesisAsset
@@ -61,6 +62,9 @@ class ThesisDocxWriter {
             headingColorHex = "#1F3A5F", pageNumberPosition = "footer-center", layoutSource = ""
         )
 
+        /** Placeholder in the body for the section break after the preliminary pages. */
+        private const val FRONT_SECTION_BREAK = "\u0000FRONTSECT\u0000"
+
         fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 
         fun isArabic(text: String) = text.any { it in '؀'..'ۿ' || it in 'ݐ'..'ݿ' || it in 'ﭐ'..'﷿' || it in 'ﹰ'..'\uFEFF' }
@@ -80,6 +84,7 @@ class ThesisDocxWriter {
         /** Text width in twips (images are sized against it). */
         val textWidthTwips: Long,
         val media: MutableList<Pair<String, File>> = ArrayList(),
+        val bookmarks: MutableList<String> = ArrayList(),
         val warnings: MutableList<String> = ArrayList(),
         var drawingId: Int = 1
     )
@@ -148,20 +153,26 @@ class ThesisDocxWriter {
         val s = ctx.snapshot
         val outline = s.outline(includeDisabled = false)
         var first = true
+        var mainStarted = false
         for ((section, _) in outline) {
             val startsPage = section.parentId == null && section.kind != SectionKind.COVER
-            if (startsPage && !first) pageBreak(sb)
+            val startsMain = !mainStarted && section.parentId == null && !section.kind.preliminary
+            if (startsMain) mainStarted = true
+            if (startsMain && !first && s.meta.frontMatterRoman) {
+                // Roman front matter: a next-page section break ends the preliminary pages (i, ii, ...).
+                sb.append(FRONT_SECTION_BREAK)
+            } else if (startsPage && !first) pageBreak(sb)
             first = false
             when (section.kind) {
                 SectionKind.COVER -> cover(sb, ctx)
-                SectionKind.TABLE_OF_CONTENTS -> index(sb, ctx, section, "TOC \\o \"1-3\" \\h \\z \\u", tocCache(ctx))
+                SectionKind.TABLE_OF_CONTENTS -> tableOfContents(sb, ctx, section)
                 SectionKind.LIST_OF_FIGURES -> index(sb, ctx, section, "TOC \\h \\z \\c \"Figure\"",
                     s.orderedElements().filter { it.type == ElementType.IMAGE }.map { ThesisStructure.figureCaption(it, ctx.numbering, ctx.language) })
                 SectionKind.LIST_OF_TABLES -> index(sb, ctx, section, "TOC \\h \\z \\c \"Table\"",
                     s.orderedElements().filter { it.type == ElementType.TABLE }.map { ThesisStructure.tableCaption(it, ctx.numbering, ctx.language) })
                 else -> {
                     val level = ThesisStructure.headingLevel(s, section)
-                    para(sb, ctx, ThesisStructure.displayTitle(section, ctx.numbering, ctx.language), "Heading$level")
+                    headingPara(sb, ctx, ThesisStructure.displayTitle(section, ctx.numbering, ctx.language), "Heading$level", "s:${section.id}")
                     for (e in s.elementsOf(section.id)) element(sb, ctx, e, level)
                 }
             }
@@ -169,9 +180,51 @@ class ThesisDocxWriter {
         return sb.toString()
     }
 
-    private fun tocCache(ctx: Ctx): List<String> = ctx.snapshot.outline(includeDisabled = false)
-        .filter { (sec, _) -> !sec.kind.generated }
-        .map { (sec, depth) -> "  ".repeat(depth) + ThesisStructure.displayTitle(sec, ctx.numbering, ctx.language) }
+    /** Bookmark of a heading (the TOC entries link to it); stable for a given section or element id. */
+    private fun bookmark(key: String): String = "_TocSB" + ThesisSnapshot.sha1(key).take(12)
+
+    /** A heading paragraph wrapped in the bookmark the table of contents links to. */
+    private fun headingPara(sb: StringBuilder, ctx: Ctx, text: String, style: String, key: String, e: ThesisElement? = null) {
+        // High ids: a Word template may already use small bookmark ids.
+        val id = 900_000 + ctx.bookmarks.size
+        ctx.bookmarks.add(key)
+        val start = "<w:bookmarkStart w:id=\"$id\" w:name=\"${bookmark(key)}\"/>"
+        val end = "<w:bookmarkEnd w:id=\"$id\"/>"
+        if (e != null) {
+            val inner = StringBuilder()
+            textPara(inner, ctx, e, text, style)
+            val p = inner.toString()
+            val at = p.indexOf("</w:pPr>") + "</w:pPr>".length
+            sb.append(p.substring(0, at)).append(start).append(p.substring(at, p.length - "</w:p>".length)).append(end).append("</w:p>")
+        } else {
+            sb.append("<w:p>").append(pPr(style, ctx, text)).append(start).append(run(text, ctx)).append(end).append("</w:p>")
+        }
+    }
+
+    /**
+     * The table of contents: a real TOC field (headings 1..depth, hyperlinked) whose cached result
+     * already lists every chapter, section and inline heading with its number and level (TOC1..TOC4
+     * styles with a dot leader), each a link to its heading. Page numbers are filled in by the word
+     * processor when it updates the field (Word asks on opening, settings.xml has updateFields).
+     */
+    private fun tableOfContents(sb: StringBuilder, ctx: Ctx, section: ThesisSection) {
+        val depth = ctx.snapshot.meta.tocDepth.coerceIn(1, 4)
+        para(sb, ctx, ThesisStructure.displayTitle(section, ctx.numbering, ctx.language), "TOCHeading")
+        val entries = ThesisToc.entries(ctx.snapshot, ctx.numbering, depth)
+        val begin = "<w:r><w:fldChar w:fldCharType=\"begin\" w:dirty=\"true\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> TOC \\o \"1-$depth\" \\h \\z \\u </w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>"
+        val endField = "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        if (entries.isEmpty()) {
+            sb.append("<w:p>").append(pPr("TOC1", ctx, "")).append(begin).append(run("", ctx)).append(endField).append("</w:p>")
+            return
+        }
+        entries.forEachIndexed { i, entry ->
+            sb.append("<w:p>").append(pPr("TOC${entry.level}", ctx, entry.text))
+            if (i == 0) sb.append(begin)
+            sb.append("<w:hyperlink w:anchor=\"${bookmark(entry.key)}\" w:history=\"1\">").append(run(entry.text, ctx)).append("</w:hyperlink>")
+            if (i == entries.size - 1) sb.append(endField)
+            sb.append("</w:p>")
+        }
+    }
 
     private fun index(sb: StringBuilder, ctx: Ctx, section: ThesisSection, instr: String, cached: List<String>) {
         para(sb, ctx, ThesisStructure.displayTitle(section, ctx.numbering, ctx.language), "TOCHeading")
@@ -222,7 +275,10 @@ class ThesisDocxWriter {
         val (text, missing) = ThesisStructure.resolveCrossReferences(e.text, ctx.numbering, ctx.language)
         if (missing.isNotEmpty()) ctx.warnings.add("crossref_missing:${missing.joinToString(",")}")
         when (e.type) {
-            ElementType.HEADING -> textPara(sb, ctx, e, text, "Heading${(sectionLevel + e.data.headingLevel.coerceAtLeast(1)).coerceAtMost(4)}")
+            ElementType.HEADING -> {
+                val numbered = ctx.numbering.headings[e.id]?.let { "$it ${text.trim()}" } ?: text
+                headingPara(sb, ctx, numbered, "Heading${ThesisToc.headingLevel(sectionLevel, e.data.headingLevel)}", "e:${e.id}", e)
+            }
             ElementType.PARAGRAPH -> textPara(sb, ctx, e, text, null)
             ElementType.REFERENCE -> textPara(sb, ctx, e, text, "Bibliography")
             ElementType.LIST_ITEM -> {
@@ -397,8 +453,9 @@ class ThesisDocxWriter {
             "<w:pgSz w:w=\"$pageW\" w:h=\"$pageH\"${if (pageW > pageH) " w:orient=\"landscape\"" else ""}/>" +
             "<w:pgMar w:top=\"${p.marginTopPt * 20}\" w:right=\"${p.marginRightPt * 20}\" w:bottom=\"${p.marginBottomPt * 20}\" w:left=\"${p.marginLeftPt * 20}\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>" +
             (if (ctx.rtl) "<w:bidi/>" else "") + "<w:titlePg/></w:sectPr>"
+        val finalSect = withPageNumbering(sectPr, ctx.snapshot.meta)
         val document = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="$W_NS" xmlns:r="$R_NS" xmlns:wp="$WP_NS"><w:body>""" +
-            body.replace("HEADERFILL", hex(p.tableHeaderBgHex, "D9E2F3")) + sectPr + "</w:body></w:document>"
+            withFrontSection(body.replace("HEADERFILL", hex(p.tableHeaderBgHex, "D9E2F3")), sectPr) + finalSect + "</w:body></w:document>"
         val overrides = """<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>""" +
             """<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>""" +
             """<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>""" +
@@ -493,7 +550,7 @@ class ThesisDocxWriter {
         var root = documentXml.substring(0, bodyOpen.range.first)
         if (!root.contains("xmlns:r=")) root = root.replaceFirst("<w:document ", "<w:document xmlns:r=\"$R_NS\" ")
         if (!root.contains("xmlns:wp=")) root = root.replaceFirst("<w:document ", "<w:document xmlns:wp=\"$WP_NS\" ")
-        entries["word/document.xml"] = (root + bodyOpen.value + body + sectPr + documentXml.substring(bodyClose)).toByteArray(Charsets.UTF_8)
+        entries["word/document.xml"] = (root + bodyOpen.value + withFrontSection(body, sectPr) + withPageNumbering(sectPr, snapshot.meta) + documentXml.substring(bodyClose)).toByteArray(Charsets.UTF_8)
 
         // Styles: keep the template's, add the missing ones the thesis uses.
         val styles = text("word/styles.xml")
@@ -531,5 +588,40 @@ class ThesisDocxWriter {
         // Thesis images use their own names ("thesisimgN"), so the template's images are kept.
         writeZip(output, entries.filterKeys { k -> ctx.media.none { "word/media/${it.first}" == k } }, ctx.media)
         return ThesisRenderReport(ctx.warnings, numbering.figures.size, numbering.tables.size)
+    }
+
+    // ------------------------------------------------------------------ page numbering
+
+    /** Inserts [element] into a sectPr at its schema position (before the first later sibling). */
+    private fun insertInSect(sectPr: String, element: String, before: List<String>): String {
+        val at = before.map { sectPr.indexOf("<w:$it") }.filter { it >= 0 }.minOrNull() ?: sectPr.lastIndexOf("</w:sectPr>")
+        return sectPr.substring(0, at) + element + sectPr.substring(at)
+    }
+
+    private val afterPgNumType = listOf("cols", "formProt", "vAlign", "noEndnote", "titlePg", "textDirection", "bidi", "rtlGutter", "docGrid", "printerSettings", "sectPrChange")
+
+    private fun setPgNumType(sectPr: String, attrs: String): String {
+        val cleaned = sectPr.replace(Regex("""<w:pgNumType[^>]*/>"""), "")
+        return insertInSect(cleaned, "<w:pgNumType $attrs/>", afterPgNumType)
+    }
+
+    /** The main text's numbering: restarts at the chosen first number (after roman front matter). */
+    private fun withPageNumbering(sectPr: String, meta: com.example.thesis.model.ThesisMeta): String =
+        if (!ThesisToc.customNumbering(meta)) sectPr
+        else setPgNumType(
+            // After roman front matter the main text's first page is numbered too (no "different first page").
+            if (meta.frontMatterRoman) sectPr.replace(Regex("""<w:titlePg(\s+w:val="(true|1|on)")?\s*/>"""), "") else sectPr,
+            "w:fmt=\"decimal\" w:start=\"${meta.mainPageStart.coerceAtLeast(1)}\""
+        )
+
+    /**
+     * Replaces the front-matter marker with a paragraph carrying the preliminary pages' section
+     * (same page setup, header and footer, numbered i, ii, iii and ending with a next-page break).
+     */
+    private fun withFrontSection(body: String, sectPr: String): String {
+        if (!body.contains(FRONT_SECTION_BREAK)) return body
+        var front = setPgNumType(sectPr, "w:fmt=\"lowerRoman\" w:start=\"1\"").replace(Regex("""<w:type [^>]*/>"""), "")
+        front = insertInSect(front, "<w:type w:val=\"nextPage\"/>", listOf("pgSz", "pgMar", "paperSrc", "pgBorders", "lnNumType", "pgNumType") + afterPgNumType)
+        return body.replace(FRONT_SECTION_BREAK, "<w:p><w:pPr>$front</w:pPr></w:p>")
     }
 }

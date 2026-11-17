@@ -988,4 +988,9 @@
     <string name="st_card_template">القالب: %1$s</string>
     <string name="st_pick_template_title">قالب لهذه الوثيقة</string>
     <string name="st_pick_template_note">تتغير هذه الوثيقة فقط؛ يبقى قالبك الافتراضي كما هو.</string>
+    <string name="thesis_toc_options">فهرس المحتويات وترقيم الصفحات</string>
+    <string name="thesis_toc_depth">مستويات العناوين في فهرس المحتويات</string>
+    <string name="thesis_front_roman">أرقام رومانية للصفحات التمهيدية</string>
+    <string name="thesis_front_roman_desc">من صفحة الغلاف إلى المختصرات: i، ii، iii؛ ويبدأ الترقيم الرئيسي من المقدمة.</string>
+    <string name="thesis_page_start">رقم أول صفحة في المتن</string>
 </resources>
