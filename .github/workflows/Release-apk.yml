@@ -214,6 +214,9 @@ jobs:
           echo "== Focus timeline (editor tests)"; awk '/TestRunner: started: .*ThesisEditorDeviceTest/{p=1} p' "$d/focus-timeline.txt" 2>/dev/null | grep -v "Denying clipboard" | head -500 || true
           echo "== Clipboard / editor / file / ANR events"; cat "$d/app-events.txt" 2>/dev/null | head -150 || true
           echo "== FATAL EXCEPTIONS"; cat "$d/fatal-exceptions.txt" 2>/dev/null | head -300 || true
+          # Extraction review: the seven actions shown on screen (bounds), from PdfExtractionFlowDeviceTest.
+          echo "== PDF review actions on screen"; grep -h "PdfReviewEvidence" "$d/logcat.txt" 2>/dev/null | head -80 || true
+          echo "== Screenshots"; ls "$d"/screenshots-thesis-device 2>/dev/null | grep -i "pdf-review" || true
 
       - name: Upload device test evidence (logcat, screenshots)
         if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}

@@ -8,7 +8,9 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertTextEquals
@@ -20,6 +22,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.printToString
 import androidx.lifecycle.ViewModelProvider
@@ -62,6 +65,7 @@ class PdfExtractionFlowDeviceTest {
     private val vm: SmartBubbleViewModel get() = ViewModelProvider(compose.activity)[SmartBubbleViewModel::class.java]
     private val context: Context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val draftText: String get() = vm.thesis.state.value.draft!!.text
+    private val keyboard by lazy { InsetsAnimationWatcher(compose) }
 
     @Before
     fun noOldCrashDialog() = CrashLog.clear(InstrumentationRegistry.getInstrumentation().targetContext)
@@ -79,6 +83,7 @@ class PdfExtractionFlowDeviceTest {
     }
 
     private fun tap(tag: String) {
+        keyboard.awaitSettled("before tapping $tag")
         await("node $tag") { exists(tag) }
         try { compose.onNodeWithTag(tag).performScrollTo() } catch (e: AssertionError) { }
         compose.onNodeWithTag(tag).performClick()
@@ -86,6 +91,7 @@ class PdfExtractionFlowDeviceTest {
     }
 
     private fun tapPage(index: Int) {
+        keyboard.awaitSettled("before tapping page $index")
         compose.onNodeWithTag("pdf_pages").performScrollToIndex(index)
         await("page $index") { exists("pdf_page_$index") }
         compose.onNodeWithTag("pdf_page_$index").performClick()
@@ -120,6 +126,7 @@ class PdfExtractionFlowDeviceTest {
             } else {
                 page.canvas.drawText("Source page $n", 60f, 80f, text)
                 page.canvas.drawText(line(n), 60f, 110f, text)
+                if (n == 2) drawTable(page.canvas, 150f, text)
             }
             doc.finishPage(page)
         }
@@ -127,6 +134,63 @@ class PdfExtractionFlowDeviceTest {
         FileOutputStream(f).use { doc.writeTo(it) }
         doc.close()
         return Uri.fromFile(f)
+    }
+
+    private val table = listOf(listOf("Well", "Depth", "Nitrates"), listOf("W1", "120", "35"), listOf("W2", "85", "52"))
+
+    /** A ruled table with text cells (as ExtractionDeviceTest's digital PDF). */
+    private fun drawTable(c: Canvas, top: Float, text: Paint) {
+        val stroke = Paint().apply { strokeWidth = 1f; style = Paint.Style.STROKE }
+        val cw = 150f
+        table.forEachIndexed { r, row -> row.forEachIndexed { k, t -> c.drawText(t, 66f + k * cw, top + r * 22f + 15f, text) } }
+        for (r in 0..table.size) c.drawLine(60f, top + r * 22f, 60f + cw * table[0].size, top + r * 22f, stroke)
+        for (k in 0..table[0].size) c.drawLine(60f + k * cw, top, 60f + k * cw, top + table.size * 22f, stroke)
+    }
+
+    private val actions = listOf("dx_insert_cursor", "dx_insert_append", "dx_insert_paragraphs", "dx_insert_heading", "dx_insert_tables", "dx_copy", "dx_cancel_review")
+
+    /**
+     * The review's seven actions are on screen (displayed, not only in the tree), each wholly
+     * inside the window, without scrolling; their bounds go to logcat (tag PdfReviewEvidence,
+     * printed in the CI summary) and a screenshot is saved (thesis-device/[shotName].png).
+     */
+    private fun assertActionsDisplayed(shotName: String) {
+        keyboard.awaitSettled("review shown")
+        val window = compose.onAllNodes(isRoot(), useUnmergedTree = true).fetchSemanticsNodes().maxOf { it.boundsInRoot.height }
+        for (tag in actions) {
+            compose.onNodeWithTag(tag).assertIsDisplayed()
+            val b = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            android.util.Log.i("PdfReviewEvidence", "$shotName $tag displayed=true bounds=$b window=$window")
+            assertTrue("$tag not wholly on screen: $b (window height $window)", b.width > 0f && b.height > 0f && b.top >= 0f && b.bottom <= window + 1f)
+        }
+        shot(shotName)
+    }
+
+    private fun shot(name: String) {
+        compose.waitForIdle()
+        val dir = File(context.getExternalFilesDir(null), "thesis-device").apply { mkdirs() }
+        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return
+        FileOutputStream(File(dir, "$name.png")).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    private fun count(text: String, part: String) = text.windowed(part.length).count { it == part }
+
+    /** Opens the PDF, selects [pages] (0-based, in that order) and presses Next; returns once the review shows their result. */
+    private fun extract(uri: Uri, pages: List<Int>, timeout: Long = 180_000) {
+        openPdf(uri)
+        for (i in pages) tapPage(i)
+        tap("pdf_next")
+        await("review of ${pages.sorted()}", timeout) {
+            exists("dx_review") && vm.thesis.state.value.extraction?.document?.pages?.map { it.sourcePage } == pages.sorted()
+        }
+    }
+
+    private fun clipboardText(): String? {
+        var t: String? = null
+        compose.runOnUiThread {
+            t = (context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
+        }
+        return t
     }
 
     /** Thesis tab, a new project, its Introduction open with "Existing paragraph." in the editor. */
@@ -142,10 +206,12 @@ class PdfExtractionFlowDeviceTest {
         await("editor") { exists("thesis_editor_text") && vm.thesis.state.value.draft != null }
         compose.onNodeWithTag("thesis_editor_text").performTextInput("Existing paragraph.")
         await("typed") { vm.thesis.state.value.draft?.text?.contains("Existing paragraph.") == true }
+        keyboard.awaitSettled("keyboard opened by typing", shown = true)
     }
 
     private fun openPdf(uri: Uri) {
         compose.runOnUiThread { vm.thesis.openPdfForExtraction(uri) }
+        keyboard.awaitSettled("viewer opened (the keyboard closes)")
         await("viewer") { exists("pdf_page_image_0") }
     }
 
@@ -173,7 +239,7 @@ class PdfExtractionFlowDeviceTest {
         val expected = words("Scanned appendix about springs Water samples from the springs")
         assertTrue("scanned page read by OCR: $scanned", scanned.intersect(expected).size >= expected.size * 7 / 10)
         compose.onNodeWithTag("dx_review_pages").assertTextEquals("Pages: 1, 3, 5")
-        for (a in listOf("dx_insert_cursor", "dx_insert_append", "dx_insert_paragraphs", "dx_insert_heading", "dx_insert_tables", "dx_copy")) assertTrue("action $a", exists(a))
+        assertActionsDisplayed("pdf-review-pages-1-3-5")
         // Back: the pages as selected, nothing extracted again.
         tap("dx_back")
         await("pages again") { exists("pdf_viewer") && !exists("dx_review") }
@@ -226,5 +292,127 @@ class PdfExtractionFlowDeviceTest {
         await("closed") { !exists("pdf_flow") && vm.thesis.state.value.pdfToExtract == null && vm.thesis.state.value.extraction == null }
         await("copy released") { (File(context.cacheDir, "pdf-viewer").listFiles()?.size ?: 0) == 0 }
         assertEquals("Existing paragraph.", draftText.trim())
+    }
+
+    /** Share of the words of [expected] found in [got] (OCR of the scanned page). */
+    private fun recall(expected: String, got: String): Double { val e = words(expected); return e.intersect(words(got)).size.toDouble() / e.size }
+
+    /**
+     * The review after Next: the extracted text of the selected pages shown page by page, all
+     * seven actions on screen, and each of them doing its job on those pages (digital pages and a
+     * scanned one): Cancel and Copy keep the review and insert nothing, Insert at cursor, Tables
+     * only, As paragraphs and Heading + content insert exactly the selected pages once.
+     */
+    @Test
+    fun review_showsTheTextAndAllSevenActions_eachActionWorks_digitalAndScannedPages() {
+        openEditor()
+        val uri = makePdf()
+        // Pages 5 (scanned), 1 and 3 (digital), selected in that order.
+        extract(uri, listOf(4, 0, 2))
+        val first = vm.thesis.state.value.extraction!!.document!!
+        assertEquals(listOf(PageSource.PDF_TEXT, PageSource.PDF_TEXT, PageSource.PDF_OCR), first.pages.map { it.source })
+        // The extracted text is on screen, under the pages' original numbers.
+        compose.onNodeWithTag("dx_page_header_0").assertTextEquals("Page 1")
+        await("text of page 1 shown") { compose.onAllNodes(hasText(line(1), substring = true), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+        assertActionsDisplayed("pdf-review-actions")
+        compose.onNodeWithTag("dx_insert_tables").assertIsNotEnabled() // these pages have no table
+        val before = draftText
+        // Cancel: back to the pages as selected, nothing inserted; Next shows the same result.
+        tap("dx_cancel_review")
+        await("pages after Cancel") { exists("pdf_viewer") && !exists("dx_review") }
+        assertEquals(before, draftText)
+        for (i in 0 until 6) assertPageSelected(i, i in setOf(0, 2, 4))
+        tap("pdf_next")
+        await("same review") { exists("dx_review") }
+        assertSame("not extracted again", first, vm.thesis.state.value.extraction!!.document)
+        // Copy text: the pages' text on the clipboard; nothing inserted, the review stays.
+        tap("dx_copy")
+        await("copied", 20_000) { clipboardText()?.let { it.contains(line(1)) && it.contains(line(3)) } == true }
+        assertEquals(before, draftText)
+        assertTrue(exists("dx_review"))
+        // Insert at cursor: the three pages once, the section's text kept.
+        tap("dx_insert_cursor")
+        await("inserted at cursor") { vm.thesis.state.value.extraction == null && !exists("pdf_flow") }
+        var text = draftText
+        assertEquals(1, count(text, "Existing paragraph."))
+        assertEquals(1, count(text, line(1)))
+        assertEquals(1, count(text, line(3)))
+        assertTrue("scanned page inserted: $text", recall("Scanned appendix about springs Water samples from the springs", text) >= 0.7)
+        assertEquals(0, count(text, line(2)) + count(text, line(4)) + count(text, line(6)))
+        // Tables only (page 2): its table as an editable table, not its text.
+        extract(uri, listOf(1))
+        compose.onNodeWithTag("dx_insert_tables").assertIsEnabled()
+        assertActionsDisplayed("pdf-review-table")
+        tap("dx_insert_tables")
+        await("table inserted") { vm.thesis.state.value.extraction == null && !exists("pdf_flow") }
+        text = draftText
+        assertEquals("tables only: no text", 0, count(text, line(2)))
+        val tables = vm.thesis.state.value.draft!!.media.values.filter { it.data.tableHeader.isNotEmpty() }
+        assertEquals(1, tables.size)
+        assertEquals(listOf("Well", "Depth", "Nitrates"), tables.single().data.tableHeader)
+        assertEquals(listOf(listOf("W1", "120", "35"), listOf("W2", "85", "52")), tables.single().data.tableRows)
+        // As paragraphs (page 6): its text once, no heading made of it.
+        extract(uri, listOf(5))
+        tap("dx_insert_paragraphs")
+        await("paragraphs inserted") { vm.thesis.state.value.extraction == null && !exists("pdf_flow") }
+        text = draftText
+        assertEquals(1, count(text, line(6)))
+        assertTrue(text, text.lines().none { it.startsWith("#") && it.contains("Source page 6") })
+        // Heading + content (page 4): a heading line, then its text once.
+        extract(uri, listOf(3))
+        tap("dx_insert_heading")
+        await("heading inserted") { vm.thesis.state.value.extraction == null && !exists("pdf_flow") }
+        text = draftText
+        assertEquals(1, count(text, line(4)))
+        assertTrue("heading line: $text", text.lines().any { it.startsWith("# ") && it.contains("Source page 4") })
+        // Nothing inserted twice over the whole session.
+        listOf(1, 3, 4, 6).forEach { n -> assertEquals("zone $n", 1, count(text, line(n))) }
+        assertTrue("crash report written", CrashLog.read(context) == null)
+    }
+
+    /** Pages of Arabic and mixed Arabic/Latin text, 38 lines each. */
+    private fun makeArabicPdf(): Uri {
+        val dir = File(context.cacheDir, "flow-test-ar").apply { deleteRecursively(); mkdirs() }
+        val doc = PdfDocument()
+        val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 12f; textAlign = Paint.Align.RIGHT }
+        for (n in 1..4) {
+            val page = doc.startPage(PdfDocument.PageInfo.Builder(595, 842, n).create())
+            for (i in 1..38) {
+                val s = if (i % 2 == 0) "تعد المياه الجوفية مصدرا أساسيا لمياه الشرب في المنطقة $n، السطر $i"
+                else "قيمة pH في البئر W$i هي 7.2 ودرجة الحرارة 18 °C، الصفحة $n"
+                page.canvas.drawText(s, 540f, 50f + i * 20f, text)
+            }
+            doc.finishPage(page)
+        }
+        val f = File(dir, "arabic.pdf")
+        FileOutputStream(f).use { doc.writeTo(it) }
+        doc.close()
+        return Uri.fromFile(f)
+    }
+
+    /**
+     * Long Arabic and mixed Arabic/Latin pages through the whole flow, twice: the review shows
+     * them with every action on screen and scrolls, and each insertion leaves the section editor
+     * bounded by the window (no "Can't represent ... in Constraints" crash) and editable.
+     */
+    @Test
+    fun longArabicAndMixedPages_reviewAndInsertTwice_noLayoutCrash() {
+        openEditor()
+        val uri = makeArabicPdf()
+        for ((k, action) in listOf("dx_insert_paragraphs", "dx_insert_append").withIndex()) {
+            extract(uri, listOf(3, 0, 2), timeout = 300_000)
+            assertActionsDisplayed("pdf-review-arabic-$k")
+            compose.onNodeWithTag("dx_pages").performScrollToNode(hasTestTag("dx_page_header_2"))
+            tap(action)
+            await("inserted $action") { vm.thesis.state.value.extraction == null && !exists("pdf_flow") }
+            keyboard.awaitSettled("editor after $action")
+            val window = compose.onAllNodes(isRoot()).fetchSemanticsNodes().maxOf { it.size.height }
+            val editor = compose.onNodeWithTag("thesis_editor_text").fetchSemanticsNode().size.height
+            assertTrue("editor height $editor within the window $window", editor <= window)
+        }
+        val text = draftText
+        assertTrue("Arabic text inserted", text.count { it in '\u0600'..'\u06FF' } > 600)
+        assertEquals(1, count(text, "Existing paragraph."))
+        assertTrue("crash report written", CrashLog.read(context) == null)
     }
 }

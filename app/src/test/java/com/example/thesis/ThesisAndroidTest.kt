@@ -1154,6 +1154,19 @@ class ThesisAndroidTest {
         return after.substring(p, after.length - q)
     }
 
+    /** The seven review actions, each displayed (on screen) and enabled where content allows it. */
+    private val reviewActions = listOf("dx_insert_cursor", "dx_insert_append", "dx_insert_paragraphs", "dx_insert_heading", "dx_insert_tables", "dx_copy", "dx_cancel_review")
+
+    private fun assertReviewActionsShown() {
+        compose.waitForIdle()
+        val window = compose.onAllNodes(androidx.compose.ui.test.isRoot()).fetchSemanticsNodes().maxOf { it.boundsInRoot.height }
+        for (tag in reviewActions) {
+            compose.onNodeWithTag(tag).assertIsDisplayed()
+            val b = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            assertTrue("$tag not wholly on screen: $b (window height $window)", b.width > 0f && b.height >= 40f && b.bottom <= window + 1f)
+        }
+    }
+
     private val pdfUri = android.net.Uri.parse("file:///report.pdf")
     private fun pdfSource(vararg pages: Int) = com.example.extraction.ExtractionSource(pdfUri, isPdf = true, pages = linkedSetOf(*pages.toTypedArray()))
 
@@ -1183,10 +1196,8 @@ class ThesisAndroidTest {
             compose.onNodeWithTag("dx_page_header_$i").assertTextEquals(label)
         }
         compose.onNodeWithTag("dx_summary").assertTextEquals("Extraction completed: 3 of 3 pages read.")
-        // Every action of the review is there.
-        listOf("dx_insert_cursor", "dx_insert_append", "dx_insert_paragraphs", "dx_insert_heading", "dx_insert_tables", "dx_copy", "dx_cancel_review").forEach {
-            assertTrue("action $it", tagExists(it))
-        }
+        // Every action of the review is on screen at once (not only in the tree), without scrolling.
+        assertReviewActionsShown()
         // Copy: the text of the three pages.
         tap("dx_copy")
         val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).primaryClip!!.getItemAt(0).text.toString()
@@ -1312,6 +1323,8 @@ class ThesisAndroidTest {
         for ((k, action) in listOf("dx_insert_paragraphs", "dx_insert_heading", "dx_insert_append").withIndex()) {
             compose.runOnIdle { controller.startExtraction(listOf(pdfSource(0, 3 + k, 8 + k)), "auto", controller.state.value.draft!!.text.length, extractor) }
             await("review $action") { tagExists("dx_pages") && controller.state.value.extraction?.document != null }
+            // Right to left (Arabic UI): the seven actions are on screen too.
+            assertReviewActionsShown()
             val root = compose.onAllNodes(androidx.compose.ui.test.isRoot()).fetchSemanticsNodes().maxOf { it.size.height }
             assertTrue("review list bounded", compose.onNodeWithTag("dx_pages").fetchSemanticsNode().size.height <= root)
             compose.onNodeWithTag("dx_pages").performTouchInput { swipeUp() }

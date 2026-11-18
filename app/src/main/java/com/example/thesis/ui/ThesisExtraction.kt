@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -356,21 +357,18 @@ internal fun ExtractionReviewContent(host: ThesisHost, onBack: () -> Unit) {
                 // Insertion: always into the section the extraction was started from, from this
                 // review's pages (never the whole PDF or an earlier extraction).
                 val tables = doc.pages.sumOf { it.tables }
-                // One row that scrolls sideways: every action stays within reach without taking
-                // the height the text needs (on a small screen a wrapped bar covered most of it).
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(10.dp).testTag("dx_actions"),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = { controller.insertExtraction(ExtractionInsertMode.AT_CURSOR) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_cursor")) { Text(stringResource(R.string.dx_insert_cursor)) }
-                    OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.APPEND) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_append")) { Text(stringResource(R.string.dx_insert_append)) }
-                    OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.AS_PARAGRAPHS) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_paragraphs")) { Text(stringResource(R.string.dx_insert_paragraphs)) }
-                    OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.HEADING_AND_CONTENT) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_heading")) { Text(stringResource(R.string.dx_insert_heading)) }
-                    OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.TABLES_ONLY) }, enabled = tables > 0, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_tables")) { Text(stringResource(R.string.dx_insert_tables, tables)) }
-                    OutlinedButton(onClick = {
+                // Every action on screen at once, in a fixed grid under the text (3 rows): never
+                // in a row that scrolls sideways (run #84 build: only the first two or three of the
+                // seven fitted on a phone, the others were off screen with nothing showing them).
+                ExtractionActions(
+                    tables = tables,
+                    onInsert = { mode -> controller.insertExtraction(mode) },
+                    onCopy = {
                         (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.setPrimaryClip(ClipData.newPlainText("SmartBubble", ExtractionText.plain(doc)))
                         android.widget.Toast.makeText(context, context.getString(R.string.scan_text_copied), android.widget.Toast.LENGTH_SHORT).show()
-                    }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_copy")) { Text(stringResource(R.string.scan_copy_text)) }
-                    TextButton(onClick = onBack, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_cancel_review")) { Text(stringResource(R.string.action_cancel)) }
-                }
+                    },
+                    onCancel = onBack
+                )
             }
         }
     }
@@ -382,5 +380,39 @@ internal fun ExtractionReviewContent(host: ThesisHost, onBack: () -> Unit) {
             confirmButton = { Button(onClick = { confirmRetry = null; controller.retryExtractedPage(pageIndex, code, host.extractor()) }, modifier = Modifier.testTag("dx_retry_confirm")) { Text(stringResource(R.string.dx_retry_anyway)) } },
             dismissButton = { TextButton(onClick = { confirmRetry = null }) { Text(stringResource(R.string.action_cancel)) } }
         )
+    }
+}
+
+/**
+ * The review's actions, all visible: Insert at cursor, Append to section, As paragraphs,
+ * Heading + content, Tables only, Copy text and Cancel, in three rows of equal-width buttons
+ * (labels wrap on two lines rather than pushing a button off screen).
+ */
+@Composable
+private fun ExtractionActions(tables: Int, onInsert: (ExtractionInsertMode) -> Unit, onCopy: () -> Unit, onCancel: () -> Unit) {
+    @Composable
+    fun RowScope.Action(tag: String, label: String, primary: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
+        val m = Modifier.weight(1f).heightIn(min = 48.dp).testTag(tag)
+        val pad = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+        val text: @Composable () -> Unit = { Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
+        if (primary) Button(onClick = onClick, enabled = enabled, modifier = m, contentPadding = pad) { text() }
+        else OutlinedButton(onClick = onClick, enabled = enabled, modifier = m, contentPadding = pad) { text() }
+    }
+    Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth().testTag("dx_actions")) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Action("dx_insert_cursor", stringResource(R.string.dx_insert_cursor), primary = true) { onInsert(ExtractionInsertMode.AT_CURSOR) }
+                Action("dx_insert_append", stringResource(R.string.dx_insert_append)) { onInsert(ExtractionInsertMode.APPEND) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Action("dx_insert_paragraphs", stringResource(R.string.dx_insert_paragraphs)) { onInsert(ExtractionInsertMode.AS_PARAGRAPHS) }
+                Action("dx_insert_heading", stringResource(R.string.dx_insert_heading)) { onInsert(ExtractionInsertMode.HEADING_AND_CONTENT) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Action("dx_insert_tables", stringResource(R.string.dx_insert_tables, tables), enabled = tables > 0) { onInsert(ExtractionInsertMode.TABLES_ONLY) }
+                Action("dx_copy", stringResource(R.string.scan_copy_text)) { onCopy() }
+                Action("dx_cancel_review", stringResource(R.string.action_cancel)) { onCancel() }
+            }
+        }
     }
 }
