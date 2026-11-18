@@ -1,5 +1,6 @@
 package com.example.thesis.ui
 
+import com.example.ui.publishOnMain
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.foundation.Image
@@ -80,8 +81,11 @@ enum class PdfPageMark { EXTRACTED, CHECK }
 internal fun rememberPdfPages(uri: Uri): Result<PdfPageRenderer>? {
     val context = LocalContext.current
     val opened by produceState<Result<PdfPageRenderer>?>(null, uri) {
+        // publishOnMain: the open runs on IO; the state write must come from the main thread (under
+        // the Compose test harness the continuation otherwise resumes on an IO worker and measures
+        // there: "Detected multithreaded access to SnapshotStateObserver", Android 16 run #99).
         val r = PdfPageRenderer.open(context, uri)
-        value = if (r != null) Result.success(r) else Result.failure(IllegalStateException("unreadable"))
+        publishOnMain(if (r != null) Result.success(r) else Result.failure(IllegalStateException("unreadable")))
     }
     val renderer = opened?.getOrNull()
     DisposableEffect(renderer) { onDispose { renderer?.close() } }
@@ -93,14 +97,14 @@ internal fun rememberPdfPages(uri: Uri): Result<PdfPageRenderer>? {
 private fun rememberDisplayName(uri: Uri): String? {
     val context = LocalContext.current
     val name by produceState<String?>(null, uri) {
-        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        publishOnMain(kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 if (uri.scheme == "file") uri.lastPathSegment
                 else context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
                     if (c.moveToFirst()) c.getString(0) else null
                 }
             } catch (e: Exception) { null }
-        }
+        })
     }
     return name
 }
@@ -232,7 +236,7 @@ private fun PdfPageItem(renderer: PdfPageRenderer, index: Int, count: Int, width
     // renderer's bounded cache, so scrolling back (or selecting it) does not draw it again.
     val bitmap by produceState<Result<Bitmap>?>(null, renderer, index, widthPx) {
         val b = renderer.render(index, widthPx)
-        value = if (b != null) Result.success(b) else Result.failure(IllegalStateException())
+        publishOnMain(if (b != null) Result.success(b) else Result.failure(IllegalStateException()))
     }
     val description = if (isSelected) stringResource(R.string.dx_pdf_page_selected_desc, index + 1, count) else stringResource(R.string.dx_pdf_page_desc, index + 1, count)
     val actionLabel = stringResource(if (isSelected) R.string.dx_pdf_deselect_page else R.string.dx_pdf_select_page)
