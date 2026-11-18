@@ -24,10 +24,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -104,7 +103,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.example.R
 import com.example.data.model.TemplateEntity
 import com.example.data.model.ThesisRevisionEntity
@@ -601,9 +599,9 @@ fun ThesisReviewDialog(controller: ThesisController, review: ProposalReview) {
     var choosing by remember { mutableStateOf(status == ProposalStatus.NEEDS_DESTINATION) }
     var editingMedia by remember { mutableStateOf<NewElement?>(null) }
     val numbering = remember(review.before) { ThesisStructure.numbering(review.before) }
-    Dialog(onDismissRequest = { controller.closeReview() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest = { controller.closeReview() }, properties = com.example.ui.adaptive.fullScreenDialogProperties()) {
         Surface(Modifier.fillMaxSize().testTag("thesis_review"), color = MaterialTheme.colorScheme.background) {
-            Column(Modifier.statusBarsPadding().navigationBarsPadding()) {
+            Column(Modifier.windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing)) {
                 Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { controller.closeReview() }) { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close)) }
                     Text(stringResource(R.string.thesis_review_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).semantics { heading() })

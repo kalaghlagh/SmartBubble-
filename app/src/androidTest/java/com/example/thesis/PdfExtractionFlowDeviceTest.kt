@@ -149,19 +149,43 @@ class PdfExtractionFlowDeviceTest {
 
     private val actions = listOf("dx_insert_cursor", "dx_insert_append", "dx_insert_paragraphs", "dx_insert_heading", "dx_insert_tables", "dx_copy", "dx_cancel_review")
 
+    /** Height of the app's windows in pixels (the review dialog and the activity are edge to edge). */
+    private fun windowHeight() = compose.onAllNodes(isRoot(), useUnmergedTree = true).fetchSemanticsNodes().maxOf { it.boundsInRoot.height }
+
+    /** Lowest pixel a control may reach: above the navigation bar and the keyboard, measured on the device. */
+    private fun usableBottom(): Float { val b = keyboard.bottoms(); return windowHeight() - maxOf(b.navigation, b.ime) }
+
+    /** Display, density, font scale and insets of this run (logcat PdfReviewEvidence, printed in the CI summary). */
+    private fun logMetrics(label: String) {
+        val m = context.resources.displayMetrics
+        val c = context.resources.configuration
+        val b = keyboard.bottoms()
+        android.util.Log.i("PdfReviewEvidence", "$label display=${m.widthPixels}x${m.heightPixels}px ${c.screenWidthDp}x${c.screenHeightDp}dp " +
+            "density=${m.density} fontScale=${c.fontScale} window=${windowHeight()} navBottom=${b.navigation} imeBottom=${b.ime} sdk=${android.os.Build.VERSION.SDK_INT} model=${android.os.Build.MODEL}")
+    }
+
     /**
      * The review's seven actions are on screen (displayed, not only in the tree), each wholly
-     * inside the window, without scrolling; their bounds go to logcat (tag PdfReviewEvidence,
+     * inside the usable window: above the navigation bar and the keyboard as measured on the
+     * device ([withKeyboard]: each is first scrolled into view in the action area, which is what
+     * a user does with the keyboard open). Bounds and metrics go to logcat (tag PdfReviewEvidence,
      * printed in the CI summary) and a screenshot is saved (thesis-device/[shotName].png).
      */
-    private fun assertActionsDisplayed(shotName: String) {
-        keyboard.awaitSettled("review shown")
-        val window = compose.onAllNodes(isRoot(), useUnmergedTree = true).fetchSemanticsNodes().maxOf { it.boundsInRoot.height }
+    private fun assertActionsDisplayed(shotName: String, withKeyboard: Boolean = false) {
+        keyboard.awaitSettled("review shown", shown = withKeyboard)
+        logMetrics(shotName)
+        val area = compose.onNodeWithTag("dx_actions").fetchSemanticsNode().boundsInRoot
+        val list = compose.onNodeWithTag("dx_pages").fetchSemanticsNode().boundsInRoot
+        android.util.Log.i("PdfReviewEvidence", "$shotName text=$list actions=$area")
         for (tag in actions) {
+            if (withKeyboard) { compose.onNodeWithTag(tag).performScrollTo(); keyboard.awaitSettled("scrolled to $tag", shown = true) }
             compose.onNodeWithTag(tag).assertIsDisplayed()
             val b = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
-            android.util.Log.i("PdfReviewEvidence", "$shotName $tag displayed=true bounds=$b window=$window")
-            assertTrue("$tag not wholly on screen: $b (window height $window)", b.width > 0f && b.height > 0f && b.top >= 0f && b.bottom <= window + 1f)
+            val bottom = usableBottom()
+            val visible = b.top >= 0f && b.bottom <= bottom + 1f
+            android.util.Log.i("PdfReviewEvidence", "$shotName $tag displayed=true bounds=$b usableBottom=$bottom visible=$visible")
+            assertTrue("$tag not wholly in the usable window: $b (usable bottom $bottom, window ${windowHeight()})", b.width > 0f && b.height > 0f && visible)
+            assertTrue("$tag $b over the text $list", b.top >= list.bottom - 1f || b.left >= list.right - 1f || b.right <= list.left + 1f)
         }
         shot(shotName)
     }
@@ -179,6 +203,9 @@ class PdfExtractionFlowDeviceTest {
     private fun extract(uri: Uri, pages: List<Int>, timeout: Long = 180_000) {
         openPdf(uri)
         for (i in pages) tapPage(i)
+        keyboard.awaitSettled("pages selected")
+        val next = compose.onNodeWithTag("pdf_next").fetchSemanticsNode().boundsInRoot
+        assertTrue("Next $next under the navigation bar or the keyboard (usable bottom ${usableBottom()})", next.bottom <= usableBottom() + 1f)
         tap("pdf_next")
         await("review of ${pages.sorted()}", timeout) {
             exists("dx_review") && vm.thesis.state.value.extraction?.document?.pages?.map { it.sourcePage } == pages.sorted()
@@ -402,6 +429,13 @@ class PdfExtractionFlowDeviceTest {
         for ((k, action) in listOf("dx_insert_paragraphs", "dx_insert_append").withIndex()) {
             extract(uri, listOf(3, 0, 2), timeout = 300_000)
             assertActionsDisplayed("pdf-review-arabic-$k")
+            if (k == 0) {
+                // Correcting a block opens the keyboard: every action stays reachable above it.
+                compose.onAllNodes(androidx.compose.ui.test.SemanticsMatcher("block text field") {
+                    it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.TestTag)?.matches(Regex("dx_block_\\d+_\\d+_text")) == true
+                })[0].performClick()
+                assertActionsDisplayed("pdf-review-arabic-keyboard", withKeyboard = true)
+            }
             compose.onNodeWithTag("dx_pages").performScrollToNode(hasTestTag("dx_page_header_2"))
             tap(action)
             await("inserted $action") { vm.thesis.state.value.extraction == null && !exists("pdf_flow") }

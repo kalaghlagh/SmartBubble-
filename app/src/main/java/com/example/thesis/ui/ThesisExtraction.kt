@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -49,7 +48,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -66,8 +64,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.extraction.ExtractedBlock
@@ -220,10 +216,8 @@ private fun BlockEditor(b: ExtractedBlock, onChange: (ExtractedBlock?) -> Unit, 
 @Composable
 internal fun ExtractionReviewDialog(host: ThesisHost) {
     val controller = host.thesis
-    Dialog(onDismissRequest = { controller.cancelExtraction() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            ExtractionReviewContent(host, onBack = { controller.cancelExtraction() })
-        }
+    com.example.ui.adaptive.FullScreenDialog(onDismissRequest = { controller.cancelExtraction() }) {
+        ExtractionReviewContent(host, onBack = { controller.cancelExtraction() })
     }
 }
 
@@ -300,8 +294,25 @@ internal fun ExtractionReviewContent(host: ThesisHost, onBack: () -> Unit) {
                             modifier = Modifier.testTag("dx_page_${p.index}"))
                     }
                 }
-                // Bounded (weight): the list scrolls and each text field inside it is bounded too.
-                LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp).testTag("dx_pages"), state = listState,
+                // Insertion: always into the section the extraction was started from, from this
+                // review's pages (never the whole PDF or an earlier extraction).
+                val tables = doc.pages.sumOf { it.tables }
+                // The text and the seven actions share the window deliberately (ContentWithActions):
+                // the text list takes what is left and keeps at least a third of the height; the
+                // actions sit under it (beside it when the window is short and wide), in a grid
+                // that adapts to the width and scrolls vertically if it needs more room.
+                com.example.ui.adaptive.ContentWithActions(Modifier.weight(1f), actionsTag = "dx_actions", actions = {
+                    ExtractionActions(
+                        tables = tables,
+                        onInsert = { mode -> controller.insertExtraction(mode) },
+                        onCopy = {
+                            (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.setPrimaryClip(ClipData.newPlainText("SmartBubble", ExtractionText.plain(doc)))
+                            android.widget.Toast.makeText(context, context.getString(R.string.scan_text_copied), android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                        onCancel = onBack
+                    )
+                }) {
+                LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp).testTag("dx_pages"), state = listState,
                     verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     doc.pages.forEach { page ->
                         val n = originalPageNumber(page)
@@ -353,22 +364,7 @@ internal fun ExtractionReviewContent(host: ThesisHost, onBack: () -> Unit) {
                         item(key = "e${page.index}") { Spacer(Modifier.height(2.dp)) }
                     }
                 }
-                HorizontalDivider()
-                // Insertion: always into the section the extraction was started from, from this
-                // review's pages (never the whole PDF or an earlier extraction).
-                val tables = doc.pages.sumOf { it.tables }
-                // Every action on screen at once, in a fixed grid under the text (3 rows): never
-                // in a row that scrolls sideways (run #84 build: only the first two or three of the
-                // seven fitted on a phone, the others were off screen with nothing showing them).
-                ExtractionActions(
-                    tables = tables,
-                    onInsert = { mode -> controller.insertExtraction(mode) },
-                    onCopy = {
-                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.setPrimaryClip(ClipData.newPlainText("SmartBubble", ExtractionText.plain(doc)))
-                        android.widget.Toast.makeText(context, context.getString(R.string.scan_text_copied), android.widget.Toast.LENGTH_SHORT).show()
-                    },
-                    onCancel = onBack
-                )
+                }
             }
         }
     }
@@ -384,35 +380,19 @@ internal fun ExtractionReviewContent(host: ThesisHost, onBack: () -> Unit) {
 }
 
 /**
- * The review's actions, all visible: Insert at cursor, Append to section, As paragraphs,
- * Heading + content, Tables only, Copy text and Cancel, in three rows of equal-width buttons
- * (labels wrap on two lines rather than pushing a button off screen).
+ * The review's seven actions, always all reachable: Insert at cursor, Append to section, As
+ * paragraphs, Heading + content, Tables only, Copy text and Cancel, in the app's adaptive action
+ * grid (as many equal-width cells per row as the width allows, labels wrapping).
  */
 @Composable
 private fun ExtractionActions(tables: Int, onInsert: (ExtractionInsertMode) -> Unit, onCopy: () -> Unit, onCancel: () -> Unit) {
-    @Composable
-    fun RowScope.Action(tag: String, label: String, primary: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
-        val m = Modifier.weight(1f).heightIn(min = 48.dp).testTag(tag)
-        val pad = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-        val text: @Composable () -> Unit = { Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
-        if (primary) Button(onClick = onClick, enabled = enabled, modifier = m, contentPadding = pad) { text() }
-        else OutlinedButton(onClick = onClick, enabled = enabled, modifier = m, contentPadding = pad) { text() }
-    }
-    Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth().testTag("dx_actions")) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Action("dx_insert_cursor", stringResource(R.string.dx_insert_cursor), primary = true) { onInsert(ExtractionInsertMode.AT_CURSOR) }
-                Action("dx_insert_append", stringResource(R.string.dx_insert_append)) { onInsert(ExtractionInsertMode.APPEND) }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Action("dx_insert_paragraphs", stringResource(R.string.dx_insert_paragraphs)) { onInsert(ExtractionInsertMode.AS_PARAGRAPHS) }
-                Action("dx_insert_heading", stringResource(R.string.dx_insert_heading)) { onInsert(ExtractionInsertMode.HEADING_AND_CONTENT) }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Action("dx_insert_tables", stringResource(R.string.dx_insert_tables, tables), enabled = tables > 0) { onInsert(ExtractionInsertMode.TABLES_ONLY) }
-                Action("dx_copy", stringResource(R.string.scan_copy_text)) { onCopy() }
-                Action("dx_cancel_review", stringResource(R.string.action_cancel)) { onCancel() }
-            }
-        }
-    }
+    com.example.ui.adaptive.AdaptiveActionGrid(listOf(
+        com.example.ui.adaptive.AdaptiveAction("dx_insert_cursor", stringResource(R.string.dx_insert_cursor), primary = true) { onInsert(ExtractionInsertMode.AT_CURSOR) },
+        com.example.ui.adaptive.AdaptiveAction("dx_insert_append", stringResource(R.string.dx_insert_append)) { onInsert(ExtractionInsertMode.APPEND) },
+        com.example.ui.adaptive.AdaptiveAction("dx_insert_paragraphs", stringResource(R.string.dx_insert_paragraphs)) { onInsert(ExtractionInsertMode.AS_PARAGRAPHS) },
+        com.example.ui.adaptive.AdaptiveAction("dx_insert_heading", stringResource(R.string.dx_insert_heading)) { onInsert(ExtractionInsertMode.HEADING_AND_CONTENT) },
+        com.example.ui.adaptive.AdaptiveAction("dx_insert_tables", stringResource(R.string.dx_insert_tables, tables), enabled = tables > 0) { onInsert(ExtractionInsertMode.TABLES_ONLY) },
+        com.example.ui.adaptive.AdaptiveAction("dx_copy", stringResource(R.string.scan_copy_text), onClick = onCopy),
+        com.example.ui.adaptive.AdaptiveAction("dx_cancel_review", stringResource(R.string.action_cancel), onClick = onCancel)
+    ))
 }

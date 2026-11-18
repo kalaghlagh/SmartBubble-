@@ -61,8 +61,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.example.R
 import com.example.ui.pdf.PdfPageRenderer
 
@@ -109,10 +107,8 @@ private fun rememberDisplayName(uri: Uri): String? {
 @Composable
 fun PdfPageViewer(uri: Uri, title: String, marks: Map<Int, PdfPageMark>, selected: Set<Int>, onToggle: (Int) -> Unit, onNext: () -> Unit, onClose: () -> Unit) {
     val opened = rememberPdfPages(uri)
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            PdfPagesPane(opened, title, marks, selected, onToggle, onNext, onClose)
-        }
+    com.example.ui.adaptive.FullScreenDialog(onDismissRequest = onClose) {
+        PdfPagesPane(opened, title, marks, selected, onToggle, onNext, onClose)
     }
 }
 
@@ -281,13 +277,13 @@ internal fun PdfExtractionFlow(host: ThesisHost, uri: Uri, cursor: () -> Int, sy
             host.ocrLanguageCode, cursor(), host.extractor())
         reviewing = true
     }
-    Dialog(onDismissRequest = { if (reviewing && x != null) back() else controller.closePdfViewer() },
-        properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize().testTag("pdf_flow"), color = MaterialTheme.colorScheme.background) {
-            if (reviewing && x != null) ExtractionReviewContent(host, onBack = back)
-            else PdfPagesPane(opened, fileName ?: stringResource(R.string.dx_pdf_viewer_title), marks, selected,
-                onToggle = { i -> selection = if (i in selected) selection.filter { it != i }.toIntArray() else selection + i },
-                onNext = next, onClose = { controller.closePdfViewer() })
-        }
+    // Edge to edge on every Android version, content inside the safe area (system bars, cutout,
+    // keyboard): the same layout as Android 15+ gives apps targeting SDK 35+.
+    com.example.ui.adaptive.FullScreenDialog(onDismissRequest = { if (reviewing && x != null) back() else controller.closePdfViewer() },
+        modifier = Modifier.testTag("pdf_flow")) {
+        if (reviewing && x != null) ExtractionReviewContent(host, onBack = back)
+        else PdfPagesPane(opened, fileName ?: stringResource(R.string.dx_pdf_viewer_title), marks, selected,
+            onToggle = { i -> selection = if (i in selected) selection.filter { it != i }.toIntArray() else selection + i },
+            onNext = next, onClose = { controller.closePdfViewer() })
     }
 }

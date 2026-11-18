@@ -128,6 +128,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -937,6 +938,8 @@ private fun ThesisSectionEditor(host: ThesisHost) {
         // inside the page scroll could leave the cursor under the keyboard).
         androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f)) {
         val viewport = maxHeight
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        var toolbarHeight by remember { mutableStateOf(48.dp) }
         val typing = editorFocused && WindowInsets.isImeVisible
         LaunchedEffect(typing, viewport) { if (typing) editorArea.bringIntoView() }
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -970,11 +973,14 @@ private fun ThesisSectionEditor(host: ThesisHost) {
             }
             state.sectionHistory?.let { SectionHistoryCard(controller, it, onClose = { controller.selectSection(section.id) }) }
             Column(Modifier.bringIntoViewRequester(editorArea), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            // Formatting toolbar. The heading menu is anchored to the toolbar itself (not to an icon
-            // inside the scrolling row), so it opens whatever the row's scroll position.
+            // Formatting toolbar. Every tool is on screen: the row wraps onto a second line when the
+            // width is short (it scrolled sideways before, hiding the alignment tools on a phone).
+            // The heading menu is anchored to the toolbar itself. Its measured height is what the
+            // field leaves for it while typing.
             Box {
-            Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), shape = RoundedCornerShape(14.dp)) {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.onSizeChanged { toolbarHeight = with(density) { it.height.toDp() } }) {
+                FlowRow(Modifier.fillMaxWidth().padding(horizontal = 2.dp).testTag("thesis_format_toolbar")) {
                     ToolIcon(Icons.Filled.Undo, R.string.thesis_undo, "thesis_undo", undo.isNotEmpty()) {
                         val prev = undo.removeAt(undo.lastIndex); redo.add(value); value = prev; controller.updateDraft(prev.text)
                     }
@@ -1013,7 +1019,7 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                 // extracted multi-page PDF: 362745 px on a device) cannot be represented in layout
                 // Constraints and crashes. Bounded to the visible area, the text scrolls inside.
                 modifier = Modifier.fillMaxWidth()
-                    .then(if (typing) Modifier.height((viewport - 96.dp).coerceAtLeast(140.dp))
+                    .then(if (typing) Modifier.height((viewport - toolbarHeight - 48.dp).coerceAtLeast(140.dp))
                         else Modifier.heightIn(min = minOf(260.dp, viewport), max = viewport.coerceAtLeast(260.dp)))
                     .onFocusChanged { editorFocused = it.isFocused }
                     .testTag("thesis_editor_text")
@@ -1139,7 +1145,8 @@ private fun ToolIcon(icon: ImageVector, label: Int, tag: String, enabled: Boolea
 
 @Composable
 private fun ToolDivider() {
-    Box(Modifier.padding(horizontal = 2.dp).width(1.dp).height(24.dp).background(MaterialTheme.colorScheme.outlineVariant))
+    // As tall as the 48 dp tool buttons, the line centred: the toolbar can wrap onto two rows.
+    Box(Modifier.padding(horizontal = 2.dp, vertical = 12.dp).width(1.dp).height(24.dp).background(MaterialTheme.colorScheme.outlineVariant))
 }
 
 /** Creates or edits a table: rows and columns, header row and cells, caption. */
