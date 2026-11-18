@@ -1093,4 +1093,23 @@
     <string name="dx_regions_to_review">%1$d éléments de cette page à vérifier (encadrés)</string>
     <string name="dx_note_rerouted">%1$s lignes relues avec le modèle de leur écriture</string>
     <string name="dx_note_missing">%1$s lignes de texte de l\'image n\'ont pas pu être lues : comparez avec la page originale</string>
+    <string name="dx_pdf_viewer_title">Choisir une page</string>
+    <string name="dx_pdf_hint">Touchez une page pour la sélectionner, puis extrayez son texte.</string>
+    <string name="dx_pdf_loading">Ouverture du PDF…</string>
+    <string name="dx_pdf_open_error">Ce PDF ne peut pas être affiché (endommagé ou protégé par un mot de passe).</string>
+    <string name="dx_pdf_page_error">Cette page n\'a pas pu être affichée.</string>
+    <string name="dx_pdf_selected">Sélectionnée</string>
+    <string name="dx_pdf_selected_of">Page %1$d sur %2$d sélectionnée</string>
+    <string name="dx_pdf_extract_page">Extraire la page %1$d</string>
+    <string name="dx_pdf_page_desc">Page %1$d sur %2$d</string>
+    <string name="dx_pdf_page_selected_desc">Page %1$d sur %2$d, sélectionnée</string>
+    <string name="dx_pdf_extracted">Texte extrait</string>
+    <string name="dx_pdf_needs_review">Texte extrait à vérifier</string>
+    <string name="st_settings_subtitle">Mise en forme automatique, langue, format et modèles par défaut</string>
+    <string name="st_group_automatic">Mise en forme automatique</string>
+    <string name="st_group_new_documents">Nouveaux documents</string>
+    <string name="st_settings_expand">Afficher les réglages des modèles intelligents</string>
+    <string name="st_settings_collapse">Masquer les réglages des modèles intelligents</string>
+    <string name="st_settings_expanded">Développé</string>
+    <string name="st_settings_collapsed">Réduit</string>
 </resources>

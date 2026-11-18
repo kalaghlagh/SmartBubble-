@@ -511,6 +511,11 @@ class AppSmokeDeviceTest {
         // Settings: Auto Format.
         tap("nav_settings")
         await("settings") { vm.currentTab.value == AppNavTab.SETTINGS }
+        // Smart Templates settings: collapsed at first, the whole header opens and closes them.
+        scrollToTag("st_settings_header")
+        assertTrue("settings collapsed at first", !exists("st_auto_format_switch"))
+        tap("st_settings_header")
+        await("settings expanded") { exists("st_auto_format_switch") && exists("st_manage_templates") }
         scrollToTag("st_auto_format_switch")
         val before = vm.autoFormat.value
         tap("st_auto_format_switch")
@@ -518,6 +523,9 @@ class AppSmokeDeviceTest {
         tap("st_auto_format_switch")
         await("auto format back") { vm.autoFormat.value == before }
         shot("st-settings")
+        scrollToTag("st_settings_header")
+        tap("st_settings_header")
+        await("settings collapsed") { !exists("st_auto_format_switch") }
 
         // Built-in outputs on the device: PDF pages drawn with the style (border, top band, Arabic).
         val dir = File(context.cacheDir, "st-device").apply { deleteRecursively(); mkdirs() }

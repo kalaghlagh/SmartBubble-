@@ -220,7 +220,10 @@ object LineSegments {
             val px = c.x * width
             (isMark(c.text) && px > nextX && px < letterX) || (c.text.isBlank() && px > left && px < letterX)
         }
-        val out = (kept + RecChar("-", dashX, 0.9f)).sortedBy { it.x }
+        // The dash ends the marker: a word gap stays between it and the next word.
+        val gapX = ((nextX + left) / 2f) / width
+        val hasGap = kept.any { it.text.isBlank() && it.x * width > nextX && it.x * width < left }
+        val out = (kept + RecChar("-", dashX, 0.9f) + listOfNotNull(if (hasGap) null else RecChar(" ", gapX, 0.9f))).sortedBy { it.x }
         return line.copy(text = out.joinToString("") { it.text }, chars = out)
     }
 }

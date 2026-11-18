@@ -1,5 +1,11 @@
 package com.example.ui.screens
 
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -347,41 +353,82 @@ fun SmartTemplatesSettingsCard(viewModel: SmartBubbleViewModel) {
     val language by viewModel.documentLanguage.collectAsState()
     val format by viewModel.documentFormat.collectAsState()
     val library by viewModel.templateLibrary.collectAsState()
+    // Collapsed by default; the state survives rotation, never the values (they are persisted
+    // by the view model as before).
+    var expanded by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    val expandLabel = stringResource(if (expanded) R.string.st_settings_collapse else R.string.st_settings_expand)
+    val stateLabel = stringResource(if (expanded) R.string.st_settings_expanded else R.string.st_settings_collapsed)
     Card(Modifier.fillMaxWidth().testTag("st_settings_card"), shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.st_settings_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.fillMaxWidth()) {
+            // Header: the whole row toggles the section.
+            Row(
+                Modifier.fillMaxWidth()
+                    .clickable(onClickLabel = expandLabel, role = androidx.compose.ui.semantics.Role.Button) { expanded = !expanded }
+                    .semantics { stateDescription = stateLabel }
+                    .heightIn(min = 64.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .testTag("st_settings_header"),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.st_auto_format), style = MaterialTheme.typography.bodyLarge)
-                    Text(stringResource(R.string.st_auto_format_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.st_settings_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.st_settings_subtitle), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                androidx.compose.material3.Switch(checked = auto, onCheckedChange = { viewModel.setAutoFormat(it) }, modifier = Modifier.testTag("st_auto_format_switch"))
+                val turn by androidx.compose.animation.core.animateFloatAsState(if (expanded) 180f else 0f, label = "chevron")
+                Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.rotate(turn).testTag("st_settings_chevron"))
             }
-            Text(stringResource(R.string.st_document_language), style = MaterialTheme.typography.labelLarge)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("auto" to stringResource(R.string.st_language_auto), "ar" to "العربية", "fr" to "Français", "en" to "English").forEach { (code, label) ->
-                    FilterChip(selected = language == code, onClick = { viewModel.setDocumentLanguage(code) }, label = { Text(label) }, modifier = Modifier.testTag("st_doc_lang_$code"))
+            androidx.compose.animation.AnimatedVisibility(visible = expanded,
+                enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
+                exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut()) {
+                Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp).testTag("st_settings_content"),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HorizontalDivider()
+                    // 1. Automatic formatting.
+                    SettingsGroupTitle(R.string.st_group_automatic)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.st_auto_format), style = MaterialTheme.typography.bodyLarge)
+                            Text(stringResource(R.string.st_auto_format_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        androidx.compose.material3.Switch(checked = auto, onCheckedChange = { viewModel.setAutoFormat(it) }, modifier = Modifier.testTag("st_auto_format_switch"))
+                    }
+                    // 2. New documents: language and format.
+                    SettingsGroupTitle(R.string.st_group_new_documents)
+                    Text(stringResource(R.string.st_document_language), style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf("auto" to stringResource(R.string.st_language_auto), "ar" to "العربية", "fr" to "Français", "en" to "English").forEach { (code, label) ->
+                            FilterChip(selected = language == code, onClick = { viewModel.setDocumentLanguage(code) }, label = { Text(label) }, modifier = Modifier.heightIn(min = 40.dp).testTag("st_doc_lang_$code"))
+                        }
+                    }
+                    Text(stringResource(R.string.st_document_format), style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("DOCX" to "Word", "PDF" to "PDF").forEach { (code, label) ->
+                            FilterChip(selected = format == code, onClick = { viewModel.setDocumentFormat(code) }, label = { Text(label) }, modifier = Modifier.heightIn(min = 40.dp).testTag("st_doc_format_$code"))
+                        }
+                    }
+                    // 3. Default templates.
+                    SettingsGroupTitle(R.string.st_defaults_overview)
+                    val defaults = library.flatMap { t -> t.defaultFor.map { scope -> scope to t } }.sortedBy { it.first }
+                    if (defaults.isEmpty()) Text(stringResource(R.string.st_defaults_none), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    defaults.forEach { (scope, t) ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().testTag("st_default_row_$scope")) {
+                            Text(stringResource(SmartTemplateStrings.subcategory(scope)) + " → " + templateName(t), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { viewModel.clearDefaultTemplateFor(scope) }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.st_remove_default)) }
+                        }
+                    }
+                    OutlinedButton(onClick = { viewModel.setNavTab(com.example.ui.AppNavTab.TEMPLATES) }, shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("st_manage_templates")) {
+                        Text(stringResource(R.string.st_manage_templates))
+                    }
                 }
-            }
-            Text(stringResource(R.string.st_document_format), style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("DOCX" to "Word", "PDF" to "PDF").forEach { (code, label) ->
-                    FilterChip(selected = format == code, onClick = { viewModel.setDocumentFormat(code) }, label = { Text(label) }, modifier = Modifier.testTag("st_doc_format_$code"))
-                }
-            }
-            Text(stringResource(R.string.st_defaults_overview), style = MaterialTheme.typography.labelLarge)
-            val defaults = library.flatMap { t -> t.defaultFor.map { scope -> scope to t } }.sortedBy { it.first }
-            if (defaults.isEmpty()) Text(stringResource(R.string.st_defaults_none), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            defaults.forEach { (scope, t) ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("st_default_row_$scope")) {
-                    Text(stringResource(SmartTemplateStrings.subcategory(scope)) + " → " + templateName(t), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { viewModel.clearDefaultTemplateFor(scope) }) { Text(stringResource(R.string.st_remove_default)) }
-                }
-            }
-            OutlinedButton(onClick = { viewModel.setNavTab(com.example.ui.AppNavTab.TEMPLATES) }, modifier = Modifier.testTag("st_manage_templates")) {
-                Text(stringResource(R.string.st_manage_templates))
             }
         }
     }
+}
+
+@Composable
+private fun SettingsGroupTitle(res: Int) {
+    Text(stringResource(res), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.semantics { heading() })
 }

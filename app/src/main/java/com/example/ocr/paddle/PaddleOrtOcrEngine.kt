@@ -43,6 +43,12 @@ class PaddleOrtOcrEngine(
     @Volatile private var runOptions = OrtSession.RunOptions()
     @Volatile private var closed = false
 
+    /** The exact detector input image (letterboxed page) of each detection: diagnostics only, null in the app. */
+    @Volatile var onDetectInput: ((Bitmap) -> Unit)? = null
+
+    /** The exact 48-pixel-high recognizer input of each recognition and its raw reading: diagnostics only. */
+    @Volatile var onRecognizeInput: ((Bitmap, RecLine) -> Unit)? = null
+
     /** Loading time (ms) of each model opened by this engine. */
     val loadTimes = LinkedHashMap<String, Long>()
 
@@ -95,7 +101,10 @@ class PaddleOrtOcrEngine(
     fun warmUp() { detectorSession() }
 
     /** Text regions of [page], in page pixels, top to bottom. */
-    fun detect(page: Bitmap, maxSide: Int = 1536): List<Box> {
+    fun detect(page: Bitmap, maxSide: Int = 1536): List<Box> = detectScored(page, maxSide).map { it.first }
+
+    /** Text regions of [page] with the detector's mean probability for each (diagnostics). */
+    fun detectScored(page: Bitmap, maxSide: Int = 1536): List<Pair<Box, Float>> {
         val session = detectorSession()
         val sw = page.width; val sh = page.height
         val stride = 32
@@ -114,18 +123,20 @@ class PaddleOrtOcrEngine(
             canvas.drawColor(Color.BLACK)
             canvas.drawBitmap(page, Matrix().apply { postScale(scale.toFloat(), scale.toFloat()); postTranslate(padX.toFloat(), padY.toFloat()) }, Paint(Paint.FILTER_BITMAP_FLAG))
             input = bgrNormalized(target)
+            onDetectInput?.invoke(target)
         } finally {
             target.recycle()
         }
         val prob = run(session, input, longArrayOf(1, 3, dh.toLong(), dw.toLong())).first
         return DbPostProcess.boxes(prob, dw, dh).map { b ->
-            Box(
+            b.score to Box(
                 ((b.left - padX) / scale).toFloat().coerceIn(0f, sw.toFloat()),
                 ((b.top - padY) / scale).toFloat().coerceIn(0f, sh.toFloat()),
                 ((b.right - padX) / scale).toFloat().coerceIn(0f, sw.toFloat()),
                 ((b.bottom - padY) / scale).toFloat().coerceIn(0f, sh.toFloat())
             )
-        }.filter { it.width >= 4f && it.height >= 4f }.sortedWith(compareBy({ it.top }, { it.left }))
+        }.map { (score, box) -> box to score }.filter { it.first.width >= 4f && it.first.height >= 4f }
+            .sortedWith(compareBy({ it.first.top }, { it.first.left }))
     }
 
     /** One line crop read by [model]: raw CTC output in visual order. */
@@ -141,13 +152,14 @@ class PaddleOrtOcrEngine(
             canvas.drawColor(Color.WHITE)
             canvas.drawBitmap(crop, Matrix().apply { postScale(scaledW.toFloat() / crop.width, h.toFloat() / crop.height) }, Paint(Paint.FILTER_BITMAP_FLAG))
             input = rgbSigned(target)
+            val line = run(session, input, longArrayOf(1, 3, h.toLong(), paddedW.toLong())).let { (logits, shape) ->
+                CtcDecoder.decode(logits, shape.getOrElse(1) { 0L }.toInt(), shape.getOrElse(2) { 0L }.toInt(), vocab, scaledW.toFloat() / paddedW, model.key)
+            }
+            onRecognizeInput?.invoke(target, line)
+            return line
         } finally {
             target.recycle()
         }
-        val (logits, shape) = run(session, input, longArrayOf(1, 3, h.toLong(), paddedW.toLong()))
-        val steps = shape.getOrElse(1) { 0L }.toInt()
-        val classes = shape.getOrElse(2) { 0L }.toInt()
-        return CtcDecoder.decode(logits, steps, classes, vocab, scaledW.toFloat() / paddedW, model.key)
     }
 
     private fun run(session: OrtSession, input: FloatArray, shape: LongArray): Pair<FloatArray, LongArray> {
