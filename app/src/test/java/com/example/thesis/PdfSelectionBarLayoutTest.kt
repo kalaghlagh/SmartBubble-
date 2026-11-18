@@ -86,11 +86,23 @@ class PdfSelectionBarLayoutTest {
         return results.single()
     }
 
-    /** The text inside [tag] is laid out whole: no line cut by the width or the height available. */
+    /**
+     * The text inside [tag] is shown whole: every character laid out, on lines no wider than the
+     * text's box (beyond a sub-pixel rounding of at most 1 px: run #93 reported didOverflowWidth
+     * for "Next" even in 840 dp windows, where nothing can be cut), not cut in height, and the
+     * text's box inside the control's box.
+     */
     private fun assertNotCut(tag: String, text: String) {
         val node = compose.onNode(hasText(text) and (hasTestTag(tag) or hasAnyAncestor(hasTestTag(tag))), useUnmergedTree = true)
         val l = layout(node)
-        assertTrue("$tag text '$text' cut: overflowWidth=${l.didOverflowWidth} overflowHeight=${l.didOverflowHeight}", !l.didOverflowWidth && !l.didOverflowHeight)
+        val box = node.fetchSemanticsNode().boundsInRoot
+        val control = bounds(tag)
+        val widest = (0 until l.lineCount).maxOf { l.getLineRight(it) - l.getLineLeft(it) }
+        val where = "$tag text '$text': box ${l.size.width}x${l.size.height}px, paragraph ${l.multiParagraph.width}px, widest line ${widest}px, lines ${l.lineCount}"
+        assertEquals("$where: characters missing", text.length, l.getLineEnd(l.lineCount - 1, visibleEnd = true))
+        assertTrue("$where: a line wider than its box", widest <= l.size.width + 1f)
+        assertTrue("$where: cut in height", !l.didOverflowHeight)
+        assertTrue("$where: text box $box outside $control", box.left >= control.left - 1f && box.right <= control.right + 1f && box.top >= control.top - 1f && box.bottom <= control.bottom + 1f)
     }
 
     private fun density() = compose.density.density
