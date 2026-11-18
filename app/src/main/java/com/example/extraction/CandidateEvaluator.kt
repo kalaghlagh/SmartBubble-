@@ -138,8 +138,8 @@ object CandidateEvaluator {
         val numberVotes = voters.map { numbers(it.text).joinToString("|") }.groupingBy { it }.eachCount()
         // Letters of the expected script found by that script's own model with good confidence:
         // digit-only readings of the same region by other models replaced them.
-        val scriptLetters = expected == Script.ARABIC && usable.any { it.engineScript == Script.ARABIC && (it.confidence ?: 0f) >= 0.7f &&
-            ScriptDetector.count(it.text).arabic > 0 } ||
+        val scriptLetters = expected == Script.ARABIC && usable.any { (it.engineScript == Script.ARABIC || it.engineScript == null) &&
+            (it.confidence ?: 0f) >= 0.55f && ScriptDetector.count(it.text).arabic > 0 } ||
             expected == Script.LATIN && usable.any { it.engineScript == Script.LATIN && (it.confidence ?: 0f) >= 0.7f && ScriptDetector.count(it.text).latin > 0 }
         val shapes = context.map { shape(it) }.filter { it.isNotEmpty() }
         val agreedNumbers = numberVotes.filter { it.value >= 2 }.maxByOrNull { it.value }?.key

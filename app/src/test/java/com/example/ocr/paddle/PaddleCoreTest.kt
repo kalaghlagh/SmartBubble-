@@ -291,4 +291,75 @@ class PaddleCoreTest {
         assertEquals("NO_TEXT", p.pdfTextStatus)
         assertFalse("no recognized text in the profile", p.toJson().contains("الآبار"))
     }
+
+    // ------------------------------------------------------------------ parts of Arabic lines read again
+
+    /** A grey line image [w] x [h] with black blocks (ink) over the given column ranges. */
+    private fun inkLine(w: Int, h: Int, vararg blocks: IntRange): IntArray {
+        val g = IntArray(w * h) { 255 }
+        for (b in blocks) for (y in h / 4 until h * 3 / 4) for (x in b) g[y * w + x] = 0
+        return g
+    }
+
+    @Test
+    fun segments_splitAtWordGapsOnly() {
+        val g = inkLine(200, 40, 10..40, 43..60, 90..120)
+        // The 2-column gap inside the first word does not split it; the 29-column gap does.
+        assertEquals(listOf(10..60, 90..120), LineSegments.segments(g, 200, 40, minGap = 6))
+    }
+
+    @Test
+    fun repair_readsAgainTheWordsTheLineDropped_andKeepsTheRest() {
+        // Visual order: an Arabic word (read), then "2024" (dropped: no character there), then
+        // an Arabic word (read).
+        val w = 300; val h = 40
+        val g = inkLine(w, h, 10..80, 120..170, 210..290)
+        fun ch(t: String, px: Int, c: Float = 0.97f) = RecChar(t, px / w.toFloat(), c)
+        val line = RecLine("متو  ةنس", 0.97f, listOf(ch("م", 20), ch("ت", 40), ch("و", 60), ch(" ", 100), ch(" ", 190),
+            ch("ة", 220), ch("ن", 250), ch("س", 280)), 0.01f, "arabic")
+        val asked = ArrayList<IntRange>()
+        val (fixed, parts) = LineSegments.repair(line, g, w, h) { range ->
+            asked += range
+            val sub = range.last - range.first + 1
+            val digits = "2024".mapIndexed { k, c -> RecChar(c.toString(), (k + 0.5f) / 4f * (50f / sub) + (120f - range.first) / sub, 0.99f) }
+            RecLine("2024", 0.99f, digits, 0.02f, "arabic") to RecLine("2024", 0.99f, digits, 0.02f, "latin")
+        }
+        assertEquals(1, parts)
+        assertEquals(1, asked.size)
+        assertTrue("the dropped word only: $asked", asked.single().first in 110..120 && asked.single().last in 170..180)
+        val words = RecWords.words(fixed, Box(0f, 0f, w.toFloat(), h.toFloat())).map { it.text }
+        assertEquals(listOf("سنة", "2024", "وتم"), words)
+    }
+
+    @Test
+    fun repair_takesPunctuationTheLineDropped_butNotTheSameText() {
+        val w = 200; val h = 40
+        val g = inkLine(w, h, 150..185, 10..120)
+        fun ch(t: String, px: Int, c: Float) = RecChar(t, px / w.toFloat(), c)
+        // "أ-" read "أ" alone (one character on its segment): read again.
+        val line = RecLine("رابآلا أ", 0.95f, listOf(ch("ر", 20, 0.97f), ch("ا", 60, 0.97f), ch("ب", 100, 0.97f), ch(" ", 135, 0.9f), ch("أ", 175, 0.92f)), 0.01f, "arabic")
+        val (fixed, parts) = LineSegments.repair(line, g, w, h) { range ->
+            RecLine("-أ", 0.75f, listOf(RecChar("-", 0.3f, 0.7f), RecChar("أ", 0.7f, 0.8f)), 0.1f, "arabic") to
+                RecLine("i", 0.3f, listOf(RecChar("i", 0.5f, 0.3f)), 0.1f, "latin")
+        }
+        assertEquals(1, parts)
+        assertEquals("أ-", RecWords.words(fixed, Box(0f, 0f, w.toFloat(), h.toFloat())).first().text)
+        // A part read again as the same text changes nothing (no space added inside "ب1").
+        val same = LineSegments.repair(line, g, w, h) { _ ->
+            RecLine("أ", 0.99f, listOf(RecChar("أ", 0.5f, 0.99f)), 0.1f, "arabic") to null
+        }
+        assertEquals(0, same.second)
+        assertEquals(line, same.first)
+    }
+
+    @Test
+    fun arabicLabelInATable_isNotTradedForItsDigits() {
+        // Run #73: page "ب1" (0.65), Arabic model "ب 1" (0.62), Latin model "1" (0.82).
+        val e = com.example.extraction.CandidateEvaluator.evaluate(listOf(
+            com.example.extraction.RecognitionCandidate("ب1", 0.65f, "page"),
+            com.example.extraction.RecognitionCandidate("ب 1", 0.62f, "arabic", Script.ARABIC),
+            com.example.extraction.RecognitionCandidate("1", 0.82f, "latin", Script.LATIN)
+        ), expected = Script.ARABIC, numericExpected = false, context = listOf("البئر", "ب2", "ب3"))
+        assertTrue("kept ${e.chosen?.text}", e.chosen!!.text.contains("ب"))
+    }
 }

@@ -38,6 +38,9 @@ class OcrPageReader(
     private val preferred: OcrModel = OcrModel.ARABIC
 ) {
 
+    /** Text regions found by the last detection (to tell a page turned sideways). */
+    private var lastBoxes: List<Box> = emptyList()
+
     /** Time spent on the last page, by stage (ms), for the performance report. */
     val timings = LinkedHashMap<String, Long>()
 
@@ -67,7 +70,22 @@ class OcrPageReader(
             val a = engine.recognize(img, first)
             currentCoroutineContext().ensureActive()
             val b = if (LineReading.needsSecond(a)) engine.recognize(img, other(first)) else null
-            val result = LineReading.combine(a, b)
+            var result = LineReading.combine(a, b)
+            if (result.script == Script.ARABIC) {
+                // Inside an Arabic line both models tend to drop digits, Latin words and
+                // punctuation they read correctly alone: those parts are read again on their own.
+                val w = img.width
+                val h = img.height
+                val px = IntArray(w * h)
+                img.getPixels(px, 0, w, 0, 0, w, h)
+                for (i in px.indices) px[i] = px[i] and 0xFF
+                val (repaired, parts) = com.example.ocr.paddle.LineSegments.repair(result.line, px, w, h) { range ->
+                    val sub = Bitmap.createBitmap(img, range.first, 0, range.last - range.first + 1, h)
+                    try { engine.recognize(sub, OcrModel.ARABIC) to engine.recognize(sub, OcrModel.LATIN) } finally { sub.recycle() }
+                }
+                if (parts > 0) result = result.copy(line = repaired, mergedRuns = result.mergedRuns + parts, needsReview = true,
+                    reasons = result.reasons + "parts_read_again:$parts")
+            }
             trace { "region ${cropBox.top.toInt()}-${cropBox.bottom.toInt()} readings=${listOfNotNull(a, b).map { "${it.model}:${it.confidence}:${it.text}" }} kept=${result.line.model}:${logical(result.line)} review=${result.reasons}" }
             return result to cropBox
         } finally {
@@ -160,6 +178,7 @@ class OcrPageReader(
     /** Detection and recognition of the whole page: its text lines. */
     private suspend fun readLines(page: Bitmap, notes: MutableList<String>): List<TextLine> {
         val boxes = engine.detect(page)
+        lastBoxes = boxes
         currentCoroutineContext().ensureActive()
         // The page's own script decides which model reads first: after a few regions, the
         // script most regions turned out to be.
@@ -220,7 +239,10 @@ class OcrPageReader(
             currentCoroutineContext().ensureActive()
             // B-C. Detection and recognition; a page photographed sideways is turned upright.
             var lines = readLines(page, notes)
-            if (OcrPreprocessor.isWeak(lines.joinToString(" ") { it.text }, mean(lines) ?: 0f)) {
+            // Sideways: weak text, or text regions mostly taller than wide (vertical lines).
+            val detected = lastBoxes
+            val sideways = detected.size >= 2 && detected.count { it.height > it.width * 1.3f } * 2 > detected.size
+            if (sideways || OcrPreprocessor.isWeak(lines.joinToString(" ") { it.text }, mean(lines) ?: 0f)) {
                 for (deg in listOf(90, 270, 180)) {
                     currentCoroutineContext().ensureActive()
                     val rotated = OcrPreprocessor.rotate(page, deg)
