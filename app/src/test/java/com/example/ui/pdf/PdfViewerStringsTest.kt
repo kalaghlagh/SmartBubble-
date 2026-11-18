@@ -40,8 +40,11 @@ class PdfViewerStringsTest {
     private fun check(arabicScript: Boolean) {
         val t = texts(); val en = english()
         t.forEach { assertTrue("empty text", it.isNotBlank()) }
-        counters.indices.forEach { i -> val s = t[keys.size + i]; assertTrue(s, s.contains("3") && s.contains("12")) }
-        assertTrue(t.last(), t.last().contains("3"))
+        // Numbers in the locale's digits (Arabic-Indic in Arabic), as String.format writes them.
+        val loc = (ApplicationProvider.getApplicationContext() as Context).resources.configuration.locales[0]
+        val three = String.format(loc, "%d", 3); val twelve = String.format(loc, "%d", 12)
+        counters.indices.forEach { i -> val s = t[keys.size + i]; assertTrue(s, s.contains(three) && s.contains(twelve)) }
+        assertTrue(t.last(), t.last().contains(three))
         t.zip(en).forEach { (local, english) -> assertNotEquals("not translated: $english", english, local) }
         if (arabicScript) t.forEach { s -> assertTrue("not Arabic: $s", s.any { it in '؀'..'ۿ' }) }
     }
