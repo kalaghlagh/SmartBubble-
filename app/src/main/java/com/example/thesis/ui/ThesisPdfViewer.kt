@@ -171,7 +171,9 @@ private fun PdfPageItem(renderer: PdfPageRenderer, index: Int, count: Int, width
             val b = bitmap
             when {
                 b == null -> CircularProgressIndicator(Modifier.size(28.dp))
-                b.isSuccess -> Image(b.getOrThrow().asImageBitmap(), contentDescription = null, contentScale = ContentScale.FillBounds,
+                // Fit, never FillBounds: the outline padding makes the inner area a little off the
+                // page's proportions, and the page must not be stretched to it.
+                b.isSuccess -> Image(b.getOrThrow().asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize().padding(if (isSelected) 3.dp else 1.dp).testTag("pdf_page_image_$index"))
                 else -> Text(stringResource(R.string.dx_pdf_page_error), color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(16.dp).testTag("pdf_page_error_$index"))
