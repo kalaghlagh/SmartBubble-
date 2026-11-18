@@ -272,7 +272,9 @@ class OcrPageReader(
                 for (deg in tries) {
                     currentCoroutineContext().ensureActive()
                     val rotated = OcrPreprocessor.rotate(page, deg)
+                    traceImage("turn-$deg", rotated)
                     val r = readLines(rotated, ArrayList())
+                    trace { "orientation turn $deg ${rotated.width}x${rotated.height} boxes=${lastBoxes.map { "${it.left.toInt()},${it.top.toInt()},${it.width.toInt()}x${it.height.toInt()}" }} lines=${r.map { it.text }}" }
                     val score = OcrPreprocessor.score(r.joinToString(" ") { it.text }, mean(r) ?: 0f)
                     trace { "orientation try $deg score=${"%.1f".format(score)} vs ${"%.1f".format(bestScore)}" }
                     if (score > bestScore * 1.2) {

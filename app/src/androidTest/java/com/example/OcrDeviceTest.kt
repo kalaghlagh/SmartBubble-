@@ -209,7 +209,7 @@ class OcrDeviceTest {
 
     /** Orientation decisions and the page as read, in the instrumentation output (diagnostics). */
     private fun <T> diagnosed(name: String, block: () -> T): T {
-        com.example.extraction.OcrPageReader.trace = { if (it.startsWith("orientation")) InstrumentationRegistry.getInstrumentation().sendStatus(2, android.os.Bundle().apply { putString("ocr_result", "TRACE $name ${it.take(800)}") }) }
+        com.example.extraction.OcrPageReader.trace = { if (it.startsWith("orientation") || it.startsWith("region") || it.startsWith("page lines")) InstrumentationRegistry.getInstrumentation().sendStatus(2, android.os.Bundle().apply { putString("ocr_result", "TRACE $name ${it.take(800)}") }) }
         DiagnosticImages.install(name)
         try { return block() } finally { DiagnosticImages.uninstall(); com.example.extraction.OcrPageReader.trace = null }
     }

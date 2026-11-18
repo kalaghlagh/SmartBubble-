@@ -392,6 +392,19 @@ class PaddleCoreTest {
     }
 
     @Test
+    fun listMarkerDash_keepsTheWordGapAfterTheMarker() {
+        // Run #75: the dash came back glued to the next word ("أ-الآبار"), which is not a list marker.
+        val w = 190; val h = 46
+        val g = ink(w, h, 10..122 to 8..38, 170..176 to 4..36, 150..162 to 22..25)
+        fun ch(t: String, px: Int, c: Float = 0.95f) = RecChar(t, px / w.toFloat(), c)
+        // The model's only blank sits between the dash and the letter.
+        val line = RecLine("رابآلا أ", 0.95f, listOf(ch("ر", 20), ch("ا", 50), ch("ب", 80), ch("آ", 100), ch("ل", 110), ch("ا", 118),
+            ch(" ", 166, 0.9f), ch("أ", 173)), 0.01f, "arabic")
+        val words = RecWords.words(LineSegments.markerDash(line, g, w, h), Box(0f, 0f, w.toFloat(), h.toFloat())).map { it.text }
+        assertEquals(listOf("أ-", "الآبار"), words)
+    }
+
+    @Test
     fun listMarkerDash_isNeverAddedWithoutTheStroke() {
         val w = 190; val h = 46
         // No dash on the image: nothing changes.

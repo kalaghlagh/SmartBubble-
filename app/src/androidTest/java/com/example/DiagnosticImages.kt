@@ -22,9 +22,9 @@ object DiagnosticImages {
     fun uninstall() { com.example.extraction.OcrPageReader.traceImage = null }
 
     private fun emit(name: String, bmp: Bitmap) {
-        if (sent >= 40) return
+        if (sent >= 60) return
         sent++
-        val maxSide = if (name.contains("page-")) 500 else 900
+        val maxSide = when { name.contains("turn-") -> 1240; name.contains("page-") -> 500; else -> 900 }
         val scale = minOf(1f, maxSide.toFloat() / maxOf(bmp.width, bmp.height))
         val img = if (scale < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt().coerceAtLeast(1), (bmp.height * scale).toInt().coerceAtLeast(1), true) else bmp
         val out = ByteArrayOutputStream()
