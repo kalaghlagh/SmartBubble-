@@ -193,8 +193,14 @@ class PdfExtractionFlowDeviceTest {
         val area = compose.onNodeWithTag("dx_actions").fetchSemanticsNode().boundsInRoot
         val list = compose.onNodeWithTag("dx_pages").fetchSemanticsNode().boundsInRoot
         android.util.Log.i("PdfReviewEvidence", "$shotName text=$list actions=$area")
+        // A window at least 600 dp high (portrait phone) without the keyboard shows all seven at
+        // once; a shorter one (landscape, keyboard open, small phone) keeps them reachable in
+        // their scrolling area (ContentWithActions): each is scrolled to, then checked the same.
+        val heightDp = windowHeight() / context.resources.displayMetrics.density
+        val allAtOnce = !withKeyboard && heightDp >= 600f
+        android.util.Log.i("PdfReviewEvidence", "$shotName windowHeightDp=$heightDp allAtOnce=$allAtOnce")
         for (tag in actions) {
-            if (withKeyboard) { compose.onNodeWithTag(tag).performScrollTo(); keyboard.awaitSettled("scrolled to $tag", shown = true) }
+            if (!allAtOnce) { compose.onNodeWithTag(tag).performScrollTo(); keyboard.awaitSettled("scrolled to $tag", shown = withKeyboard) }
             compose.onNodeWithTag(tag).assertIsDisplayed()
             val b = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
             val bottom = usableBottom()
@@ -363,7 +369,11 @@ class PdfExtractionFlowDeviceTest {
         assertEquals(listOf(PageSource.PDF_TEXT, PageSource.PDF_TEXT, PageSource.PDF_OCR), first.pages.map { it.source })
         // The extracted text is on screen, under the pages' original numbers.
         compose.onNodeWithTag("dx_page_header_0").assertTextEquals("Page 1")
+        // The text of page 1, scrolled to in the review's list (on a compact phone the page's
+        // report and "read again" choices come first and fill the list's height).
+        compose.onNodeWithTag("dx_pages").performScrollToNode(hasText(line(1), substring = true))
         await("text of page 1 shown") { compose.onAllNodes(hasText(line(1), substring = true), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.onAllNodes(hasText(line(1), substring = true))[0].assertIsDisplayed()
         assertActionsDisplayed("pdf-review-actions")
         compose.onNodeWithTag("dx_insert_tables").assertIsNotEnabled() // these pages have no table
         val before = draftText
@@ -454,9 +464,11 @@ class PdfExtractionFlowDeviceTest {
             assertActionsDisplayed("pdf-review-arabic-$k")
             if (k == 0) {
                 // Correcting a block opens the keyboard: every action stays reachable above it.
-                compose.onAllNodes(androidx.compose.ui.test.SemanticsMatcher("block text field") {
+                val blockField = androidx.compose.ui.test.SemanticsMatcher("block text field") {
                     it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.TestTag)?.matches(Regex("dx_block_\\d+_\\d+_text")) == true
-                })[0].performClick()
+                }
+                compose.onNodeWithTag("dx_pages").performScrollToNode(blockField)
+                compose.onAllNodes(blockField)[0].performClick()
                 assertActionsDisplayed("pdf-review-arabic-keyboard", withKeyboard = true)
             }
             compose.onNodeWithTag("dx_pages").performScrollToNode(hasTestTag("dx_page_header_2"))

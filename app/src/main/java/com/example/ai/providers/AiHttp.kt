@@ -201,7 +201,7 @@ object AiHttp {
     }
 
     /** Provider-neutral mapping of an unsuccessful HTTP response. */
-    fun mapHttpError(code: Int, body: String, secret: String?): AiException {
+    fun mapHttpError(code: Int, body: String, secret: String?, retryAfterSeconds: Long? = null): AiException {
         val message = providerErrorMessage(body)
         val detail = Redactor.redact(message, secret).ifBlank { null }
         val lower = (message ?: "").lowercase()
@@ -227,7 +227,7 @@ object AiHttp {
             code >= 500 -> AiErrorKind.PROVIDER_UNAVAILABLE
             else -> AiErrorKind.UNKNOWN
         }
-        return AiException(kind, detail, code)
+        return AiException(kind, detail, code, retryAfterSeconds = retryAfterSeconds)
     }
 
     /**

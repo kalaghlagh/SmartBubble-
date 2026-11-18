@@ -2,7 +2,7 @@
     <string name="app_name">SmartBubble</string>
 
     <!-- Bottom Navigation -->
-    <string name="nav_chat">المحادثة</string>
+    <string name="nav_chat">الوكيل</string>
     <string name="nav_templates">قوالبي</string>
     <string name="nav_library">المكتبة</string>
     <string name="nav_thesis">المذكرة</string>
@@ -1129,4 +1129,63 @@
         <item quantity="many">%d صفحة</item>
         <item quantity="other">%d صفحة</item>
     </plurals>
+
+    <!-- Agent (Chat became Agent): routing, tasks, approval, settings -->
+    <string name="ai_err_no_compatible_model">لا يوجد نموذج مفعّل في ترتيب أولوية الوكيل يستطيع معالجة هذا الطلب.</string>
+    <string name="ai_error_agent_failed">لم يتمكن أي نموذج في ترتيب أولوية الوكيل من إكمال الطلب (آخر نموذج جُرّب: %1$s): %2$s يمكنك إعادة المحاولة أو تغيير الترتيب من الإعدادات.</string>
+    <string name="agent_result_incomplete">قد تكون النتيجة غير مكتملة: يرجى مراجعتها.</string>
+    <string name="agent_result_warnings">اكتملت المهمة مع تحذيرات: يرجى مراجعة النتيجة.</string>
+    <string name="agent_failed">توقفت مهمة الوكيل: تعذّر تنفيذ إحدى الخطوات (%1$s).</string>
+    <string name="agent_busy">الوكيل يعالج طلبًا بالفعل.</string>
+    <string name="agent_model_line">النموذج: %1$s · %2$s</string>
+    <string name="agent_event_failed">فشل %1$s، تجربة النموذج التالي: %2$s</string>
+    <string name="agent_event_stopped">تعذّر على %1$s معالجة الطلب: %2$s</string>
+    <string name="agent_event_skipped">تم تخطي %1$s: %2$s</string>
+    <string name="agent_waiting">انتظار %1$d ث قبل الجولة %2$d على قائمة النماذج.</string>
+    <string name="agent_skip_disabled">معطّل</string>
+    <string name="agent_skip_structured">لا يدعم المخرجات المنظمة</string>
+    <string name="agent_skip_image">لا يدعم إدخال الصور</string>
+    <string name="agent_skip_tools">لا يدعم استدعاء الأدوات</string>
+    <string name="agent_skip_context">الطلب أطول من قدرة هذا النموذج</string>
+    <string name="agent_skip_excluded">فشل سابقًا في هذه المهمة</string>
+    <string name="agent_status_planning">تخطيط</string>
+    <string name="agent_status_running">قيد التنفيذ</string>
+    <string name="agent_status_waiting">بانتظار موافقتك</string>
+    <string name="agent_status_paused">متوقفة مؤقتًا</string>
+    <string name="agent_status_completed">مكتملة</string>
+    <string name="agent_status_warnings">مكتملة مع تحذيرات</string>
+    <string name="agent_status_incomplete">غير مكتملة</string>
+    <string name="agent_status_failed">فشلت</string>
+    <string name="agent_status_cancelled">ملغاة</string>
+    <string name="agent_step_pending">قيد الانتظار</string>
+    <string name="agent_step_running">قيد التنفيذ</string>
+    <string name="agent_step_waiting">بانتظار الموافقة</string>
+    <string name="agent_step_done">منجزة</string>
+    <string name="agent_step_failed">فشلت</string>
+    <string name="agent_step_cancelled">ملغاة</string>
+    <string name="agent_step_rejected">مرفوضة</string>
+    <string name="agent_step_unknown">النتيجة غير مؤكدة</string>
+    <string name="agent_tool_read">قراءة «%1$s»</string>
+    <string name="agent_tool_generate">كتابة الإجابة</string>
+    <string name="agent_tool_generate_format">إنشاء مستند %1$s</string>
+    <string name="agent_tool_validate">التحقق من النتيجة</string>
+    <string name="agent_tool_share">مشاركة المستند</string>
+    <string name="agent_task_title">مهمة الوكيل</string>
+    <string name="agent_progress">اكتملت %1$d من %2$d خطوات</string>
+    <string name="agent_approval_share">هل تريد مشاركة المستند الذي تم إنشاؤه مع تطبيق آخر؟</string>
+    <string name="agent_approval_unknown">توقف التطبيق أثناء هذه الخطوة ولم يمكن تأكيد نتيجتها. هل تريد تنفيذها مجددًا؟</string>
+    <string name="agent_pause">إيقاف مؤقت</string>
+    <string name="agent_resume">استئناف</string>
+    <string name="agent_cancel">إلغاء</string>
+    <string name="agent_approve">موافقة</string>
+    <string name="agent_reject">رفض</string>
+    <string name="agent_dismiss">إغلاق</string>
+    <string name="agent_settings_title">ترتيب نماذج الوكيل</string>
+    <string name="agent_settings_hint">يستخدم الوكيل أول نموذج في هذه القائمة. إذا تعذّر الاتصال أو فشلت الخدمة، يجرّب النموذج التالي بهذا الترتيب.</string>
+    <string name="agent_settings_empty">أضف مزوّد ذكاء اصطناعي أعلاه لاستخدام الوكيل.</string>
+    <string name="agent_settings_no_key">لا يوجد مفتاح API: غير مستخدم</string>
+    <string name="agent_move_up">نقل %1$s للأعلى</string>
+    <string name="agent_move_down">نقل %1$s للأسفل</string>
+    <string name="agent_use_model">استخدام %1$s</string>
+    <string name="agent_settings_cycles">عدد الجولات على القائمة قبل التوقف</string>
 </resources>

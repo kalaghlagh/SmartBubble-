@@ -166,6 +166,14 @@ object SmartBubbleMigrations {
         }
     }
 
+    /** v7 -> v8: Agent task checkpoints (a new table only; existing tables and conversations are untouched). */
+    val MIGRATION_7_8 = object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS `agent_tasks` (`id` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `status` TEXT NOT NULL, `snapshotJson` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_agent_tasks_sessionId` ON `agent_tasks` (`sessionId`)")
+        }
+    }
+
     /** Every migration, in order. Always pass this to the database builder. */
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
 }

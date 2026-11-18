@@ -94,7 +94,7 @@ class KeyboardDeviceTest {
     fun chatComposer_staysAboveTheKeyboard_growsWithText_andNoGapAfterClosing() {
         await("app started") { exists("nav_chat") }
         vm.setAppLanguage("en")
-        await("english") { compose.onAllNodes(hasTestTag("nav_chat") and hasText("Chat")).fetchSemanticsNodes().isNotEmpty() }
+        await("english") { compose.onAllNodes(hasTestTag("nav_chat") and hasText("Agent")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("nav_chat").performClick()
         await("chat") { vm.currentTab.value == AppNavTab.CHAT && exists("chat_input_field") }
         val closedBottom = bottomOf("chat_input_field")

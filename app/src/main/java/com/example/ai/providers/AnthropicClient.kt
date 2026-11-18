@@ -32,7 +32,7 @@ class AnthropicClient(
             val smaller = request.copy(maxOutputTokens = LEGACY_MAX_OUTPUT)
             result = AiHttp.execute(AiHttp.jsonPost(url, headers, buildMessagesBody(model, smaller)), apiKey)
         }
-        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey)
+        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey, result.retryAfterSeconds)
         return parseMessagesResponse(result.body)
     }
 
@@ -51,7 +51,7 @@ class AnthropicClient(
                 AiHttp.jsonPost(url, streamHeaders, buildMessagesBody(model, smaller) + ("stream" to true)), apiKey
             ) { acc.accept(it) }
         }
-        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey)
+        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey, result.retryAfterSeconds)
         if (!result.streamed) return parseMessagesResponse(result.body).also { onText(it.text) }
         return acc.finish()
     }
@@ -60,7 +60,7 @@ class AnthropicClient(
         val start = System.currentTimeMillis()
         val url = base.newBuilder().addPathSegments("v1/models").addPathSegment(model).build()
         val result = AiHttp.execute(AiHttp.get(url, headers), apiKey)
-        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey)
+        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey, result.retryAfterSeconds)
         return System.currentTimeMillis() - start
     }
 

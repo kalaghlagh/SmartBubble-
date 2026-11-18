@@ -22,7 +22,7 @@ class GeminiClient(
     override suspend fun complete(request: AiRequest): AiResponse {
         val url = base.newBuilder().addPathSegments("v1beta/models").addPathSegment("$model:generateContent").build()
         val result = AiHttp.execute(AiHttp.jsonPost(url, headers, buildGenerateBody(request)), apiKey)
-        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey)
+        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey, result.retryAfterSeconds)
         return parseGenerateResponse(result.body)
     }
 
@@ -31,7 +31,7 @@ class GeminiClient(
             .addQueryParameter("alt", "sse").build()
         val acc = StreamAccumulator(onText)
         val result = AiHttp.executeStream(AiHttp.jsonPost(url, streamHeaders, buildGenerateBody(request)), apiKey) { acc.accept(it) }
-        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey)
+        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey, result.retryAfterSeconds)
         if (!result.streamed) return parseGenerateResponse(result.body).also { onText(it.text) }
         return acc.finish()
     }
@@ -40,7 +40,7 @@ class GeminiClient(
         val start = System.currentTimeMillis()
         val url = base.newBuilder().addPathSegments("v1beta/models").addPathSegment(model).build()
         val result = AiHttp.execute(AiHttp.get(url, headers), apiKey)
-        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey)
+        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey, result.retryAfterSeconds)
         return System.currentTimeMillis() - start
     }
 

@@ -42,6 +42,42 @@ class PreferencesManager(private val context: Context) {
         val KEY_AUTO_FORMAT = booleanPreferencesKey("smart_templates_auto_format")
         val KEY_DOCUMENT_LANGUAGE = stringPreferencesKey("smart_templates_document_language") // "auto", "ar", "fr", "en"
         val KEY_DOCUMENT_FORMAT = stringPreferencesKey("smart_templates_document_format") // "DOCX", "PDF"
+        // Agent: model priority list (provider ids, comma separated), models switched off, passes over the list.
+        val KEY_AGENT_PROVIDER_ORDER = stringPreferencesKey("agent_provider_order")
+        val KEY_AGENT_DISABLED_PROVIDERS = stringPreferencesKey("agent_disabled_providers")
+        val KEY_AGENT_MAX_CYCLES = intPreferencesKey("agent_max_cycles")
+    }
+
+    /** Agent: the user's model priority order (provider ids). Empty until the user arranges it. */
+    val agentProviderOrder: Flow<List<String>> = context.dataStore.data.map {
+        com.example.agent.routing.PriorityList.decode(it[KEY_AGENT_PROVIDER_ORDER])
+    }
+
+    suspend fun setAgentProviderOrder(ids: List<String>) {
+        context.dataStore.edit { it[KEY_AGENT_PROVIDER_ORDER] = com.example.agent.routing.PriorityList.encode(ids) }
+    }
+
+    /** Agent: providers the user switched off for routing (they stay configured). */
+    val agentDisabledProviders: Flow<Set<String>> = context.dataStore.data.map {
+        com.example.agent.routing.PriorityList.decode(it[KEY_AGENT_DISABLED_PROVIDERS]).toSet()
+    }
+
+    suspend fun setAgentProviderEnabled(id: String, enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            val current = com.example.agent.routing.PriorityList.decode(prefs[KEY_AGENT_DISABLED_PROVIDERS]).toMutableSet()
+            if (enabled) current -= id else current += id
+            prefs[KEY_AGENT_DISABLED_PROVIDERS] = com.example.agent.routing.PriorityList.encode(current.sorted())
+        }
+    }
+
+    /** Agent: passes over the priority list before giving up (1..3, default 2). */
+    val agentMaxCycles: Flow<Int> = context.dataStore.data.map {
+        (it[KEY_AGENT_MAX_CYCLES] ?: com.example.agent.routing.RoutingPolicy.DEFAULT_CYCLES)
+            .coerceIn(1, com.example.agent.routing.RoutingPolicy.MAX_CYCLES)
+    }
+
+    suspend fun setAgentMaxCycles(cycles: Int) {
+        context.dataStore.edit { it[KEY_AGENT_MAX_CYCLES] = cycles.coerceIn(1, com.example.agent.routing.RoutingPolicy.MAX_CYCLES) }
     }
 
     /** Smart Templates: apply the default template of the detected kind of document (default on). */

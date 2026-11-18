@@ -269,6 +269,19 @@ fun SettingsScreen(
                 }
             }
 
+            // Section: Agent model priority order and retry passes
+            item {
+                val entries by viewModel.agentPriority.collectAsState()
+                val cycles by viewModel.agentMaxCycles.collectAsState()
+                AgentPriorityCard(
+                    entries = entries,
+                    cycles = cycles,
+                    onMove = viewModel::moveAgentModel,
+                    onEnabled = viewModel::setAgentModelEnabled,
+                    onCycles = viewModel::setAgentMaxCycles
+                )
+            }
+
             // Section: Smart Templates (Auto Format, document language and format, defaults)
             item { SmartTemplatesSettingsCard(viewModel) }
 
