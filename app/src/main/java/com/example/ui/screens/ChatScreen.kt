@@ -99,6 +99,12 @@ fun ChatScreen(
     val speakingMessageId by viewModel.speakingMessageId.collectAsState()
     val selectedTemplate by viewModel.selectedTemplateForChat.collectAsState()
     val defaultProvider by viewModel.defaultProvider.collectAsState()
+    val agentState by viewModel.agentState.collectAsState()
+    val agentPriority by viewModel.agentPriority.collectAsState()
+    // Header: the model answering now, else the first usable model of the Agent priority list.
+    val headerModel = agentState.routing?.providerName
+        ?: agentPriority.firstOrNull { it.usable }?.provider?.name
+        ?: defaultProvider
 
     // TextFieldValue keeps the cursor at the end after a slash command is inserted.
     var inputField by remember { mutableStateOf(TextFieldValue("")) }
@@ -361,9 +367,9 @@ fun ChatScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = defaultProvider.ifBlank { stringResource(R.string.chat_no_default_provider) },
+                                text = headerModel.ifBlank { stringResource(R.string.chat_no_default_provider) },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (defaultProvider.isBlank()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                color = if (headerModel.isBlank()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                                 fontSize = 11.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -518,6 +524,19 @@ fun ChatScreen(
                     }
                 }
             }
+
+            // Agent: model in use, provider switches, and the plan / controls of an Agent Mode task.
+            AgentPanel(
+                task = agentState.task,
+                routing = agentState.routing,
+                sourceTitles = docsById.mapValues { it.value.title },
+                onPause = viewModel::pauseAgentTask,
+                onResume = viewModel::resumeAgentTask,
+                onCancel = viewModel::cancelAgentTask,
+                onApprove = { viewModel.answerAgentApproval(true) },
+                onReject = { viewModel.answerAgentApproval(false) },
+                onDismiss = viewModel::dismissAgentTask
+            )
 
             // Voice conversation status bar: listening / recognizing / thinking / speaking
             if (voiceActive || voicePhase == VoicePhase.LISTENING || voicePhase == VoicePhase.RECOGNIZING) {

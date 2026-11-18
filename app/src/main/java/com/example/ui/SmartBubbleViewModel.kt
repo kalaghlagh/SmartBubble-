@@ -136,7 +136,60 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     private val credentialStore = CredentialStore(context)
     /** Provider management + single source of truth for the default provider (Room flag). */
     val providerManager = ProviderManager(database, credentialStore)
-    val orchestrator = CentralAiOrchestrator(context, database, deliveryManager, providerManager)
+    /**
+     * Chat turns run through the Agent's sequential provider routing (Settings > Agent model
+     * order). Thesis Builder, content commands and OCR enhancement keep using the default provider.
+     */
+    val orchestrator = CentralAiOrchestrator(context, database, deliveryManager, providerManager,
+        defaultClient = { agent.turnClient(onRestart = { streamRestartedOp = chatOperationId; _streamingReply.value = "" }) })
+
+    /** Operation whose streamed text was discarded because another model took over (its partial text is not shown). */
+    @Volatile
+    private var streamRestartedOp = -1L
+
+    /** History and progress listener of the Agent task step that is generating now. */
+    @Volatile
+    private var agentTurn: Pair<List<ContextMessage>, AiProgressListener>? = null
+
+    /** Provider attempts of the Agent task running now (every orchestrator turn of it). */
+    private val agentAttempts = java.util.Collections.synchronizedList(ArrayList<com.example.agent.routing.ProviderAttempt>())
+
+    /** Agent: routing, tools over existing features, task checkpoints. */
+    val agent = com.example.agent.AgentService(
+        database = database,
+        preferences = preferences,
+        providerManager = providerManager,
+        extractPdf = { file ->
+            com.example.extraction.ExtractionText.plain(
+                extractionEngine.extract(
+                    listOf(com.example.extraction.ExtractionSource(Uri.fromFile(file), isPdf = true)),
+                    OcrLanguage.fromCode(ocrLanguage.value), appLanguage.value
+                ) { _, _ -> }
+            )
+        },
+        generate = { _, message, sources, format ->
+            val (history, listener) = agentTurn ?: (emptyList<ContextMessage>() to AiProgressListener.NONE)
+            val template = _selectedTemplateForChat.value
+            val parsedFormat = DocumentFormat.parse(format)
+            try {
+                val r = orchestrator.handleChatTurn(
+                    history = history + sources,
+                    userMessage = message,
+                    uiLanguage = appLanguage.value,
+                    selectedTemplate = template,
+                    forceFormat = parsedFormat,
+                    listener = listener,
+                    // Without a named format the planner decides; Smart Templates detection needs one.
+                    smart = if (parsedFormat != null) smartOptions(null, null) else null
+                )
+                val doc = r.document?.let { attributeToServingModel(it) }
+                com.example.agent.GeneratedContent(r.reply, doc, r.templateApplied || r.template != null, template != null)
+            } finally {
+                agent.currentSession?.attempts?.let { agentAttempts.addAll(it) }
+            }
+        },
+        share = { doc -> shareDocument(doc) }
+    )
 
     /** Smart Templates: the template library shared by Chat, My Templates and Thesis Builder. */
     val smartTemplates = com.example.smarttemplates.SmartTemplateService(database)
@@ -455,6 +508,26 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 Log.e(TAG, "Provider data migration failed", e)
             }
             restoreActiveConversation()
+            try {
+                // Agent tasks interrupted by the app stopping become PAUSED (resumable); a step that
+                // may have saved something is checked, never repeated blindly.
+                agent.recoverInterrupted()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Agent task recovery failed", e)
+            }
+            // The Agent panel shows the unfinished task of the conversation on screen.
+            _currentSessionId.collect { id ->
+                try {
+                    val latest = agent.latestFor(id)?.takeIf { !it.status.isFinal }
+                    if (agent.state.value.task?.sessionId != id || latest != null) agent.show(latest)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "Agent task lookup failed", e)
+                }
+            }
         }
     }
 
@@ -528,6 +601,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         launchSafely("deleteConversation") {
             database.conversationDao().deleteConversationById(id)
             database.chatDao().deleteMessagesBySessionId(id)
+            database.agentTaskDao().deleteForSession(id)
             _snackBarMessage.value = str(R.string.msg_conversation_deleted)
 
             if (_currentSessionId.value == id) {
@@ -553,6 +627,39 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
      * @param fromVoice the text is a voice transcription: the real reply is read aloud and the
      *   voice conversation continues (or ends, with the error shown, if the request fails).
      */
+    private fun smartOptions(kind: String?, overrideTemplateId: String?) = com.example.ai.orchestrator.SmartTemplateOptions(
+        service = smartTemplates,
+        autoFormat = autoFormat.value,
+        preferredDocumentFormat = documentFormat.value,
+        documentLanguage = documentLanguage.value.takeIf { it != "auto" },
+        forcedSubcategory = kind,
+        overrideTemplateId = overrideTemplateId
+    )
+
+    /** A document records the model that actually wrote it (another one may have taken over). */
+    private suspend fun attributeToServingModel(doc: DocumentEntity): DocumentEntity {
+        val served = agent.currentSession?.serving ?: return doc
+        if (doc.providerUsed == served.name) return doc
+        val provider = withContext(Dispatchers.IO) { database.providerDao().getProviderById(served.id) } ?: return doc
+        val updated = doc.copy(
+            providerUsed = provider.name,
+            summary = "${provider.name} • ${provider.modelName} • ${File(doc.filePath).length() / 1024} KB"
+        )
+        withContext(Dispatchers.IO) { database.documentDao().updateDocument(updated) }
+        return updated
+    }
+
+    /** Name of the model that served the last request, else the first one in the priority list. */
+    private fun servingName(fallback: String): String = agent.currentSession?.serving?.name ?: fallback
+
+    /** Error text for a failed request: names the model, and the priority list when several were tried. */
+    private fun routedErrorMessage(e: AiException): String {
+        val attempts = agent.currentSession?.attempts.orEmpty()
+        return if (attempts.map { it.providerId }.distinct().size > 1) {
+            str(R.string.ai_error_agent_failed, attempts.last().providerName, aiErrorReason(e))
+        } else aiErrorMessage(e, attempts.lastOrNull()?.providerName ?: defaultProvider.value)
+    }
+
     fun executePrompt(
         prompt: String,
         forceFormat: String? = null,
@@ -613,6 +720,21 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = sessionId, isUser = true, content = shown)
                 )
 
+                // Agent Mode: a request that needs several tools (read named Library documents,
+                // share the result) runs as a planned task. Everything else is Quick Mode below.
+                if (forceFormat == null && kind == null) {
+                    val intent = agent.analyze(text)
+                    if (intent.mode == com.example.agent.core.AgentMode.AGENT) {
+                        val task = com.example.agent.core.TaskPlanner.plan(
+                            taskId = com.example.agent.AgentService.newId(), sessionId = sessionId, request = text,
+                            intent = intent, language = appLanguage.value, now = System.currentTimeMillis(),
+                            newId = com.example.agent.AgentService::newId
+                        )
+                        runAgentTask(task, history, listener, fromVoice)
+                        return@launchChatOperation
+                    }
+                }
+
                 val result = orchestrator.handleChatTurn(
                     history = history,
                     userMessage = text,
@@ -620,14 +742,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     selectedTemplate = _selectedTemplateForChat.value,
                     forceFormat = DocumentFormat.parse(forceFormat),
                     listener = listener,
-                    smart = com.example.ai.orchestrator.SmartTemplateOptions(
-                        service = smartTemplates,
-                        autoFormat = autoFormat.value,
-                        preferredDocumentFormat = documentFormat.value,
-                        documentLanguage = documentLanguage.value.takeIf { it != "auto" },
-                        forcedSubcategory = kind,
-                        overrideTemplateId = overrideTemplateId
-                    )
+                    smart = smartOptions(kind, overrideTemplateId)
                 )
 
                 // The kind of document is unclear: one short question with choices (no AI request was made).
@@ -648,7 +763,8 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 // Only the provider's real answer is stored; failures are never saved as replies.
                 // A cancelled operation stops here and stores nothing.
                 ensureActive()
-                val doc = result.document
+                val doc = result.document?.let { attributeToServingModel(it) }
+                val servedBy = servingName(result.provider.name)
                 val replyId = UUID.randomUUID().toString()
                 // Smart Templates: say which kind of document and template were used, and how to
                 // fill in what was left as [placeholders].
@@ -671,9 +787,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                         attachedDocTitle = doc?.title,
                         attachedDocType = doc?.fileType,
                         orchestratorNote = when {
-                            doc == null -> result.provider.name
-                            result.templateApplied -> "Template Preserved • ${result.provider.name}"
-                            else -> "Orchestrator Verified • ${result.provider.name}"
+                            doc == null -> servedBy
+                            result.templateApplied -> "Template Preserved • $servedBy"
+                            else -> "Orchestrator Verified • $servedBy"
                         }
                     )
                 )
@@ -690,7 +806,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 Log.w(TAG, "AI request failed: ${e.kind}")
                 // Nothing is spoken for a failed request; the error is shown instead.
                 if (fromVoice) endVoiceConversation()
-                _snackBarMessage.value = aiErrorMessage(e, defaultProvider.value)
+                _snackBarMessage.value = routedErrorMessage(e)
             } catch (e: Exception) {
                 if (fromVoice) endVoiceConversation()
                 reportError("executePrompt", e)
@@ -701,6 +817,143 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             _snackBarMessage.value = str(R.string.voice_busy)
         }
         return started
+    }
+
+    // ------------------------------------------------------------------ Agent Mode tasks
+
+    /** What the Agent panel shows: the task of this conversation and the routing status. */
+    val agentState: StateFlow<com.example.agent.AgentUiState> get() = agent.state
+
+    /** The model priority list (Settings > Agent). */
+    val agentPriority: StateFlow<List<com.example.agent.routing.PriorityEntry>> =
+        agent.priorityEntries.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val agentMaxCycles: StateFlow<Int> = agent.maxCycles.stateIn(viewModelScope, SharingStarted.Eagerly, com.example.agent.routing.RoutingPolicy.DEFAULT_CYCLES)
+
+    fun moveAgentModel(from: Int, to: Int) = launchSafely("moveAgentModel") { agent.moveProvider(from, to) }
+    fun setAgentModelEnabled(id: String, enabled: Boolean) = launchSafely("setAgentModelEnabled") { agent.setProviderEnabled(id, enabled) }
+    fun setAgentMaxCycles(cycles: Int) = launchSafely("setAgentMaxCycles") { agent.setMaxCycles(cycles) }
+
+    /** Runs (or continues) [start] in the current chat operation and publishes what it produced. */
+    private suspend fun runAgentTask(
+        start: com.example.agent.core.AgentTask,
+        history: List<ContextMessage>,
+        listener: AiProgressListener,
+        fromVoice: Boolean
+    ) {
+        agentAttempts.clear()
+        agent.show(start)
+        agentTurn = history to listener
+        val stopped = try {
+            agent.engine.run(start)
+        } finally {
+            agentTurn = null
+        }
+        publishAgentResult(stopped, fromVoice)
+    }
+
+    private suspend fun publishAgentResult(stopped: com.example.agent.core.AgentTask, fromVoice: Boolean) {
+        val task = stopped.copy(attempts = stopped.attempts + agentAttempts.toList())
+        agentAttempts.clear()
+        agent.store.save(task)
+        agent.show(task)
+        val generate = task.step("generate")
+        val validate = task.step("validate")
+        val outcome = validate?.output?.get("outcome")
+        if (generate != null && generate.status == com.example.agent.core.StepStatus.COMPLETED &&
+            validate != null && validate.status == com.example.agent.core.StepStatus.COMPLETED &&
+            outcome != com.example.agent.core.ValidationOutcome.FAILED.name
+        ) storeAgentReply(task, generate.output, outcome, fromVoice)
+        if (task.status == com.example.agent.core.TaskStatus.FAILED) {
+            if (fromVoice) endVoiceConversation()
+            _snackBarMessage.value = agentFailureText(task)
+        }
+    }
+
+    /** Stores the task's result in the conversation once (a resumed task does not store it again). */
+    private suspend fun storeAgentReply(task: com.example.agent.core.AgentTask, generated: Map<String, String>, outcome: String?, fromVoice: Boolean) {
+        val id = "agent-reply-${task.id}"
+        if (database.chatDao().getMessagesForSessionOnce(task.sessionId).any { it.id == id }) return
+        val doc = generated["documentId"]?.let { database.documentDao().getDocumentById(it) }
+        val reply = buildString {
+            append(generated["reply"].orEmpty())
+            when (outcome) {
+                com.example.agent.core.ValidationOutcome.INCOMPLETE.name -> append("\n\n").append(str(R.string.agent_result_incomplete))
+                com.example.agent.core.ValidationOutcome.COMPLETED_WITH_WARNINGS.name -> append("\n\n").append(str(R.string.agent_result_warnings))
+            }
+        }.trim().ifEmpty { doc?.title.orEmpty() }
+        val served = task.attempts.lastOrNull { it.error == null }?.providerName ?: defaultProvider.value
+        database.chatDao().insertMessage(
+            ChatMessageEntity(
+                id = id, sessionId = task.sessionId, isUser = false, content = reply,
+                attachedDocId = doc?.id, attachedDocTitle = doc?.title, attachedDocType = doc?.fileType,
+                orchestratorNote = "Agent • $served"
+            )
+        )
+        database.conversationDao().updateLastMessage(task.sessionId, reply.take(60))
+        if (doc != null) _snackBarMessage.value = str(R.string.msg_generated_copied)
+        if (fromVoice && _voiceConversationActive.value) {
+            pendingVoiceReplyId = id
+            speakMessage(id, reply)
+        }
+    }
+
+    private fun agentFailureText(task: com.example.agent.core.AgentTask): String {
+        val code = task.error.orEmpty()
+        val kind = code.removePrefix("ai:").takeIf { code.startsWith("ai:") }
+            ?.let { runCatching { AiErrorKind.valueOf(it) }.getOrNull() }
+        if (kind != null) {
+            val e = AiException(kind)
+            val tried = task.attempts.map { it.providerId }.distinct()
+            return if (tried.size > 1) str(R.string.ai_error_agent_failed, task.attempts.last().providerName, aiErrorReason(e))
+            else aiErrorMessage(e, task.attempts.lastOrNull()?.providerName ?: defaultProvider.value)
+        }
+        return str(R.string.agent_failed, code.ifBlank { "?" })
+    }
+
+    /** Pause: the running step finishes, then the task waits (its state is saved). */
+    fun pauseAgentTask() {
+        agent.state.value.task?.takeIf { it.status == com.example.agent.core.TaskStatus.RUNNING }?.let { agent.requestPause(it.id) }
+    }
+
+    fun resumeAgentTask() = continueAgentTask(approval = null)
+
+    /** Answer to the approval prompt of the shown task. */
+    fun answerAgentApproval(approved: Boolean) = continueAgentTask(approval = approved)
+
+    /** Cancel: a running task stops at once (like Stop); a paused or waiting one is closed. */
+    fun cancelAgentTask() {
+        val shown = agent.state.value.task ?: return
+        if (shown.status.isFinal) return
+        if (chatJob != null && _generatingSessionId.value == shown.sessionId) {
+            cancelGeneration()
+            return
+        }
+        launchSafely("cancelAgentTask") {
+            agent.store.load(shown.id)?.takeIf { !it.status.isFinal }?.let { agent.engine.cancelled(it) }
+        }
+    }
+
+    /** Hides a finished task's panel (the task record and the conversation stay). */
+    fun dismissAgentTask() = agent.show(null)
+
+    private fun continueAgentTask(approval: Boolean?) {
+        val shown = agent.state.value.task ?: return
+        val started = launchChatOperation(shown.sessionId) { listener ->
+            try {
+                var task = agent.store.load(shown.id) ?: return@launchChatOperation
+                if (approval != null) {
+                    val step = task.pendingApproval ?: return@launchChatOperation
+                    task = agent.engine.decide(task, step.id, approval)
+                }
+                if (task.status.isFinal) return@launchChatOperation
+                runAgentTask(task, buildContextHistory(task.sessionId), listener, fromVoice = false)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportError("continueAgentTask", e)
+            }
+        }
+        if (!started) _snackBarMessage.value = str(R.string.agent_busy)
     }
 
     // ------------------------------------------------------------------ Offline Formatting Agent
@@ -1182,7 +1435,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             }
 
             override fun onPartialReply(text: String) {
-                if (chatOperationId == operationId) _streamingReply.value = text
+                if (chatOperationId == operationId && streamRestartedOp != operationId) _streamingReply.value = text
             }
         }
         // Started only after chatJob is set: viewModelScope runs on Main.immediate, so an eager
@@ -1203,6 +1456,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
     private fun finishChatOperation() {
         chatJob = null
+        agent.clearRouting()
         _isGenerating.value = false
         _generatingSessionId.value = null
         _aiProgress.value = null
@@ -1221,6 +1475,13 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         chatOperationId++ // ignore any late progress of the cancelled operation
         job.cancel(CancellationException("Stopped by the user"))
         finishChatOperation()
+        // A running Agent task is recorded as cancelled once its coroutine has stopped.
+        agent.state.value.task?.takeIf { !it.status.isFinal }?.let { shown ->
+            viewModelScope.launch {
+                job.join()
+                agent.store.load(shown.id)?.takeIf { !it.status.isFinal }?.let { agent.engine.cancelled(it) }
+            }
+        }
         // A voice turn waiting for this answer cannot continue.
         if (_voiceConversationActive.value) stopVoiceConversation()
         _snackBarMessage.value = str(R.string.chat_generation_stopped)

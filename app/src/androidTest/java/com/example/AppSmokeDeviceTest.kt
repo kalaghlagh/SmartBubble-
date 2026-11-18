@@ -113,14 +113,14 @@ class AppSmokeDeviceTest {
     @Test
     fun everyDestination_inEnglishFrenchAndArabic() {
         val languages = listOf(
-            Triple("en", "Thesis", "Chat"),
-            Triple("fr", "Mémoire", "Discussion"),
-            Triple("ar", "المذكرة", "المحادثة")
+            Triple("en", "Thesis", "Agent"),
+            Triple("fr", "Mémoire", "Agent"),
+            Triple("ar", "المذكرة", "الوكيل")
         )
         try {
             for ((code, thesisLabel, _) in languages) {
                 language(code, thesisLabel)
-                // Five items, in reading order: Chat first (right edge in Arabic, left edge otherwise).
+                // Five items, in reading order: Agent (formerly Chat) first (right edge in Arabic, left edge otherwise).
                 val tabs = listOf("nav_chat", "nav_thesis", "nav_templates", "nav_library", "nav_settings")
                 tabs.forEach { assertTrue("$it missing in $code", exists(it)) }
                 val xs = tabs.map { left(it) }
