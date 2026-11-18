@@ -140,7 +140,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
      * Chat turns run through the Agent's sequential provider routing (Settings > Agent model
      * order). Thesis Builder, content commands and OCR enhancement keep using the default provider.
      */
-    val orchestrator = CentralAiOrchestrator(context, database, deliveryManager, providerManager,
+    val orchestrator: CentralAiOrchestrator = CentralAiOrchestrator(context, database, deliveryManager, providerManager,
         defaultClient = { agent.turnClient(onRestart = { streamRestartedOp = chatOperationId; _streamingReply.value = "" }) })
 
     /** Operation whose streamed text was discarded because another model took over (its partial text is not shown). */
@@ -155,7 +155,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     private val agentAttempts = java.util.Collections.synchronizedList(ArrayList<com.example.agent.routing.ProviderAttempt>())
 
     /** Agent: routing, tools over existing features, task checkpoints. */
-    val agent = com.example.agent.AgentService(
+    val agent: com.example.agent.AgentService = com.example.agent.AgentService(
         database = database,
         preferences = preferences,
         providerManager = providerManager,
