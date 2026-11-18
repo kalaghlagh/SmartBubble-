@@ -18,6 +18,8 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.printToString
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.unit.dp
@@ -129,7 +131,14 @@ class PdfViewerDeviceTest {
     }
 
     private fun exists(tag: String) = compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
-    private fun await(tag: String) = compose.waitUntil(20_000) { exists(tag) }
+    private fun await(tag: String) {
+        try { compose.waitUntil(20_000) { exists(tag) } } catch (e: Throwable) {
+            // On a timeout: what was on screen (semantics tree), for the CI log.
+            val tree = try { compose.onAllNodes(androidx.compose.ui.test.isRoot()).fetchSemanticsNodes().size.toString() + " roots\n" +
+                compose.onRoot(useUnmergedTree = true).printToString(maxDepth = 12) } catch (t: Throwable) { "tree unavailable: $t" }
+            throw AssertionError("Timed out waiting for $tag\n$tree", e)
+        }
+    }
 
     /** Pages tapped so far (tap selects, tap again deselects) and what Next received. */
     private var selected by mutableStateOf(setOf<Int>())
@@ -212,8 +221,9 @@ class PdfViewerDeviceTest {
         tapPage(3)
         compose.waitUntil(10_000) { !exists("pdf_action_bar") }
         assertTrue(selected.isEmpty())
-        // The extraction state of a page is shown on it.
+        // The extraction state of a page is shown on it (page 7 scrolled into view: the list is lazy).
         marks = mapOf(6 to PdfPageMark.CHECK, 8 to PdfPageMark.EXTRACTED)
+        compose.onNodeWithTag("pdf_pages").performScrollToIndex(6)
         await("pdf_mark_check_6")
         // Closing releases the renderer and deletes the copy.
         compose.onNodeWithTag("pdf_back").performClick()

@@ -352,6 +352,14 @@ internal fun PdfExtractionFlow(host: ThesisHost, uri: Uri, cursor: Int) {
 @Composable
 internal fun ExtractionLayer(host: ThesisHost) {
     val state by host.thesis.state.collectAsState()
+    val shown = state.draft != null && (state.pdfToExtract != null || state.extraction != null)
+    // The section editor under the layer loses the focus when the layer opens, which closes
+    // its keyboard: in the same window, the keyboard opened for the editor would otherwise
+    // stay up over the PDF pages and the review (taking half of the screen). Fields of the
+    // review can take the focus afterwards.
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    LaunchedEffect(shown) { if (shown) { focus.clearFocus(force = true); keyboard?.hide() } }
     if (state.draft == null) return
     val uri = state.pdfToExtract
     if (uri != null) PdfExtractionFlow(host, uri, state.pdfCursor)
