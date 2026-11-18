@@ -142,7 +142,12 @@ jobs:
                           trace = [l for l in (case.find(bad).text or "").splitlines() if l.strip()]
                           first_at = next((i for i, l in enumerate(trace) if l.lstrip().startswith("at ")), len(trace))
                           shown = trace[:min(first_at, 400)] + trace[first_at:first_at + 6]
-                          lines.extend("      " + l.rstrip() for l in shown)
+                          # The causes ("Caused by:", "Suppressed:": exceptions reported by coroutine
+                          # tests come only there), each with its first frames.
+                          for i, l in enumerate(trace):
+                              if i >= first_at + 6 and l.lstrip().startswith(("Caused by:", "Suppressed:")):
+                                  shown += trace[i:i + 9]
+                          lines.extend("      " + l.rstrip() for l in shown[:600])
           print("\n".join(lines))
           print(f"TOTAL: {total} tests, {failed} failed, {skipped} skipped")
 
@@ -328,7 +333,6 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          set -o pipefail
           report() {
             local label="$1" dir="$2"
             local apk aab
@@ -339,7 +343,7 @@ jobs:
               n=$(unzip -lv "$apk" "lib/$abi/*" 2>/dev/null | awk '/^ *[0-9]/ && NF>=8 {c+=$3} END {print c+0}')
               echo "SIZE $label apk lib/$abi compressed_bytes=$n"
             done
-            unzip -lv "$apk" "lib/arm64-v8a/*" "assets/paddleocr/*" "assets/tessdata/*" 2>/dev/null | awk '/^ *[0-9]/ && NF>=8 && $8 !~ /\/$/ {print "SIZE '"$label"' entry " $8 " uncompressed=" $1 " stored=" $3}'
+            { unzip -lv "$apk" "lib/arm64-v8a/*" "assets/paddleocr/*" "assets/tessdata/*" 2>/dev/null || true; } | awk '/^ *[0-9]/ && NF>=8 && $8 !~ /\/$/ {print "SIZE '"$label"' entry " $8 " uncompressed=" $1 " stored=" $3}'
           }
           ./gradlew --quiet bundleDebug
           report "this-commit" "."
