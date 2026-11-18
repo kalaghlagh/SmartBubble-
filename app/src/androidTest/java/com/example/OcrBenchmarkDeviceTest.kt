@@ -256,6 +256,8 @@ class OcrBenchmarkDeviceTest {
 
     @Test
     fun arabic() {
+        DiagnosticImages.install("bench-arabic")
+        try {
         val p1 = "تعد المياه الجوفية مصدرا أساسيا لمياه الشرب في المناطق الجافة."
         val p2 = "أجريت الدراسة على عشرين بئرا خلال سنة 2024 وتم قياس درجة الحموضة pH والناقلية."
         val f = Fixture()
@@ -273,6 +275,7 @@ class OcrBenchmarkDeviceTest {
         )
         measure("arabic-doc", "arabic", e, image(f.save(dir, "bench-arabic")))
         check(results.last(), 0.10)
+        } finally { DiagnosticImages.uninstall() }
     }
 
     @Test

@@ -165,4 +165,62 @@ object LineSegments {
         }
         return current to replaced
     }
+
+    private const val MARKER_LETTERS = "أابجدهوزحطيكلمنسعفصقرشتثخذضظغ"
+
+    private fun isMark(t: String) = t == "ـ" || t == "-" || t == "–"
+
+    /**
+     * An Arabic list marker drawn as a letter and a dash ("أ-", "ب-") whose dash the recognizer
+     * dropped or read as a tatweel (both are a short horizontal stroke): when the line starts
+     * (on the right) with a single letter and the ink between that letter and the next word is a
+     * short horizontal stroke at mid-height, the dash is put back. Nothing is added without that
+     * stroke in the image.
+     */
+    fun markerDash(line: RecLine, gray: IntArray, width: Int, height: Int, dark: Int = 140): RecLine {
+        val chars = line.chars.sortedBy { it.x }
+        val solid = chars.filter { it.text.isNotBlank() && !isMark(it.text) }
+        if (solid.size < 2) return line
+        val letter = solid.last()
+        if (letter.text.length != 1 || letter.text[0] !in MARKER_LETTERS) return line
+        // The marker is a word of its own: a blank (read or not) between it and the next letter.
+        val next = solid[solid.size - 2]
+        val letterX = letter.x * width
+        val nextX = next.x * width
+        if (letterX - nextX < height * 0.6f) return line
+        // The letter's own ink: the run of inked columns around its position.
+        fun inked(x: Int) = x in 0 until width && (0 until height).any { gray[it * width + x] < dark }
+        var l = letterX.toInt().coerceIn(0, width - 1)
+        if (!inked(l)) {
+            // Its position can fall just beside its ink: look within a third of the height.
+            val near = (0..(height / 3)).flatMap { listOf(l - it, l + it) }.firstOrNull { inked(it) } ?: return line
+            l = near
+        }
+        while (l - 1 >= 0 && inked(l - 1)) l--
+        // The ink between the next word and the letter (nearest the letter).
+        val from = nextX.toInt().coerceAtLeast(0)
+        var right = l - 1
+        while (right > from && !inked(right)) right--
+        if (right <= from) return line
+        var left = right
+        while (left - 1 > from && inked(left - 1)) left--
+        var top = height
+        var bottom = -1
+        for (x in left..right) for (y in 0 until height) if (gray[y * width + x] < dark) { if (y < top) top = y; if (y > bottom) bottom = y }
+        val strokeW = right - left + 1
+        val strokeH = bottom - top + 1
+        val centre = (top + bottom) / 2f
+        val isDash = strokeW >= height * 0.1f && strokeH <= height * 0.2f && strokeW >= strokeH * 1.8f &&
+            centre > height * 0.25f && centre < height * 0.85f
+        if (!isDash) return line
+        val dashX = (left + right) / 2f / width
+        // Any mark the recognizer put there (a tatweel, a dash) and blanks between the dash and
+        // the letter go; the dash joins the letter.
+        val kept = chars.filterNot { c ->
+            val px = c.x * width
+            (isMark(c.text) && px > nextX && px < letterX) || (c.text.isBlank() && px > left && px < letterX)
+        }
+        val out = (kept + RecChar("-", dashX, 0.9f)).sortedBy { it.x }
+        return line.copy(text = out.joinToString("") { it.text }, chars = out)
+    }
 }

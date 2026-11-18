@@ -108,6 +108,9 @@ object CandidateEvaluator {
             .joinToString("").replace(Regex("d+"), "d").replace(Regex("a+"), "a").replace(Regex("L+"), "L")
     }
 
+    /** A text with letters that look like digits replaced by them (alef and 1), spaces removed. */
+    fun confusableKey(text: String): String = text.filter { !it.isWhitespace() }.map { if (it == 'ا') '1' else it }.joinToString("")
+
     private fun similarity(a: String, b: String): Double {
         val x = a.lowercase().filter { !it.isWhitespace() }
         val y = b.lowercase().filter { !it.isWhitespace() }
@@ -168,6 +171,21 @@ object CandidateEvaluator {
             Triple(c, s, reasons)
         }.sortedByDescending { it.second }
         var (best, score, reasons) = scored.first()
+        // A digit read as the letter of the same shape (digit 1 / alef "ا") in an Arabic context:
+        // when a Latin reading of the same region confirms the digit there, the digit is kept
+        // ("با" -> "ب1"). Only that letter changes, and only where another reading has the digit.
+        if (expected == Script.ARABIC && best.text.contains('ا')) {
+            val latinNumbers = usable.filter { it.engineScript == Script.LATIN || it.engineScript == Script.NUMERIC }.flatMap { numbers(it.text) }.toSet()
+            val key = confusableKey(best.text)
+            val withDigit = usable.firstOrNull { c -> c !== best && numbers(c.text).isNotEmpty() && confusableKey(c.text) == key &&
+                numbers(c.text).all { it in latinNumbers } && ScriptDetector.count(c.text).arabic > 0 }
+            if (withDigit != null) {
+                val digits = withDigit.text.filter { !it.isWhitespace() }
+                val fixed = best.text.filter { !it.isWhitespace() }.mapIndexed { i, ch -> if (ch == 'ا' && digits.getOrNull(i) == '1') '1' else ch }.joinToString("")
+                best = best.copy(text = fixed, confidence = maxOf(best.confidence ?: 0f, withDigit.confidence ?: 0f))
+                reasons = ArrayList(reasons + "digit_confirmed")
+            }
+        }
         // Readings that differ only by case ("p1", "P1"): the letters agree, the column's pattern
         // decides the case.
         if (shapes.isNotEmpty() && shape(best.text) !in shapes) {

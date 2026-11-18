@@ -6,6 +6,7 @@ import android.graphics.Matrix
 import android.os.SystemClock
 import android.util.Log
 import com.example.ocr.OcrPreprocessor
+import com.example.ocr.OrientationProfile
 import com.example.ocr.paddle.LineReading
 import com.example.ocr.paddle.PaddleOrtOcrEngine
 import com.example.ocr.paddle.RecLine
@@ -79,12 +80,23 @@ class OcrPageReader(
                 val px = IntArray(w * h)
                 img.getPixels(px, 0, w, 0, 0, w, h)
                 for (i in px.indices) px[i] = px[i] and 0xFF
+                // A list marker's dash dropped or read as a tatweel ("أ-" read "أ"), before and after
+                // the parts are read again (a part read again can bring the dash back on its own).
+                val dashed = com.example.ocr.paddle.LineSegments.markerDash(result.line, px, w, h)
+                if (dashed !== result.line) result = result.copy(line = dashed, reasons = result.reasons + "marker_dash")
                 val (repaired, parts) = com.example.ocr.paddle.LineSegments.repair(result.line, px, w, h) { range ->
                     val sub = Bitmap.createBitmap(img, range.first, 0, range.last - range.first + 1, h)
                     try { engine.recognize(sub, OcrModel.ARABIC) to engine.recognize(sub, OcrModel.LATIN) } finally { sub.recycle() }
                 }
                 if (parts > 0) result = result.copy(line = repaired, mergedRuns = result.mergedRuns + parts, needsReview = true,
                     reasons = result.reasons + "parts_read_again:$parts")
+                // A list marker's dash dropped or read as a tatweel ("أ-" read "أ").
+                val marked = com.example.ocr.paddle.LineSegments.markerDash(result.line, px, w, h)
+                if (marked !== result.line) {
+                    result = result.copy(line = marked, reasons = result.reasons + "marker_dash")
+                }
+                // Lines that start with a short word (list markers): crop for the diagnostics.
+                if ((RtlText.visualToLogical(result.line.text).trim().split(' ').firstOrNull()?.length ?: 9) <= 2) traceImage("marker-${cropBox.top.toInt()}", img)
             }
             trace { "region ${cropBox.top.toInt()}-${cropBox.bottom.toInt()} readings=${listOfNotNull(a, b).map { "${it.model}:${it.confidence}:${it.text}" }} kept=${result.line.model}:${logical(result.line)} review=${result.reasons}" }
             return result to cropBox
@@ -136,6 +148,7 @@ class OcrPageReader(
         val candidates = ArrayList<RecognitionCandidate>()
         if (pageText.isNotBlank()) candidates += RecognitionCandidate(pageText, pageConf, "page")
         val (img, cropBox) = crop(page, region) ?: return null
+        traceImage("cell-${cropBox.top.toInt()}-${cropBox.left.toInt()}", img)
         try {
             for (model in OcrRouting.plan(pageText, expected, numeric)) {
                 ctx.ensureActive()
@@ -239,17 +252,37 @@ class OcrPageReader(
             currentCoroutineContext().ensureActive()
             // B-C. Detection and recognition; a page photographed sideways is turned upright.
             var lines = readLines(page, notes)
-            // Sideways: weak text, or text regions mostly taller than wide (vertical lines).
+            // Orientation: text whose ink runs vertically (a page turned by a quarter), text
+            // regions mostly taller than wide, or a weak reading are reasons to try the page
+            // turned; the turned page is kept only when it reads clearly better, so a page that
+            // is already upright is never turned on a hint alone.
             val detected = lastBoxes
             val sideways = detected.size >= 2 && detected.count { it.height > it.width * 1.3f } * 2 > detected.size
-            if (sideways || OcrPreprocessor.isWeak(lines.joinToString(" ") { it.text }, mean(lines) ?: 0f)) {
-                for (deg in listOf(90, 270, 180)) {
+            val vertical = OrientationProfile.verticalText(gray(page), page.width, page.height)
+            // An upside-down page still gives text, read with a low confidence (about 0.3-0.5 for
+            // about 0.95+ upright).
+            val weak = OcrPreprocessor.isWeak(lines.joinToString(" ") { it.text }, mean(lines) ?: 0f) || (mean(lines) ?: 0f) < 0.7f
+            trace { "orientation vertical=$vertical sideways=$sideways weak=$weak ratio=${"%.2f".format(OrientationProfile.ratio(gray(page), page.width, page.height))} boxes=${detected.size}" }
+            traceImage("page-${index + 1}", page)
+            if (vertical || sideways || weak) {
+                val tries = if (vertical || sideways) listOf(90, 270) else listOf(90, 270, 180)
+                var bestScore = OcrPreprocessor.score(lines.joinToString(" ") { it.text }, mean(lines) ?: 0f)
+                var best: Pair<Int, List<TextLine>>? = null
+                var bestPage: Bitmap? = null
+                for (deg in tries) {
                     currentCoroutineContext().ensureActive()
                     val rotated = OcrPreprocessor.rotate(page, deg)
                     val r = readLines(rotated, ArrayList())
-                    val better = OcrPreprocessor.score(r.joinToString(" ") { it.text }, mean(r) ?: 0f) >
-                        OcrPreprocessor.score(lines.joinToString(" ") { it.text }, mean(lines) ?: 0f) * 1.2
-                    if (better) { page.recycle(); page = rotated; lines = r; notes += "rotated:$deg"; break } else rotated.recycle()
+                    val score = OcrPreprocessor.score(r.joinToString(" ") { it.text }, mean(r) ?: 0f)
+                    trace { "orientation try $deg score=${"%.1f".format(score)} vs ${"%.1f".format(bestScore)}" }
+                    if (score > bestScore * 1.2) {
+                        bestPage?.recycle(); bestPage = rotated; best = deg to r; bestScore = score
+                    } else rotated.recycle()
+                }
+                val chosen = best
+                val chosenPage = bestPage
+                if (chosen != null && chosenPage != null) {
+                    page.recycle(); page = chosenPage; lines = chosen.second; notes += "rotated:${chosen.first}"
                 }
             }
             trace { "page lines=${lines.map { "${it.box.top.toInt()}-${it.box.bottom.toInt()}:${it.confidence}:${it.text}" }}" }
@@ -303,6 +336,8 @@ class OcrPageReader(
 
     private fun trace(message: () -> String) { trace?.invoke(message()) }
 
+    private fun traceImage(name: String, image: Bitmap) { traceImage?.invoke(name, image) }
+
     companion object {
         private const val TAG = "OcrPageReader"
 
@@ -311,5 +346,8 @@ class OcrPageReader(
          * reports only. Null in the app: page text is never logged.
          */
         @Volatile var trace: ((String) -> Unit)? = null
+
+        /** Receives crops of the regions examined (device tests' diagnostics only; null in the app). */
+        @Volatile var traceImage: ((String, Bitmap) -> Unit)? = null
     }
 }

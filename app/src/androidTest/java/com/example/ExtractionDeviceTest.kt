@@ -170,6 +170,8 @@ class ExtractionDeviceTest {
 
     @Test
     fun arabicDocument_paragraphsListAndLatinTerms_noEnglishSubstitutions() {
+        DiagnosticImages.install("arabic-list")
+        try {
         val p = Page()
         p.text("الفصل الأول: منطقة الدراسة", size = 48f, bold = true)
         p.text(arP1)
@@ -192,6 +194,7 @@ class ExtractionDeviceTest {
         val firstPara = page.blocks.filterIsInstance<ExtractedBlock.Paragraph>().firstOrNull()
         assertTrue("paragraphs: ${page.blocks}", firstPara != null && firstPara.rtl)
         assertEquals("list items: ${page.blocks}", 3, page.blocks.filterIsInstance<ExtractedBlock.ListItem>().size)
+        } finally { DiagnosticImages.uninstall() }
     }
 
     @Test
