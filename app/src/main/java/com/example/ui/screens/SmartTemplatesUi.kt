@@ -10,7 +10,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -290,15 +289,15 @@ fun ClassificationCard(viewModel: SmartBubbleViewModel, pending: SmartBubbleView
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(stringResource(R.string.st_classify_title, pending.template.name), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Text(stringResource(R.string.st_classify_category), style = MaterialTheme.typography.labelMedium)
-            // One scrolling line each, so the card stays small above the list.
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            // Every choice on screen: the chips wrap onto further lines (no sideways scroll).
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 categories.forEach { c ->
                     FilterChip(selected = category == c.id, onClick = { category = c.id; sub = null }, label = { Text(stringResource(SmartTemplateStrings.category(c.id))) },
                         modifier = Modifier.testTag("st_classify_cat_${c.id}"))
                 }
             }
             Text(stringResource(R.string.st_classify_subcategory), style = MaterialTheme.typography.labelMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(selected = sub == null, onClick = { sub = null }, label = { Text(stringResource(R.string.st_whole_category)) })
                 TemplateCatalog.category(category)?.subcategories?.forEach { s ->
                     FilterChip(selected = sub == s.id, onClick = { sub = s.id }, label = { Text(stringResource(SmartTemplateStrings.subcategory(s.id))) },

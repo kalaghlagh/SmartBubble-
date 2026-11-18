@@ -12,10 +12,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -51,7 +52,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.example.R
 import com.example.offline.DocumentType
 import com.example.offline.PreviewItem
@@ -230,7 +230,7 @@ fun OfflineFormattingDialog(
     val busy = state.phase == OfflinePhase.GENERATING || state.phase == OfflinePhase.SAVING
     Dialog(
         onDismissRequest = { if (state.phase != OfflinePhase.SAVING) onCancel() },
-        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)
+        properties = com.example.ui.adaptive.fullScreenDialogProperties(dismissOnClickOutside = false)
     ) {
         Surface(
             modifier = Modifier
@@ -238,7 +238,7 @@ fun OfflineFormattingDialog(
                 .testTag("offline_preview_dialog"),
             color = MaterialTheme.colorScheme.background
         ) {
-            Column(Modifier.statusBarsPadding().navigationBarsPadding()) {
+            Column(Modifier.windowInsetsPadding(WindowInsets.safeDrawing)) {
                 // Top bar
                 Row(
                     modifier = Modifier

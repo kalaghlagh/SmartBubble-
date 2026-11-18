@@ -9,7 +9,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
@@ -188,9 +187,12 @@ fun ChatScreen(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
+                // At most 310 dp, and never the whole width of a narrow window: part of the
+                // screen stays visible to tap outside and close the drawer.
                 modifier = Modifier
                     .fillMaxHeight()
-                    .width(310.dp),
+                    .fillMaxWidth(0.85f)
+                    .widthIn(max = 310.dp),
                 drawerContainerColor = MaterialTheme.colorScheme.surface,
                 drawerTonalElevation = 4.dp
             ) {
@@ -499,7 +501,8 @@ fun ChatScreen(
                     if (!msg.isUser && note != null && note.startsWith("smart-clarify|") && msg.id == messages.lastOrNull()?.id) {
                         val parts = note.split('|', limit = 3)
                         val request = parts.getOrNull(2).orEmpty()
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(start = 42.dp).horizontalScroll(rememberScrollState())) {
+                        // Every choice on screen: the buttons wrap onto further lines (no sideways scroll).
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(start = 42.dp)) {
                             parts.getOrNull(1)?.split(',')?.filter { it.isNotBlank() }?.forEach { id ->
                                 OutlinedButton(onClick = { viewModel.resolveClarification(request, id) }, modifier = Modifier.testTag("smart_choice_$id")) {
                                     Text(viewModel.templateKindName(id))

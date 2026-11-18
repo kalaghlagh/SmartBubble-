@@ -31,7 +31,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.example.R
 import com.example.data.model.TemplateEntity
 import com.example.template.preview.*
@@ -53,11 +52,8 @@ fun TemplatePreviewDialog(
 ) {
     Dialog(
         onDismissRequest = onClose,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            dismissOnBackPress = true,
-            dismissOnClickOutside = false
-        )
+        // Edge to edge with the content inside the safe area, the same on every Android version.
+        properties = com.example.ui.adaptive.fullScreenDialogProperties(dismissOnClickOutside = false)
     ) {
         Scaffold(
             modifier = Modifier
@@ -119,7 +115,7 @@ fun TemplatePreviewDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .navigationBarsPadding()
+                            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically
