@@ -201,7 +201,7 @@ jobs:
       # The Thesis Builder PDF page-selection and extraction tests again on Android 16 (API 36:
       # edge-to-edge enforced for this app, which targets SDK 36) on a compact phone (Nexus 5,
       # 360x640 dp), as the API 34 Pixel 6 run above cannot show either.
-      - name: Run PDF page-selection tests on Android 16 (compact phone)
+      - name: Run PDF page-selection and Agent file tests on Android 16 (compact phone)
         id: device_tests_android16
         if: ${{ always() && steps.build_test_apk.outcome == 'success' && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
         uses: reactivecircus/android-emulator-runner@v2
@@ -212,7 +212,7 @@ jobs:
           profile: Nexus 5
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: OUT=device-test-output-android16 TEST_CLASSES=com.example.thesis.PdfViewerDeviceTest,com.example.thesis.PdfExtractionFlowDeviceTest bash .github/scripts/device-tests.sh
+          script: OUT=device-test-output-android16 TEST_CLASSES=com.example.thesis.PdfViewerDeviceTest,com.example.thesis.PdfExtractionFlowDeviceTest,com.example.AgentFilesDeviceTest bash .github/scripts/device-tests.sh
 
       - name: Summarize device test results
         if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}

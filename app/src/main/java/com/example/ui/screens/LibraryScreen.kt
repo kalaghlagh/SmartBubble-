@@ -38,6 +38,13 @@ fun LibraryScreen(
     modifier: Modifier = Modifier
 ) {
     val documents by viewModel.allDocuments.collectAsState()
+    // Import files from the phone (system file picker: no storage permission needed).
+    val importing by viewModel.importing.collectAsState()
+    val importResults by viewModel.importResults.collectAsState()
+    val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris -> viewModel.importFilesToLibrary(uris) }
+    importResults?.let { ImportResultsDialog(it, onDismiss = viewModel::dismissImportResults) }
     var selectedFilter by rememberSaveable { mutableStateOf(LibraryFilter.ALL.key) }
     var searchQuery by remember { mutableStateOf("") }
     var showSearchBar by remember { mutableStateOf(false) }
@@ -102,6 +109,18 @@ fun LibraryScreen(
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (importing) CircularProgressIndicator(Modifier.size(20.dp).testTag("library_importing"), strokeWidth = 2.dp)
+                        IconButton(
+                            onClick = { importLauncher.launch(IMPORT_MIME_TYPES) },
+                            enabled = !importing,
+                            modifier = Modifier.testTag("library_import")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.UploadFile,
+                                contentDescription = stringResource(R.string.library_import_from_phone),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                         IconButton(
                             onClick = { showSearchBar = !showSearchBar },
                             modifier = Modifier.testTag("library_search_toggle")

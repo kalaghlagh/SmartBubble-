@@ -129,12 +129,19 @@ class AgentPanelTest {
 
     @Test
     @Config(qualifiers = "fr-w411dp-h891dp")
-    fun paused_inFrench_resume_andFinished_dismiss() {
+    fun paused_inFrench_resume() {
         show(task(TaskStatus.PAUSED, share = false))
         reachAndClick("agent_resume")
+        reachAndClick("agent_cancel")
+        assertEquals(listOf("resume", "cancel"), clicks)
+    }
+
+    @Test
+    @Config(qualifiers = "fr-w411dp-h891dp")
+    fun finished_inFrench_dismiss() {
         show(task(TaskStatus.COMPLETED, share = false))
         reachAndClick("agent_dismiss")
-        assertEquals(listOf("resume", "dismiss"), clicks)
+        assertEquals(listOf("dismiss"), clicks)
     }
 
     @Test

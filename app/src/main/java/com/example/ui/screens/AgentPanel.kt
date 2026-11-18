@@ -70,7 +70,9 @@ fun AgentPanel(
     onApprove: () -> Unit,
     onReject: () -> Unit,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onPreviewFile: (String) -> Unit = {},
+    onRevokeFile: (String) -> Unit = {}
 ) {
     val routingWorthShowing = routing != null && (routing.events.isNotEmpty() || routing.waitingMs != null)
     if (task == null && !routingWorthShowing) return
@@ -87,7 +89,10 @@ fun AgentPanel(
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             if (routing != null) RoutingLine(routing)
-            if (task != null) TaskCard(task, sourceTitles, onPause, onResume, onCancel, onApprove, onReject, onDismiss)
+            if (task != null) {
+                TaskCard(task, sourceTitles, onPause, onResume, onCancel, onApprove, onReject, onDismiss)
+                TaskFilesSection(task.files, onPreviewFile, onRevokeFile)
+            }
         }
     }
 }
@@ -156,10 +161,14 @@ private fun stepStatusRes(status: StepStatus): Int = when (status) {
 
 @Composable
 private fun stepTitle(step: AgentStep, sourceTitles: Map<String, String>): String = when (step.toolId) {
-    TaskPlanner.Tools.LIBRARY_READ -> stringResource(
+    TaskPlanner.Tools.LIBRARY_READ, TaskPlanner.Tools.FILE_READ -> stringResource(
         R.string.agent_tool_read,
-        step.output["title"] ?: sourceTitles[step.input["documentId"]] ?: "…"
+        step.output["title"] ?: sourceTitles[step.input["documentId"]] ?: step.input["fileId"]?.let { id -> sourceTitles[id.substringAfter(':')] } ?: "…"
     )
+    TaskPlanner.Tools.TEMPLATE_INSPECT -> stringResource(R.string.agent_tool_inspect_template)
+    TaskPlanner.Tools.DOCX_PROPOSE_EDITS -> stringResource(R.string.agent_tool_propose_edits)
+    TaskPlanner.Tools.DOCX_WRITE_COPY -> stringResource(R.string.agent_tool_write_copy)
+    TaskPlanner.Tools.FILE_REPLACE_ORIGINAL -> stringResource(R.string.agent_tool_replace_original)
     TaskPlanner.Tools.CONTENT_GENERATE -> step.input["format"]?.let { stringResource(R.string.agent_tool_generate_format, it) }
         ?: stringResource(R.string.agent_tool_generate)
     TaskPlanner.Tools.RESULT_VALIDATE -> stringResource(R.string.agent_tool_validate)
@@ -230,11 +239,27 @@ private fun TaskCard(
             }
         }
         task.pendingApproval?.let { step ->
-            Text(
-                stringResource(if (step.status == StepStatus.UNKNOWN || step.error == "completion_unknown") R.string.agent_approval_unknown else R.string.agent_approval_share),
-                style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.testTag("agent_approval_prompt")
-            )
+            val target = step.input["fileId"]?.let { task.file(it) }
+            val proposal = task.step("propose")?.output.orEmpty()
+            val text = when {
+                step.error == "completion_unknown" -> stringResource(R.string.agent_approval_unknown)
+                step.toolId == TaskPlanner.Tools.DOCX_WRITE_COPY -> stringResource(
+                    R.string.agent_approval_edit_copy,
+                    target?.name ?: proposal["title"].orEmpty(),
+                    proposal["changed"]?.toIntOrNull() ?: 0
+                )
+                step.toolId == TaskPlanner.Tools.FILE_REPLACE_ORIGINAL -> stringResource(R.string.agent_approval_replace, target?.name.orEmpty())
+                else -> stringResource(R.string.agent_approval_share)
+            }
+            Text(text, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("agent_approval_prompt"))
+            if (step.toolId == TaskPlanner.Tools.DOCX_WRITE_COPY) {
+                proposal["examples"]?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 12, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("agent_edit_examples"))
+                }
+                if ((proposal["mixedFormatting"]?.toIntOrNull() ?: 0) > 0) {
+                    Text(stringResource(R.string.agent_edit_formatting_warning), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             when (task.status) {

@@ -39,6 +39,7 @@ import android.app.Activity
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
+import com.example.ui.publishOnMain
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.IntentSenderRequest
@@ -134,6 +135,12 @@ fun ChatScreen(
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
 
+    // Agent files: phone files are imported into the Library and attached to the next request.
+    var showAgentFiles by remember { mutableStateOf(false) }
+    val importResults by viewModel.importResults.collectAsState()
+    val agentPhoneLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        viewModel.importFilesToLibrary(uris, forAgent = true)
+    }
     val scannerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
@@ -535,8 +542,14 @@ fun ChatScreen(
                 onCancel = viewModel::cancelAgentTask,
                 onApprove = { viewModel.answerAgentApproval(true) },
                 onReject = { viewModel.answerAgentApproval(false) },
-                onDismiss = viewModel::dismissAgentTask
+                onDismiss = viewModel::dismissAgentTask,
+                onPreviewFile = viewModel::openAgentFile,
+                onRevokeFile = viewModel::revokeAgentFile
             )
+            agentState.choice?.let { choice ->
+                FileChoiceCard(choice.candidates, onPick = viewModel::chooseAgentFile, onDismiss = viewModel::dismissAgentChoice)
+            }
+            SelectedFilesRow(agentState.selected, onRemove = viewModel::unselectAgentFile)
 
             // Voice conversation status bar: listening / recognizing / thinking / speaking
             if (voiceActive || voicePhase == VoicePhase.LISTENING || voicePhase == VoicePhase.RECOGNIZING) {
@@ -758,6 +771,21 @@ fun ChatScreen(
         }
     }
 
+    if (showAgentFiles) {
+        val files by androidx.compose.runtime.produceState<List<com.example.agent.core.LibraryRef>>(emptyList(), importResults) {
+            publishOnMain(viewModel.agentAccessibleFiles())
+        }
+        AgentFilePickerDialog(
+            files = files,
+            selected = agentState.selected,
+            onFromPhone = { agentPhoneLauncher.launch(IMPORT_MIME_TYPES) },
+            onToggle = { f -> if (agentState.selected.any { it.fileId == f.fileId }) viewModel.unselectAgentFile(f.fileId) else viewModel.selectAgentFile(f) },
+            onPreview = { f -> viewModel.openAgentFile(f.fileId) },
+            onDismiss = { showAgentFiles = false }
+        )
+    }
+    importResults?.let { ImportResultsDialog(it, onDismiss = viewModel::dismissImportResults) }
+
     // Attachment Options Bottom Sheet (Attach File, Select Image, Scan Document)
     if (showAttachmentMenu) {
         ModalBottomSheet(
@@ -776,6 +804,39 @@ fun ChatScreen(
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(modifier = Modifier.height(14.dp))
+
+                // 0. Files for the Agent: phone, Library, My Templates
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            showAttachmentMenu = false
+                            showAgentFiles = true
+                        }
+                        .testTag("chat_action_agent_files"),
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Text(
+                            text = stringResource(R.string.agent_files_title),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // 1. Attach File
                 Surface(

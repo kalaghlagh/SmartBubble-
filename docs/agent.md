@@ -121,3 +121,51 @@ Clearing or deleting a conversation also deletes its task records.
 - No tool/function calling is sent to providers: tools are run by the app, not by the model.
 - Long-running tasks run while the app process lives (no WorkManager); after the app is killed
   they are resumable, not continued automatically.
+
+## Files: phone import, Library, My Templates
+
+**Import from phone** (Library ▸ upload icon, or Agent ▸ attach ▸ Files for the Agent ▸ Import from
+phone): the system file picker (`ACTION_OPEN_DOCUMENT`, multiple files, no storage permission).
+Each file is copied once into the Library folder (`files/generated_docs`), so it stays available
+after a restart or reboot without keeping the picker's URI. `LibraryImporter`:
+
+- type decided from the bytes (`FileSniffer`): PDF, DOCX, XLSX, PPTX, PNG, JPEG, WebP; old or
+  password-protected Office files (OLE) and encrypted PDFs are refused with their own message;
+- 50 MB per file, 20 files per pick; ZIP packages checked for entry count and unpacked size;
+- same bytes already in the Library (SHA-256, only files of the same size are hashed): not added twice;
+- original bytes kept; a refused or failed copy is deleted; no space left is reported as such;
+- a row in the existing `documents` table (`providerUsed = "Imported"`); Word/Excel/PowerPoint
+  text is read at import, PDF and image text on demand by the existing extraction engine.
+
+**Agent file access** (`AgentFileAccess`): the only way tools reach files. Files are addressed by
+app ids (`library:<id>`, `template:<id>`), never paths. A task may use only the files listed in
+its record (`AgentTask.files`, with role and `granted`):
+
+- files the user attached (chips above the composer), or named exactly in the request;
+- a request that only describes a file ("my annual report") with candidates is not guessed: the
+  user picks one (`FileChoice`);
+- roles: SOURCE (read for information), TEMPLATE (My Templates template used for formatting),
+  EDIT_TARGET (a Word file to edit). An uploaded template is never treated as editable unless the
+  request asks to modify it;
+- Revoke (Agent panel ▸ Files used by this task) takes effect at the next tool run: the grant is
+  stored and every checkpoint keeps the stored value, and write steps re-check the stored task.
+
+**Reading** (`file.read`, `template.inspect`): Word paragraphs/headings/tables, Excel sheets and
+cells with formulas and the values stored in the file (never evaluated by the app), PowerPoint
+slides in presentation order, PDF and images through the existing extraction engine (PaddleOCR on
+ONNX Runtime for scans). Images, charts and embedded objects inside Office files are reported as
+not read. Document text is passed to the model as data, labelled as such.
+
+**Editing** (Word only): `docx.propose_edits` (model proposes paragraph text changes; validated:
+known paragraph indexes only, bounded text, at most 600 paragraphs / 60 000 characters) →
+approval showing the file, number of changed paragraphs, examples and a formatting warning →
+`docx.write_copy` writes a NEW copy (`<name> (edited).docx` in the Library, or `<name> (copy)` in
+My Templates); paragraph and run properties are kept, other package parts are copied byte for byte,
+the write is atomic (temp file + rename). Replacing the original (`file.replace_original`) is only
+planned when the request explicitly says so, needs its own second approval, applies to Library
+documents only, and is atomic. There is no delete tool.
+
+Not supported yet: editing Excel or PowerPoint in place (such requests produce a new document from
+the file's content), adding/removing paragraphs or sections, page-range selection for Agent PDF
+reads (the whole PDF is read), visual page previews inside the Agent panel (Preview opens the
+existing viewer).
