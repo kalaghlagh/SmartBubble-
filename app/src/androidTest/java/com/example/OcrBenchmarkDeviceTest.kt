@@ -256,6 +256,8 @@ class OcrBenchmarkDeviceTest {
 
     @Test
     fun arabic() {
+        DiagnosticImages.install("bench-arabic")
+        try {
         val p1 = "تعد المياه الجوفية مصدرا أساسيا لمياه الشرب في المناطق الجافة."
         val p2 = "أجريت الدراسة على عشرين بئرا خلال سنة 2024 وتم قياس درجة الحموضة pH والناقلية."
         val f = Fixture()
@@ -273,6 +275,7 @@ class OcrBenchmarkDeviceTest {
         )
         measure("arabic-doc", "arabic", e, image(f.save(dir, "bench-arabic")))
         check(results.last(), 0.10)
+        } finally { DiagnosticImages.uninstall() }
     }
 
     @Test
@@ -332,7 +335,8 @@ class OcrBenchmarkDeviceTest {
         f.y += h + 20f
         val cells = listOf(listOf("Ion", "Min", "Max"), listOf("Ca", "12", "40"), listOf("Mg", "Not measured"))
         f.table(cells, rtl = false, borders = true, spans = listOf(listOf(1, 1, 1), listOf(1, 1, 1), listOf(1, 2)))
-        val e = Expect(listOf("Two columns" to Script.LATIN, left to Script.LATIN, right to Script.LATIN),
+        // The table cells are part of the page's text (as in the other cases).
+        val e = Expect(listOf("Two columns" to Script.LATIN, left to Script.LATIN, right to Script.LATIN, "Ion Min Max Ca 12 40 Mg Not measured" to Script.LATIN),
             tables = listOf(listOf(listOf("Ion", "Min", "Max"), listOf("Ca", "12", "40"), listOf("Mg", "Not measured", ""))))
         val doc = measure("columns-merged", "latin", e, image(f.save(dir, "bench-columns")))
         val t = doc.pages.single().blocks.filterIsInstance<ExtractedBlock.Table>().first()

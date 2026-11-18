@@ -207,7 +207,37 @@ class OcrDeviceTest {
         assertTrue("reading order", n.indexOf("ressource").let { it < 0 || n.indexOf(normalize("الجوفيه").take(4)) < it })
     }
 
-    @Test fun rotatedPage() { val r = ocr(page("rotated", listOf(english), rotate = 90f)); check("rotated-90", english, r.pages.single().rawText, 0.7) }
+    /** Orientation decisions and the page as read, in the instrumentation output (diagnostics). */
+    private fun <T> diagnosed(name: String, block: () -> T): T {
+        com.example.extraction.OcrPageReader.trace = { if (it.startsWith("orientation")) InstrumentationRegistry.getInstrumentation().sendStatus(2, android.os.Bundle().apply { putString("ocr_result", "TRACE $name ${it.take(800)}") }) }
+        DiagnosticImages.install(name)
+        try { return block() } finally { DiagnosticImages.uninstall(); com.example.extraction.OcrPageReader.trace = null }
+    }
+
+    private fun notes(r: com.example.ocr.OcrBatchResult) = r.pages.single().extraction?.notes.orEmpty()
+
+    @Test fun rotatedPage() = diagnosed("rotated-90") {
+        val r = ocr(page("rotated", listOf(english), rotate = 90f))
+        check("rotated-90", english, r.pages.single().rawText, 0.7)
+        assertTrue("turned upright: ${notes(r)}", notes(r).any { it.startsWith("rotated:") })
+    }
+
+    @Test fun rotatedPage270() = diagnosed("rotated-270") {
+        val r = ocr(page("rotated-270", listOf(french), rotate = 270f))
+        check("rotated-270", french, r.pages.single().rawText, 0.7)
+    }
+
+    @Test fun upsideDownPage() = diagnosed("rotated-180") {
+        val r = ocr(page("rotated-180", listOf(english), rotate = 180f))
+        check("rotated-180", english, r.pages.single().rawText, 0.7)
+    }
+
+    /** An upright page is never turned (no blind rotation). */
+    @Test fun uprightPage_isNotTurned() = diagnosed("upright") {
+        val r = ocr(page("upright", listOf(english, french)))
+        check("upright", english, r.pages.single().rawText, 0.8)
+        assertTrue("not turned: ${notes(r)}", notes(r).none { it.startsWith("rotated:") })
+    }
 
     @Test fun lowContrastPage() {
         val r = ocr(page("low-contrast", listOf(french), textColor = Color.rgb(150, 150, 150), background = Color.rgb(205, 205, 205)))

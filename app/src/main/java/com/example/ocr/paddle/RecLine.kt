@@ -22,12 +22,19 @@ data class RecLine(
 object CtcDecoder {
 
     /**
+     * Probability a non-blank class needs, at a step the blank wins, to be read anyway (the
+     * "blank gate" of Scanly's decoder, Apache-2.0). 0 disables it.
+     */
+    const val BLANK_GATE = 0f
+
+    /**
      * Decodes [logits] laid out as [steps] x [classes] (probabilities or raw scores). [vocab]
      * maps class index to text, index 0 being the blank. [fill] is the share of the input width
      * the crop really occupies (the rest is white padding): positions are reported relative to
      * the crop, not to the padded input.
      */
-    fun decode(logits: FloatArray, steps: Int, classes: Int, vocab: List<String>, fill: Float = 1f, model: String = ""): RecLine {
+    fun decode(logits: FloatArray, steps: Int, classes: Int, vocab: List<String>, fill: Float = 1f, model: String = "",
+               blankGate: Float = BLANK_GATE): RecLine {
         if (steps <= 0 || classes <= 0) return RecLine("", 0f, model = model)
         require(logits.size >= steps * classes) { "logits too short" }
         val share = fill.coerceIn(0.01f, 1f)
@@ -43,6 +50,16 @@ object CtcDecoder {
             for (c in 1 until classes) {
                 val v = logits[base + c]
                 if (v > bestVal) { bestVal = v; best = c }
+            }
+            if (best == 0 && blankGate > 0f) {
+                // The blank won, but a character has a real share of the probability (models
+                // trained mostly on one script give digits, Latin letters and punctuation inside
+                // it a low score): that character is kept unless it repeats the previous one.
+                var alt = 0
+                var altVal = Float.NEGATIVE_INFINITY
+                for (c in 1 until classes) { val v = logits[base + c]; if (v > altVal) { altVal = v; alt = c } }
+                val altP = if (softmaxed) altVal else probability(logits, base, classes, bestVal).let { pb -> (Math.exp((altVal - bestVal).toDouble()) * pb).toFloat() }
+                if (alt != 0 && alt != prev && altP >= blankGate) { best = alt; bestVal = altVal }
             }
             if (best != 0 && best != prev) {
                 val text = vocab.getOrElse(best) { "" }

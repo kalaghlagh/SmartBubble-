@@ -291,4 +291,150 @@ class PaddleCoreTest {
         assertEquals("NO_TEXT", p.pdfTextStatus)
         assertFalse("no recognized text in the profile", p.toJson().contains("الآبار"))
     }
+
+    // ------------------------------------------------------------------ parts of Arabic lines read again
+
+    /** A grey line image [w] x [h] with black blocks (ink) over the given column ranges. */
+    private fun inkLine(w: Int, h: Int, vararg blocks: IntRange): IntArray {
+        val g = IntArray(w * h) { 255 }
+        for (b in blocks) for (y in h / 4 until h * 3 / 4) for (x in b) g[y * w + x] = 0
+        return g
+    }
+
+    @Test
+    fun segments_splitAtWordGapsOnly() {
+        val g = inkLine(200, 40, 10..40, 43..60, 90..120)
+        // The 2-column gap inside the first word does not split it; the 29-column gap does.
+        assertEquals(listOf(10..60, 90..120), LineSegments.segments(g, 200, 40, minGap = 6))
+    }
+
+    @Test
+    fun repair_readsAgainTheWordsTheLineDropped_andKeepsTheRest() {
+        // Visual order: an Arabic word (read), then "2024" (dropped: no character there), then
+        // an Arabic word (read).
+        val w = 300; val h = 40
+        val g = inkLine(w, h, 10..80, 120..170, 210..290)
+        fun ch(t: String, px: Int, c: Float = 0.97f) = RecChar(t, px / w.toFloat(), c)
+        val line = RecLine("متو  ةنس", 0.97f, listOf(ch("م", 20), ch("ت", 40), ch("و", 60), ch(" ", 100), ch(" ", 190),
+            ch("ة", 220), ch("ن", 250), ch("س", 280)), 0.01f, "arabic")
+        val asked = ArrayList<IntRange>()
+        val (fixed, parts) = LineSegments.repair(line, g, w, h) { range ->
+            asked += range
+            val sub = range.last - range.first + 1
+            val digits = "2024".mapIndexed { k, c -> RecChar(c.toString(), (k + 0.5f) / 4f * (50f / sub) + (120f - range.first) / sub, 0.99f) }
+            RecLine("2024", 0.99f, digits, 0.02f, "arabic") to RecLine("2024", 0.99f, digits, 0.02f, "latin")
+        }
+        assertEquals(1, parts)
+        assertEquals(1, asked.size)
+        assertTrue("the dropped word only: $asked", asked.single().first in 110..120 && asked.single().last in 170..180)
+        val words = RecWords.words(fixed, Box(0f, 0f, w.toFloat(), h.toFloat())).map { it.text }
+        assertEquals(listOf("سنة", "2024", "وتم"), words)
+    }
+
+    @Test
+    fun repair_takesPunctuationTheLineDropped_butNotTheSameText() {
+        val w = 200; val h = 40
+        val g = inkLine(w, h, 150..185, 10..120)
+        fun ch(t: String, px: Int, c: Float) = RecChar(t, px / w.toFloat(), c)
+        // "أ-" read "أ" alone (one character on its segment): read again.
+        val line = RecLine("رابآلا أ", 0.95f, listOf(ch("ر", 20, 0.97f), ch("ا", 60, 0.97f), ch("ب", 100, 0.97f), ch(" ", 135, 0.9f), ch("أ", 175, 0.92f)), 0.01f, "arabic")
+        val (fixed, parts) = LineSegments.repair(line, g, w, h) { range ->
+            RecLine("-أ", 0.75f, listOf(RecChar("-", 0.3f, 0.7f), RecChar("أ", 0.7f, 0.8f)), 0.1f, "arabic") to
+                RecLine("i", 0.3f, listOf(RecChar("i", 0.5f, 0.3f)), 0.1f, "latin")
+        }
+        assertEquals(1, parts)
+        assertEquals("أ-", RecWords.words(fixed, Box(0f, 0f, w.toFloat(), h.toFloat())).first().text)
+        // A part read again as the same text changes nothing (no space added inside "ب1").
+        val same = LineSegments.repair(line, g, w, h) { _ ->
+            RecLine("أ", 0.99f, listOf(RecChar("أ", 0.5f, 0.99f)), 0.1f, "arabic") to null
+        }
+        assertEquals(0, same.second)
+        assertEquals(line, same.first)
+    }
+
+    @Test
+    fun arabicLabelInATable_isNotTradedForItsDigits() {
+        // Run #73: page "ب1" (0.65), Arabic model "ب 1" (0.62), Latin model "1" (0.82).
+        val e = com.example.extraction.CandidateEvaluator.evaluate(listOf(
+            com.example.extraction.RecognitionCandidate("ب1", 0.65f, "page"),
+            com.example.extraction.RecognitionCandidate("ب 1", 0.62f, "arabic", Script.ARABIC),
+            com.example.extraction.RecognitionCandidate("1", 0.82f, "latin", Script.LATIN)
+        ), expected = Script.ARABIC, numericExpected = false, context = listOf("البئر", "ب2", "ب3"))
+        assertTrue("kept ${e.chosen?.text}", e.chosen!!.text.contains("ب"))
+    }
+
+    // ------------------------------------------------------------------ run #74 regressions
+
+    /** A grey line image with ink rectangles (x range, y range). */
+    private fun ink(w: Int, h: Int, vararg r: Pair<IntRange, IntRange>): IntArray {
+        val g = IntArray(w * h) { 255 }
+        for ((xs, ys) in r) for (y in ys) for (x in xs) g[y * w + x] = 0
+        return g
+    }
+
+    private fun markerLine(w: Int): RecLine {
+        fun ch(t: String, px: Int, c: Float = 0.95f) = RecChar(t, px / w.toFloat(), c)
+        // Visual order: "الآبار" (left), a blank, then the marker letter alone on the right.
+        return RecLine("رابآلا أ", 0.95f, listOf(ch("ر", 20), ch("ا", 50), ch("ب", 80), ch("آ", 100), ch("ل", 110), ch("ا", 118),
+            ch(" ", 135, 0.9f), ch("أ", 173)), 0.01f, "arabic")
+    }
+
+    @Test
+    fun listMarkerDash_droppedByTheModel_isRestoredFromTheInk() {
+        // Run #74: "أ- الآبار" read "أ الآبار" (dash dropped), so no list item was found.
+        val w = 190; val h = 46
+        val g = ink(w, h, 10..122 to 8..38, 170..176 to 4..36, 150..162 to 22..25)
+        val fixed = LineSegments.markerDash(markerLine(w), g, w, h)
+        assertEquals("أ-", RecWords.words(fixed, Box(0f, 0f, w.toFloat(), h.toFloat())).first().text)
+        // A dash read as a tatweel is the same stroke: replaced, not doubled.
+        val tatweel = markerLine(w).let { l -> l.copy(chars = (l.chars + RecChar("ـ", 156f / w, 0.6f)).sortedBy { it.x }) }
+        assertEquals("أ-", RecWords.words(LineSegments.markerDash(tatweel, g, w, h), Box(0f, 0f, w.toFloat(), h.toFloat())).first().text)
+    }
+
+    @Test
+    fun listMarkerDash_isNeverAddedWithoutTheStroke() {
+        val w = 190; val h = 46
+        // No dash on the image: nothing changes.
+        val noDash = ink(w, h, 10..122 to 8..38, 170..176 to 4..36)
+        assertEquals(markerLine(w), LineSegments.markerDash(markerLine(w), noDash, w, h))
+        // A tall mark (a letter, not a dash) is not taken for a dash.
+        val letter = ink(w, h, 10..122 to 8..38, 170..176 to 4..36, 150..158 to 10..34)
+        assertEquals(markerLine(w), LineSegments.markerDash(markerLine(w), letter, w, h))
+    }
+
+    @Test
+    fun tableLabel_alefReadForTheDigitOne_isCorrectedWhenTheLatinModelReadsTheDigit() {
+        // Run #74 benchmark: page "با" (0.74), Arabic model "ب 1" (0.55), Latin model "1" (0.84);
+        // the column's next label had been read "2", so the column pattern could not decide.
+        val e = com.example.extraction.CandidateEvaluator.evaluate(listOf(
+            com.example.extraction.RecognitionCandidate("با", 0.74f, "page"),
+            com.example.extraction.RecognitionCandidate("ب 1", 0.55f, "arabic", Script.ARABIC),
+            com.example.extraction.RecognitionCandidate("1", 0.84f, "latin", Script.LATIN)
+        ), expected = Script.ARABIC, context = listOf("البئر", "2"))
+        assertEquals("ب1", e.chosen!!.text)
+        assertTrue(e.reasons.contains("digit_confirmed"))
+        // A real word with an alef is left alone when no reading has a digit there.
+        val word = com.example.extraction.CandidateEvaluator.evaluate(listOf(
+            com.example.extraction.RecognitionCandidate("البئر", 0.9f, "page"),
+            com.example.extraction.RecognitionCandidate("البئر", 0.96f, "arabic", Script.ARABIC)
+        ), expected = Script.ARABIC)
+        assertEquals("البئر", word.chosen!!.text)
+    }
+
+    @Test
+    fun orientation_textTurnedByAQuarterIsSeen_uprightTextAndTablesAreNot() {
+        // A page of 6 text lines (bars of words with gaps) and the same page turned.
+        val w = 600; val h = 800
+        val page = IntArray(w * h) { 255 }
+        for (line in 0 until 6) for (y in 100 + line * 60 until 130 + line * 60) for (x in 50 until 550) if ((x / 40) % 4 != 3) page[y * w + x] = 0
+        val turned = IntArray(w * h) { 255 }.let { IntArray(h * w) { 255 } }
+        for (y in 0 until h) for (x in 0 until w) turned[x * h + (h - 1 - y)] = page[y * w + x]
+        assertFalse(com.example.ocr.OrientationProfile.verticalText(page, w, h))
+        assertTrue(com.example.ocr.OrientationProfile.verticalText(turned, h, w))
+        // A bordered table (rules everywhere) on an upright page is not taken for vertical text.
+        val table = page.copyOf()
+        for (x in listOf(50, 250, 450, 549)) for (y in 90 until 470) table[y * w + x] = 0
+        for (y in listOf(90, 160, 280, 469)) for (x in 50 until 550) table[y * w + x] = 0
+        assertFalse(com.example.ocr.OrientationProfile.verticalText(table, w, h))
+    }
 }
