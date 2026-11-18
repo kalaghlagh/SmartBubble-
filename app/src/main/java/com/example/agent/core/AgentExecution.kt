@@ -143,6 +143,9 @@ object ResultValidator {
 /** Task checkpoints. Implementations must be safe to call from any thread. */
 interface AgentTaskStore {
     suspend fun save(task: AgentTask)
+
+    /** Atomically replaces the stored task with [transform] of it (or of [fallback] when none is stored). */
+    suspend fun update(id: String, fallback: AgentTask? = null, transform: (AgentTask) -> AgentTask): AgentTask?
     suspend fun load(id: String): AgentTask?
     suspend fun forSession(sessionId: String): List<AgentTask>
     suspend fun unfinished(): List<AgentTask>
@@ -151,6 +154,9 @@ interface AgentTaskStore {
 class InMemoryAgentTaskStore : AgentTaskStore {
     private val tasks = LinkedHashMap<String, AgentTask>()
     override suspend fun save(task: AgentTask) = synchronized(tasks) { tasks[task.id] = task }
+    override suspend fun update(id: String, fallback: AgentTask?, transform: (AgentTask) -> AgentTask): AgentTask? = synchronized(tasks) {
+        (tasks[id] ?: fallback)?.let(transform)?.also { tasks[id] = it }
+    }
     override suspend fun load(id: String) = synchronized(tasks) { tasks[id] }
     override suspend fun forSession(sessionId: String) = synchronized(tasks) { tasks.values.filter { it.sessionId == sessionId } }
     override suspend fun unfinished() = synchronized(tasks) { tasks.values.filter { !it.status.isFinal } }
@@ -184,11 +190,22 @@ class AgentEngine(
         pauseRequested = taskId
     }
 
+    /**
+     * Saves [task]. The stored file grants win over the engine's copy: a revocation saved while a
+     * step ran is kept (and seen by the next step), never overwritten by an older snapshot.
+     */
     private suspend fun checkpoint(task: AgentTask): AgentTask {
-        val t = task.copy(updatedAt = clock())
-        withContext(NonCancellable) { store.save(t) }
+        val stamped = task.copy(updatedAt = clock())
+        val t = withContext(NonCancellable) {
+            store.update(task.id, fallback = stamped) { stored -> stamped.copy(files = mergeFiles(stamped.files, stored.files)) }
+        } ?: stamped
         onUpdate(t)
         return t
+    }
+
+    private fun mergeFiles(mine: List<TaskFile>, stored: List<TaskFile>): List<TaskFile> {
+        val byId = stored.associateBy { it.id }
+        return mine.map { f -> byId[f.id]?.let { s -> f.copy(granted = f.granted && s.granted) } ?: f }
     }
 
     suspend fun run(start: AgentTask): AgentTask {

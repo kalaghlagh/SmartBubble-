@@ -27,6 +27,31 @@ enum class StepStatus {
 
 enum class ApprovalState { NOT_REQUIRED, PENDING, APPROVED, REJECTED }
 
+/** Where a file the Agent may use lives. */
+enum class FileSource { LIBRARY, MY_TEMPLATE }
+
+/** What a task does with a file: read it for information, use it for formatting, or edit it (as a copy). */
+enum class FileRole { SOURCE, TEMPLATE, EDIT_TARGET }
+
+/**
+ * A file a task may use. [id] is the app-managed id ("library:<document id>" or
+ * "template:<template id>"); tools take only such ids, never paths. [granted] false: the user
+ * revoked access, and every tool refuses the file from then on.
+ */
+data class TaskFile(
+    val id: String,
+    val source: FileSource,
+    val name: String,
+    val fileType: String,
+    val role: FileRole,
+    val granted: Boolean = true
+) {
+    companion object {
+        fun libraryId(documentId: String) = "library:$documentId"
+        fun templateId(templateId: String) = "template:$templateId"
+    }
+}
+
 /**
  * One step of a plan. [executionId] identifies this execution of the tool: it is persisted with
  * the step before the tool starts, so after a restart the app knows a side effect may have
@@ -61,8 +86,12 @@ data class AgentTask(
     val error: String? = null,
     val warnings: List<String> = emptyList(),
     val attempts: List<ProviderAttempt> = emptyList(),
+    /** Files this task may use, with their role and whether access is still granted. */
+    val files: List<TaskFile> = emptyList(),
     val updatedAt: Long = createdAt
 ) {
+    fun file(id: String): TaskFile? = files.firstOrNull { it.id == id }
+    fun isGranted(id: String): Boolean = file(id)?.granted == true
     fun step(id: String): AgentStep? = steps.firstOrNull { it.id == id }
     fun withStep(step: AgentStep): AgentTask = copy(steps = steps.map { if (it.id == step.id) step else it })
     val completedSteps: Int get() = steps.count { it.status == StepStatus.COMPLETED }
@@ -89,6 +118,9 @@ object AgentTaskCodec {
             "currentStepId" to task.currentStepId,
             "error" to task.error,
             "warnings" to task.warnings,
+            "files" to task.files.map {
+                mapOf("id" to it.id, "source" to it.source.name, "name" to it.name, "fileType" to it.fileType, "role" to it.role.name, "granted" to it.granted)
+            },
             "attempts" to task.attempts.map {
                 mapOf(
                     "providerId" to it.providerId, "providerName" to it.providerName, "model" to it.model,
@@ -122,6 +154,17 @@ object AgentTaskCodec {
             currentStepId = root["currentStepId"] as? String,
             error = root["error"] as? String,
             warnings = Json.arr(root["warnings"])?.mapNotNull { it as? String }.orEmpty(),
+            files = Json.arr(root["files"]).orEmpty().mapNotNull { f ->
+                val m = Json.obj(f) ?: return@mapNotNull null
+                TaskFile(
+                    id = m["id"] as String,
+                    source = FileSource.valueOf(m["source"] as String),
+                    name = m["name"] as? String ?: "",
+                    fileType = m["fileType"] as? String ?: "",
+                    role = FileRole.valueOf(m["role"] as String),
+                    granted = m["granted"] as? Boolean ?: false
+                )
+            },
             attempts = Json.arr(root["attempts"]).orEmpty().mapNotNull { a ->
                 val m = Json.obj(a) ?: return@mapNotNull null
                 ProviderAttempt(

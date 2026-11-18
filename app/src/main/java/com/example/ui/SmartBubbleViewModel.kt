@@ -127,6 +127,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
         /** Cache folder of offline documents waiting for "Save to Library". */
         const val OFFLINE_DRAFTS_DIR = "offline_drafts"
+
+        /** Files imported in one go from the phone. */
+        const val MAX_IMPORT_FILES = 20
     }
 
     private val context = application.applicationContext
@@ -159,17 +162,21 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         database = database,
         preferences = preferences,
         providerManager = providerManager,
-        extractPdf = { file ->
+        libraryDir = File(context.filesDir, "generated_docs"),
+        workDir = File(context.cacheDir, "agent_work"),
+        // The existing extraction engine (PDF text layer, PaddleOCR on ONNX Runtime for scans and images).
+        extract = { file, isPdf ->
             com.example.extraction.ExtractionText.plain(
                 extractionEngine.extract(
-                    listOf(com.example.extraction.ExtractionSource(Uri.fromFile(file), isPdf = true)),
+                    listOf(com.example.extraction.ExtractionSource(Uri.fromFile(file), isPdf = isPdf)),
                     OcrLanguage.fromCode(ocrLanguage.value), appLanguage.value
                 ) { _, _ -> }
             )
         },
-        generate = { _, message, sources, format ->
+        generate = { _, message, sources, format, templateId ->
             val (history, listener) = agentTurn ?: (emptyList<ContextMessage>() to AiProgressListener.NONE)
-            val template = _selectedTemplateForChat.value
+            // A template the user attached or named for this task wins over the chat's template pill.
+            val template = templateId?.let { withContext(Dispatchers.IO) { database.templateDao().getTemplateById(it) } } ?: _selectedTemplateForChat.value
             val parsedFormat = DocumentFormat.parse(format)
             try {
                 val r = orchestrator.handleChatTurn(
@@ -188,7 +195,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                 agent.currentSession?.attempts?.let { agentAttempts.addAll(it) }
             }
         },
-        share = { doc -> shareDocument(doc) }
+        share = { doc -> shareDocument(doc) },
+        importTemplateCopy = { file, name -> templateImporter.import(open = { file.inputStream() }, userName = name, sourceFileName = name) },
+        copyLabel = { name, template -> str(if (template) R.string.agent_copy_template else R.string.agent_copy_edited, name) }
     )
 
     /** Smart Templates: the template library shared by Chat, My Templates and Thesis Builder. */
@@ -666,7 +675,9 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         fromVoice: Boolean = false,
         displayText: String? = null,
         forcedSubcategory: String? = null,
-        overrideTemplateId: String? = null
+        overrideTemplateId: String? = null,
+        /** False when the request was already stored (the user picked a file for it). */
+        storeUserMessage: Boolean = true
     ): Boolean {
         var text = prompt.trim()
         if (text.isEmpty()) return false
@@ -715,15 +726,25 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     }
                 }
 
-                database.conversationDao().updateLastMessage(sessionId, shown.take(60))
-                database.chatDao().insertMessage(
-                    ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = sessionId, isUser = true, content = shown)
-                )
+                if (storeUserMessage) {
+                    database.conversationDao().updateLastMessage(sessionId, shown.take(60))
+                    database.chatDao().insertMessage(
+                        ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = sessionId, isUser = true, content = shown)
+                    )
+                }
 
                 // Agent Mode: a request that needs several tools (read named Library documents,
                 // share the result) runs as a planned task. Everything else is Quick Mode below.
                 if (forceFormat == null && kind == null) {
-                    val intent = agent.analyze(text)
+                    // Files the user attached are used for this request only (and granted to its task only).
+                    val selected = agent.state.value.selected
+                    agent.clearSelection()
+                    val intent = agent.analyze(text, selected)
+                    if (intent.ambiguous.isNotEmpty()) {
+                        // Never guess a file: the user picks which one is meant.
+                        agent.askChoice(com.example.agent.FileChoice(text, intent.ambiguous))
+                        return@launchChatOperation
+                    }
                     if (intent.mode == com.example.agent.core.AgentMode.AGENT) {
                         val task = com.example.agent.core.TaskPlanner.plan(
                             taskId = com.example.agent.AgentService.newId(), sessionId = sessionId, request = text,
@@ -852,9 +873,10 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     private suspend fun publishAgentResult(stopped: com.example.agent.core.AgentTask, fromVoice: Boolean) {
-        val task = stopped.copy(attempts = stopped.attempts + agentAttempts.toList())
+        val withAttempts = stopped.copy(attempts = stopped.attempts + agentAttempts.toList())
         agentAttempts.clear()
-        agent.store.save(task)
+        // The stored file grants win (a revocation made meanwhile is kept).
+        val task = agent.store.update(withAttempts.id, withAttempts) { stored -> withAttempts.copy(files = stored.files) } ?: withAttempts
         agent.show(task)
         val generate = task.step("generate")
         val validate = task.step("validate")
@@ -863,10 +885,45 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             validate != null && validate.status == com.example.agent.core.StepStatus.COMPLETED &&
             outcome != com.example.agent.core.ValidationOutcome.FAILED.name
         ) storeAgentReply(task, generate.output, outcome, fromVoice)
+        // Word edit: announce the copy (Library or My Templates) and, separately, a replaced original.
+        val write = task.step("write_copy")
+        if (write != null && write.status == com.example.agent.core.StepStatus.COMPLETED &&
+            validate != null && validate.status == com.example.agent.core.StepStatus.COMPLETED &&
+            outcome != com.example.agent.core.ValidationOutcome.FAILED.name
+        ) storeAgentEditReply(task, write.output)
+        if (task.step("replace")?.status == com.example.agent.core.StepStatus.COMPLETED) {
+            val name = task.files.firstOrNull { it.role == com.example.agent.core.FileRole.EDIT_TARGET }?.name.orEmpty()
+            insertAgentNote(task, "agent-replace-${task.id}", str(R.string.agent_reply_replaced, name), null)
+        }
         if (task.status == com.example.agent.core.TaskStatus.FAILED) {
             if (fromVoice) endVoiceConversation()
             _snackBarMessage.value = agentFailureText(task)
         }
+    }
+
+    private suspend fun storeAgentEditReply(task: com.example.agent.core.AgentTask, written: Map<String, String>) {
+        val changed = written["changed"]?.toIntOrNull()
+        val doc = written["documentId"]?.let { database.documentDao().getDocumentById(it) }
+        val text = when {
+            doc != null -> str(R.string.agent_reply_edited_copy, doc.title, changed ?: 0)
+            written["templateId"] != null -> str(R.string.agent_reply_template_copy,
+                database.templateDao().getTemplateById(written.getValue("templateId"))?.name.orEmpty())
+            else -> return
+        }
+        insertAgentNote(task, "agent-reply-${task.id}", text, doc)
+    }
+
+    /** One Agent message per [id] (a resumed task never stores the same result twice). */
+    private suspend fun insertAgentNote(task: com.example.agent.core.AgentTask, id: String, text: String, doc: DocumentEntity?) {
+        if (database.chatDao().getMessagesForSessionOnce(task.sessionId).any { it.id == id }) return
+        database.chatDao().insertMessage(
+            ChatMessageEntity(
+                id = id, sessionId = task.sessionId, isUser = false, content = text,
+                attachedDocId = doc?.id, attachedDocTitle = doc?.title, attachedDocType = doc?.fileType,
+                orchestratorNote = "Agent"
+            )
+        )
+        database.conversationDao().updateLastMessage(task.sessionId, text.take(60))
     }
 
     /** Stores the task's result in the conversation once (a resumed task does not store it again). */
@@ -907,7 +964,19 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             return if (tried.size > 1) str(R.string.ai_error_agent_failed, task.attempts.last().providerName, aiErrorReason(e))
             else aiErrorMessage(e, task.attempts.lastOrNull()?.providerName ?: defaultProvider.value)
         }
-        return str(R.string.agent_failed, code.ifBlank { "?" })
+        val known = when (code) {
+            "file_access_revoked", "file_not_authorized" -> R.string.agent_error_file_access_revoked
+            "file_not_found", "document_not_found" -> R.string.agent_error_file_not_found
+            "encrypted_pdf" -> R.string.agent_error_encrypted_pdf
+            "file_damaged", "extraction_failed" -> R.string.agent_error_file_damaged
+            "unsupported_format", "unknown_file" -> R.string.agent_error_unsupported_format
+            "edit_unsupported_format", "replace_unsupported" -> R.string.agent_error_edit_unsupported
+            "document_too_large_to_edit", "file_too_large" -> R.string.agent_error_too_large_to_edit
+            "no_changes" -> R.string.agent_error_no_changes
+            "document_empty" -> R.string.agent_error_no_text
+            else -> null
+        }
+        return known?.let { str(it) } ?: str(R.string.agent_failed, code.ifBlank { "?" })
     }
 
     /** Pause: the running step finishes, then the task waits (its state is saved). */
@@ -954,6 +1023,84 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             }
         }
         if (!started) _snackBarMessage.value = str(R.string.agent_busy)
+    }
+
+    // ------------------------------------------------------------------ Agent files and phone import
+
+    /** Files the Agent may use (Library documents, My Templates templates), for the file picker. */
+    suspend fun agentAccessibleFiles(): List<com.example.agent.core.LibraryRef> = agent.files.listAccessibleFiles()
+
+    fun selectAgentFile(ref: com.example.agent.core.LibraryRef) = agent.select(ref)
+    fun unselectAgentFile(fileId: String) = agent.unselect(fileId)
+
+    /** The user picked which file an ambiguous request meant: the request runs with that file. */
+    fun chooseAgentFile(ref: com.example.agent.core.LibraryRef) {
+        val choice = agent.state.value.choice ?: return
+        agent.askChoice(null)
+        agent.clearSelection()
+        agent.select(ref)
+        executePrompt(choice.request, storeUserMessage = false)
+    }
+
+    fun dismissAgentChoice() = agent.askChoice(null)
+
+    /** Revokes the shown task's access to [fileId] (effective for its next tool run). */
+    fun revokeAgentFile(fileId: String) {
+        val task = agent.state.value.task ?: return
+        launchSafely("revokeAgentFile") { agent.revoke(task.id, fileId) }
+    }
+
+    /** Read-only look at a file with the existing viewers (Library: open; template: template preview). */
+    fun openAgentFile(fileId: String) = launchSafely("openAgentFile") {
+        when {
+            fileId.startsWith("library:") -> database.documentDao().getDocumentById(fileId.removePrefix("library:"))?.let { openDocument(it) }
+            fileId.startsWith("template:") -> database.templateDao().getTemplateById(fileId.removePrefix("template:"))?.let { openTemplatePreview(it) }
+        }
+    }
+
+    private val libraryImporter by lazy {
+        com.example.agent.files.LibraryImporter(File(context.filesDir, "generated_docs"), database.documentDao())
+    }
+
+    private val _importResults = MutableStateFlow<List<com.example.agent.files.ImportOutcome>?>(null)
+    /** Result of the last "Import files from phone" (null: nothing to show). */
+    val importResults: StateFlow<List<com.example.agent.files.ImportOutcome>?> = _importResults.asStateFlow()
+    private val _importing = MutableStateFlow(false)
+    val importing: StateFlow<Boolean> = _importing.asStateFlow()
+
+    fun dismissImportResults() { _importResults.value = null }
+
+    private fun displayNameOf(uri: Uri): String = try {
+        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    } catch (e: Exception) { null } ?: uri.lastPathSegment ?: "file"
+
+    /**
+     * Imports files picked with the system file picker into the Library (bytes copied; the
+     * picker's temporary permission is not needed afterwards). [forAgent]: the imported files are
+     * also attached to the next Agent request.
+     */
+    fun importFilesToLibrary(uris: List<Uri>, forAgent: Boolean = false) {
+        if (uris.isEmpty()) return // picker cancelled
+        viewModelScope.launch {
+            _importing.value = true
+            val outcomes = ArrayList<com.example.agent.files.ImportOutcome>()
+            try {
+                for (uri in uris.take(MAX_IMPORT_FILES)) {
+                    val outcome = libraryImporter.import(displayNameOf(uri)) { context.contentResolver.openInputStream(uri) }
+                    outcomes += outcome
+                    if (forAgent) outcome.document?.let { d -> agent.select(com.example.agent.core.LibraryRef(d.id, d.title, d.fileType)) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportError("importFilesToLibrary", e)
+            } finally {
+                _importing.value = false
+                _importResults.value = outcomes
+            }
+        }
     }
 
     // ------------------------------------------------------------------ Offline Formatting Agent
@@ -1515,6 +1662,8 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         "DOCX" -> DeliveryManager.MIME_DOCX
         "PPTX" -> DeliveryManager.MIME_PPTX
         "XLSX" -> DeliveryManager.MIME_XLSX
+        // Images imported from the phone.
+        "PNG", "JPEG", "WEBP" -> com.example.agent.files.FileKind.ofFileType(doc.fileType)!!.mime
         else -> DeliveryManager.MIME_PDF
     }
 

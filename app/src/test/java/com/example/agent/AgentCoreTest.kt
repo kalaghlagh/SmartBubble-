@@ -99,7 +99,7 @@ class AgentCoreTest {
         val intent = IntentAnalyzer.analyze(many.joinToString(" ") { it.title } + " share as pdf", many)
         val task = plan(intent)
         assertTrue(task.steps.size <= TaskPlanner.MAX_STEPS)
-        assertEquals(IntentAnalyzer.MAX_SOURCES, task.steps.count { it.toolId == TaskPlanner.Tools.LIBRARY_READ })
+        assertEquals(IntentAnalyzer.MAX_SOURCES, task.steps.count { it.toolId == TaskPlanner.Tools.FILE_READ })
         val order = TaskPlanner.executionOrder(task.steps).map { it.id }
         assertTrue(order.indexOf("generate") > order.indexOf("read_5"))
         assertTrue(order.indexOf("validate") > order.indexOf("generate"))
@@ -157,7 +157,7 @@ class AgentCoreTest {
     private fun engine(): AgentEngine {
         val all = setOf(ToolPermission.READ_LIBRARY, ToolPermission.NETWORK_AI, ToolPermission.WRITE_LIBRARY, ToolPermission.SHARE_EXTERNALLY)
         val registry = ToolRegistry(all)
-            .register(FakeTool(ToolSpec(TaskPlanner.Tools.LIBRARY_READ, "", "", requiredInputs = setOf("documentId")), runs, { mapOf("title" to "T", "text" to "source") }))
+            .register(FakeTool(ToolSpec(TaskPlanner.Tools.FILE_READ, "", "", requiredInputs = setOf("fileId")), runs, { mapOf("title" to "T", "text" to "source") }))
             .register(FakeTool(ToolSpec(TaskPlanner.Tools.CONTENT_GENERATE, "", "", requiredInputs = setOf("request"), optionalInputs = setOf("format"), sideEffect = true), runs, { generateBehavior(it) }, reconciled))
             .register(FakeTool(ToolSpec(TaskPlanner.Tools.RESULT_VALIDATE, "", "", optionalInputs = setOf("format")), runs, { c ->
                 mapOf("outcome" to ValidationOutcome.COMPLETED.name, "issues" to "", "documentId" to c.dependencies.values.first()["documentId"].orEmpty())
@@ -297,7 +297,7 @@ class AgentCoreTest {
 
     @Test
     fun invalidStep_isRefusedBeforeAnythingRuns() = runBlocking {
-        val task = agentTask().let { t -> t.withStep(t.step("read_1")!!.copy(input = mapOf("documentId" to "d1", "command" to "rm -rf /"))) }
+        val task = agentTask().let { t -> t.withStep(t.step("read_1")!!.copy(input = mapOf("fileId" to "library:d1", "command" to "rm -rf /"))) }
         val failed = engine().run(task)
         assertEquals(TaskStatus.FAILED, failed.status)
         assertEquals("unexpected_input", failed.error)
