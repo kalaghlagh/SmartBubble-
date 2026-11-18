@@ -42,24 +42,9 @@ class OcrDeviceTest {
     private val english = "Groundwater is an essential resource for the population. This study analyses the quality of wells in the region."
 
     /** A page with [blocks] of text (each in its own direction), drawn like a printed document. */
-    private fun page(name: String, blocks: List<String>, textColor: Int = Color.BLACK, background: Int = Color.WHITE, rotate: Float = 0f, textSize: Float = 38f): Uri {
-        val w = 1240
-        val h = 1754
-        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        canvas.drawColor(background)
-        val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = textColor; this.textSize = textSize }
-        var y = 120f
-        for (b in blocks) {
-            val layout = StaticLayout.Builder.obtain(b, 0, b.length, paint, w - 240).setAlignment(Layout.Alignment.ALIGN_NORMAL).setLineSpacing(0f, 1.3f).build()
-            canvas.save(); canvas.translate(120f, y); layout.draw(canvas); canvas.restore()
-            y += layout.height + 60f
-        }
-        val out = if (rotate != 0f) Bitmap.createBitmap(bmp, 0, 0, w, h, Matrix().apply { postRotate(rotate) }, true) else bmp
-        val file = File(dir, "$name.jpg")
-        FileOutputStream(file).use { out.compress(Bitmap.CompressFormat.JPEG, 92, it) }
-        return Uri.fromFile(file)
-    }
+    private fun page(name: String, blocks: List<String>, textColor: Int = Color.BLACK, background: Int = Color.WHITE, rotate: Float = 0f, textSize: Float = 38f): Uri =
+        OcrFixtures.page(dir, name, blocks, textColor, background, rotate, textSize)
+
 
     private fun normalize(s: String): String = Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD)
         .filter { Character.getType(it) != Character.NON_SPACING_MARK.toInt() }
@@ -216,20 +201,34 @@ class OcrDeviceTest {
 
     private fun notes(r: com.example.ocr.OcrBatchResult) = r.pages.single().extraction?.notes.orEmpty()
 
+    /**
+     * The page was turned by exactly [turn] degrees (the turn that makes the fixture upright), and
+     * was not straightened before that turn (run #76: a false skew measured on vertical text
+     * tilted the page before turning it).
+     */
+    private fun assertTriedTurn(r: com.example.ocr.OcrBatchResult, turn: Int) {
+        val n = notes(r)
+        assertTrue("turned by $turn: $n", "rotated:$turn" in n)
+        val turnedAt = n.indexOf("rotated:$turn")
+        assertTrue("no deskew before the turn: $n", n.take(turnedAt).none { it.startsWith("deskewed:") })
+    }
+
     @Test fun rotatedPage() = diagnosed("rotated-90") {
         val r = ocr(page("rotated", listOf(english), rotate = 90f))
         check("rotated-90", english, r.pages.single().rawText, 0.7)
-        assertTrue("turned upright: ${notes(r)}", notes(r).any { it.startsWith("rotated:") })
+        assertTriedTurn(r, 270)
     }
 
     @Test fun rotatedPage270() = diagnosed("rotated-270") {
         val r = ocr(page("rotated-270", listOf(french), rotate = 270f))
         check("rotated-270", french, r.pages.single().rawText, 0.7)
+        assertTriedTurn(r, 90)
     }
 
     @Test fun upsideDownPage() = diagnosed("rotated-180") {
         val r = ocr(page("rotated-180", listOf(english), rotate = 180f))
         check("rotated-180", english, r.pages.single().rawText, 0.7)
+        assertTriedTurn(r, 180)
     }
 
     /** An upright page is never turned (no blind rotation). */

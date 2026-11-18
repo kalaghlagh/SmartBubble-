@@ -13,6 +13,7 @@ import java.io.ByteArrayOutputStream
  */
 object DiagnosticImages {
     private var sent = 0
+    var limit = 60
 
     fun install(prefix: String) {
         sent = 0
@@ -21,10 +22,10 @@ object DiagnosticImages {
 
     fun uninstall() { com.example.extraction.OcrPageReader.traceImage = null }
 
-    private fun emit(name: String, bmp: Bitmap) {
-        if (sent >= 60) return
+    fun emit(name: String, bmp: Bitmap) {
+        if (sent >= limit) return
         sent++
-        val maxSide = when { name.contains("turn-") -> 1240; name.contains("page-") -> 500; else -> 900 }
+        val maxSide = when { name.contains("turn-") || name.contains("full-") -> 1240; name.contains("page-") -> 500; else -> 900 }
         val scale = minOf(1f, maxSide.toFloat() / maxOf(bmp.width, bmp.height))
         val img = if (scale < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt().coerceAtLeast(1), (bmp.height * scale).toInt().coerceAtLeast(1), true) else bmp
         val out = ByteArrayOutputStream()

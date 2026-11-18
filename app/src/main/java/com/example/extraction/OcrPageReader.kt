@@ -230,20 +230,15 @@ class OcrPageReader(
         timings.clear()
         var t0 = SystemClock.elapsedRealtime()
         fun lap(stage: String) { val now = SystemClock.elapsedRealtime(); timings[stage] = now - t0; t0 = now }
-        // A. Straighten a slightly skewed page (measured on a reduced copy).
-        val angle = try {
-            val small = Bitmap.createScaledBitmap(original, (original.width / 2).coerceAtLeast(1), (original.height / 2).coerceAtLeast(1), true)
-            val prepared = OcrPreprocessor.prepare(small)
-            if (small !== original) small.recycle()
-            try { Deskew.estimate(gray(prepared), prepared.width, prepared.height) } finally { prepared.recycle() }
-        } catch (e: Exception) { 0f }
+        // A. Straighten a slightly skewed page (measured on a reduced copy). Not when its text
+        // runs vertically (a page turned by a quarter): the skew measure looks for horizontal
+        // text rows and finds a false angle there (run #76: about 2-3 degrees on the emulator),
+        // which tilted the page before it was turned; such a page is straightened once turned.
+        val verticalFirst = verticalText(original)
+        val angle = if (verticalFirst) 0f else skewOf(original)
         val straight = if (angle != 0f) {
             notes += "deskewed:$angle"
-            Bitmap.createBitmap(original.width, original.height, Bitmap.Config.ARGB_8888).also { out ->
-                val c = android.graphics.Canvas(out)
-                c.drawColor(Color.WHITE)
-                c.drawBitmap(original, Matrix().apply { postRotate(-angle, original.width / 2f, original.height / 2f) }, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
-            }
+            unskew(original, angle)
         } else original
         var page = OcrPreprocessor.prepare(straight)
         if (straight !== original) straight.recycle()
@@ -258,7 +253,7 @@ class OcrPageReader(
             // is already upright is never turned on a hint alone.
             val detected = lastBoxes
             val sideways = detected.size >= 2 && detected.count { it.height > it.width * 1.3f } * 2 > detected.size
-            val vertical = OrientationProfile.verticalText(gray(page), page.width, page.height)
+            val vertical = verticalFirst || OrientationProfile.verticalText(gray(page), page.width, page.height)
             // An upside-down page still gives text, read with a low confidence (about 0.3-0.5 for
             // about 0.95+ upright).
             val weak = OcrPreprocessor.isWeak(lines.joinToString(" ") { it.text }, mean(lines) ?: 0f) || (mean(lines) ?: 0f) < 0.7f
@@ -285,6 +280,15 @@ class OcrPageReader(
                 val chosenPage = bestPage
                 if (chosen != null && chosenPage != null) {
                     page.recycle(); page = chosenPage; lines = chosen.second; notes += "rotated:${chosen.first}"
+                    // The page is upright now: its skew can be measured and corrected.
+                    val turnedAngle = skewOf(page)
+                    trace { "orientation turned ${chosen.first} skew=$turnedAngle" }
+                    if (turnedAngle != 0f) {
+                        val level = unskew(page, turnedAngle)
+                        page.recycle(); page = level
+                        notes += "deskewed:$turnedAngle"
+                        lines = readLines(page, ArrayList())
+                    }
                 }
             }
             trace { "page lines=${lines.map { "${it.box.top.toInt()}-${it.box.bottom.toInt()}:${it.confidence}:${it.text}" }}" }
@@ -337,6 +341,30 @@ class OcrPageReader(
     }
 
     private fun trace(message: () -> String) { trace?.invoke(message()) }
+
+    /** Whether the page's text seems to run vertically (measured on a reduced grey copy). */
+    internal fun verticalText(bitmap: Bitmap): Boolean = try {
+        val small = Bitmap.createScaledBitmap(bitmap, (bitmap.width / 2).coerceAtLeast(1), (bitmap.height / 2).coerceAtLeast(1), true)
+        val prepared = OcrPreprocessor.prepare(small)
+        if (small !== bitmap) small.recycle()
+        try { OrientationProfile.verticalText(gray(prepared), prepared.width, prepared.height) } finally { prepared.recycle() }
+    } catch (e: Exception) { false }
+
+    /** Skew angle of [bitmap], measured as the reader does (reduced copy, grey, contrast stretched). */
+    internal fun skewOf(bitmap: Bitmap): Float = try {
+        val small = Bitmap.createScaledBitmap(bitmap, (bitmap.width / 2).coerceAtLeast(1), (bitmap.height / 2).coerceAtLeast(1), true)
+        val prepared = OcrPreprocessor.prepare(small)
+        if (small !== bitmap) small.recycle()
+        try { Deskew.estimate(gray(prepared), prepared.width, prepared.height) } finally { prepared.recycle() }
+    } catch (e: Exception) { 0f }
+
+    /** [bitmap] turned by minus [angle] degrees around its centre, on white, same size. */
+    internal fun unskew(bitmap: Bitmap, angle: Float): Bitmap =
+        Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888).also { out ->
+            val c = android.graphics.Canvas(out)
+            c.drawColor(Color.WHITE)
+            c.drawBitmap(bitmap, Matrix().apply { postRotate(-angle, bitmap.width / 2f, bitmap.height / 2f) }, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+        }
 
     private fun traceImage(name: String, image: Bitmap) { traceImage?.invoke(name, image) }
 
