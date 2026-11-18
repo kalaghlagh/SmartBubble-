@@ -82,6 +82,15 @@ object AdaptiveRules {
     fun actionsBeside(widthDp: Float, heightDp: Float): Boolean = heightDp < 480f && widthDp >= 560f
 
     /**
+     * A one-line action bar (a label and two buttons) needs about 340 dp at font scale 1; with
+     * less width for its text (narrow window or larger text) the buttons go on their own line.
+     */
+    fun actionBarStacked(widthDp: Float, fontScale: Float): Boolean = widthDp / fontScale.coerceAtLeast(1f) < 340f
+
+    /** Even side by side the two buttons would be too narrow for their labels: one per line, full width. */
+    fun actionBarButtonsInColumn(widthDp: Float, fontScale: Float): Boolean = widthDp / fontScale.coerceAtLeast(1f) < 240f
+
+    /**
      * Height the content keeps under (or beside) an action area: a third of the space, at least
      * 120 dp. The actions get the rest and scroll inside it when they need more.
      */

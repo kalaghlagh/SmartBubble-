@@ -56,6 +56,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -151,15 +152,19 @@ internal fun PdfPagesPane(
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("pdf_info"))
                 BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
-                    val pageWidthPx = with(LocalDensity.current) { (maxWidth - 32.dp).roundToPx() }
-                    // Room under the last page for the floating bar, so no page stays under it.
+                    val density = LocalDensity.current
+                    val pageWidthPx = with(density) { (maxWidth - 32.dp).roundToPx() }
+                    // Room under the last page for the floating bar (its measured height, one line
+                    // or stacked), so no page stays under it.
+                    var barHeight by remember { mutableStateOf(0.dp) }
                     LazyColumn(Modifier.fillMaxSize().testTag("pdf_pages"), state = rememberLazyListState(),
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 112.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp + barHeight), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(count, key = { it }) { index ->
                             PdfPageItem(renderer, index, count, pageWidthPx, index in selected, marks[index]) { onToggle(index) }
                         }
                     }
-                    PdfSelectionBar(chosen.size, onCancel, onNext, Modifier.align(Alignment.BottomCenter))
+                    PdfSelectionBar(chosen.size, onCancel, onNext,
+                        Modifier.align(Alignment.BottomCenter).onSizeChanged { barHeight = with(density) { it.height.toDp() } })
                 }
             }
         }
@@ -167,12 +172,15 @@ internal fun PdfPagesPane(
 }
 
 /**
- * The floating bar of the page viewer: shown only while pages are selected, at the bottom of the
- * viewer above the system navigation bar and the keyboard (safe-drawing insets not already
- * consumed by the screen around it), with the selected count, Cancel and Next.
+ * The floating bar of the page viewer: shown only while pages are selected ([count] > 0), at the
+ * bottom of the viewer above the system navigation bar and the keyboard (safe-drawing insets not
+ * already consumed by the screen around it), with the selected count, Cancel and Next. It adapts
+ * to the width it gets and the font scale: one line; or the count on top and the two buttons
+ * sharing the width below ([AdaptiveRules.actionBarStacked]); or, with very little width for
+ * the text, each button on its own line ([AdaptiveRules.actionBarButtonsInColumn]).
  */
 @Composable
-private fun PdfSelectionBar(count: Int, onCancel: () -> Unit, onNext: () -> Unit, modifier: Modifier) {
+internal fun PdfSelectionBar(count: Int, onCancel: () -> Unit, onNext: () -> Unit, modifier: Modifier) {
     androidx.compose.animation.AnimatedVisibility(
         visible = count > 0,
         modifier = modifier.fillMaxWidth()
@@ -183,13 +191,35 @@ private fun PdfSelectionBar(count: Int, onCancel: () -> Unit, onNext: () -> Unit
     ) {
         Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 6.dp, shadowElevation = 8.dp, modifier = Modifier.fillMaxWidth().testTag("pdf_action_bar")) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(stringResource(R.string.dx_pdf_selected_count, count), style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary, maxLines = 2,
-                    modifier = Modifier.weight(1f).semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }.testTag("pdf_selected_label"))
-                OutlinedButton(onClick = onCancel, modifier = Modifier.heightIn(min = 48.dp).testTag("pdf_cancel")) { Text(stringResource(R.string.action_cancel), maxLines = 1) }
-                Button(onClick = onNext, modifier = Modifier.heightIn(min = 48.dp).testTag("pdf_next")) { Text(stringResource(R.string.dx_pdf_next), maxLines = 1) }
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val fontScale = LocalDensity.current.fontScale
+                val stacked = com.example.ui.adaptive.AdaptiveRules.actionBarStacked(maxWidth.value, fontScale)
+                val inColumn = com.example.ui.adaptive.AdaptiveRules.actionBarButtonsInColumn(maxWidth.value, fontScale)
+                val label: @Composable (Modifier) -> Unit = { m ->
+                    Text(stringResource(R.string.dx_pdf_selected_count, count), style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = m.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }.testTag("pdf_selected_label"))
+                }
+                val cancel: @Composable (Modifier) -> Unit = { m ->
+                    OutlinedButton(onClick = onCancel, modifier = m.heightIn(min = 48.dp).testTag("pdf_cancel")) {
+                        Text(stringResource(R.string.action_cancel), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    }
+                }
+                val next: @Composable (Modifier) -> Unit = { m ->
+                    Button(onClick = onNext, modifier = m.heightIn(min = 48.dp).testTag("pdf_next")) {
+                        Text(stringResource(R.string.dx_pdf_next), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    }
+                }
+                if (stacked) Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    label(Modifier.padding(horizontal = 4.dp))
+                    if (inColumn) { cancel(Modifier.fillMaxWidth()); next(Modifier.fillMaxWidth()) }
+                    else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        cancel(Modifier.weight(1f)); next(Modifier.weight(1f))
+                    }
+                } else Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    label(Modifier.weight(1f)); cancel(Modifier); next(Modifier)
+                }
             }
         }
     }

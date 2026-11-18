@@ -198,6 +198,22 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: bash .github/scripts/device-tests.sh
 
+      # The Thesis Builder PDF page-selection and extraction tests again on Android 16 (API 36:
+      # edge-to-edge enforced for this app, which targets SDK 36) on a compact phone (Nexus 5,
+      # 360x640 dp), as the API 34 Pixel 6 run above cannot show either.
+      - name: Run PDF page-selection tests on Android 16 (compact phone)
+        id: device_tests_android16
+        if: ${{ always() && steps.build_test_apk.outcome == 'success' && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: Nexus 5
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: OUT=device-test-output-android16 TEST_CLASSES=com.example.thesis.PdfViewerDeviceTest,com.example.thesis.PdfExtractionFlowDeviceTest bash .github/scripts/device-tests.sh
+
       - name: Summarize device test results
         if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
         run: |
@@ -217,6 +233,25 @@ jobs:
           # Extraction review: the seven actions shown on screen (bounds), from PdfExtractionFlowDeviceTest.
           echo "== PDF review actions on screen"; grep -h "PdfReviewEvidence" "$d/logcat.txt" 2>/dev/null | head -80 || true
           echo "== Screenshots"; ls "$d"/screenshots-thesis-device 2>/dev/null | grep -i "pdf-review" || true
+
+      - name: Summarize Android 16 device test results
+        if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
+        run: |
+          d=device-test-output-android16
+          [ -d "$d" ] || { echo "No Android 16 device test output."; exit 0; }
+          echo "== Android"; cat "$d/android-version.txt" || true
+          echo "== Results"; grep -E "^OK \(|^FAILURES|^Tests run|INSTRUMENTATION_STATUS: (class|test)=|INSTRUMENTATION_STATUS_CODE: -|Process crashed" "$d/instrument.txt" | head -200 || true
+          echo "== Failures"; awk '/INSTRUMENTATION_STATUS: stack=/{p=1;n=0} /INSTRUMENTATION_STATUS: (current|id|numtests)=/{p=0} p&&n<60{print;n++}' "$d/instrument.txt" | head -400 || true
+          echo "== PDF review actions on screen"; grep -h "PdfReviewEvidence" "$d/logcat.txt" 2>/dev/null | head -120 || true
+          echo "== FATAL EXCEPTIONS"; cat "$d/fatal-exceptions.txt" 2>/dev/null | head -200 || true
+
+      - name: Upload Android 16 device test evidence
+        if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-tests-android16-${{ env.SHORT_SHA }}-run${{ github.run_number }}
+          path: device-test-output-android16/
+          if-no-files-found: warn
 
       - name: Upload device test evidence (logcat, screenshots)
         if: ${{ always() && (inputs.run_tests == true || vars.RUN_UNIT_TESTS == 'true') }}
@@ -269,6 +304,7 @@ jobs:
           UNIT: ${{ steps.unit_tests.outcome }}
           TEST_APK: ${{ steps.build_test_apk.outcome }}
           DEVICE: ${{ steps.device_tests.outcome }}
+          DEVICE16: ${{ steps.device_tests_android16.outcome }}
           LINT: ${{ steps.lint.outcome }}
         run: |
           shopt -s nullglob
@@ -286,10 +322,10 @@ jobs:
           # Status of the checks in this run.
           if [ "$TESTS_REQUESTED" != "true" ]; then
             status="tests-not-run"; label="UNVERIFIED: tests and lint were not run for this build."
-          elif [ "$UNIT" = "success" ] && [ "$TEST_APK" = "success" ] && [ "$DEVICE" = "success" ] && [ "$LINT" = "success" ]; then
-            status="verified"; label="All CI checks passed (unit tests, emulator tests, lint). Not yet tested on a physical phone."
+          elif [ "$UNIT" = "success" ] && [ "$TEST_APK" = "success" ] && [ "$DEVICE" = "success" ] && [ "$DEVICE16" = "success" ] && [ "$LINT" = "success" ]; then
+            status="verified"; label="All CI checks passed (unit tests, emulator tests on API 34 and Android 16, lint). Not yet tested on a physical phone."
           else
-            status="checks-failed"; label="UNVERIFIED, POTENTIALLY UNSTABLE: CI checks failed (unit=$UNIT, test-apk=$TEST_APK, emulator=$DEVICE, lint=$LINT). Diagnostic build for real-device testing only."
+            status="checks-failed"; label="UNVERIFIED, POTENTIALLY UNSTABLE: CI checks failed (unit=$UNIT, test-apk=$TEST_APK, emulator=$DEVICE, emulator-android16=$DEVICE16, lint=$LINT). Diagnostic build for real-device testing only."
           fi
           name="SmartBubble-Debug-$SHORT_SHA-run$GITHUB_RUN_NUMBER"
           [ "$status" = "verified" ] || name="$name-UNVERIFIED-$status"
@@ -312,6 +348,7 @@ jobs:
             echo "unit_tests=${UNIT:-skipped}"
             echo "instrumented_test_apk=${TEST_APK:-skipped}"
             echo "emulator_tests=${DEVICE:-skipped}"
+            echo "emulator_tests_android16=${DEVICE16:-skipped}"
             echo "lint=${LINT:-skipped}"
             echo "Details: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > "$out/CI-STATUS.txt"
@@ -365,6 +402,7 @@ jobs:
           UNIT: ${{ steps.unit_tests.outcome }}
           TEST_APK: ${{ steps.build_test_apk.outcome }}
           DEVICE: ${{ steps.device_tests.outcome }}
+          DEVICE16: ${{ steps.device_tests_android16.outcome }}
           LINT: ${{ steps.lint.outcome }}
         run: |
           import glob, os, re, xml.etree.ElementTree as ET
@@ -380,7 +418,7 @@ jobs:
           else:
               out.append("| Debug APK artifact | **No APK available** (the build failed; see debug-build-log artifact) |")
           out += [f"| Unit tests | {st(e.get('UNIT'))} |", f"| Instrumented test APK | {st(e.get('TEST_APK'))} |",
-                  f"| Emulator tests | {st(e.get('DEVICE'))} |", f"| Lint | {st(e.get('LINT'))} |", ""]
+                  f"| Emulator tests | {st(e.get('DEVICE'))} |", f"| Emulator tests, Android 16 compact (PDF page selection) | {st(e.get('DEVICE16'))} |", f"| Lint | {st(e.get('LINT'))} |", ""]
           fails = []
           for path in glob.glob("app/build/test-results/testDebugUnitTest/*.xml"):
               for case in ET.parse(path).getroot().iter("testcase"):
@@ -388,14 +426,15 @@ jobs:
                       n = case.find(bad)
                       if n is not None:
                           fails.append(f"Unit: {case.get('classname')}.{case.get('name')}: {(n.get('message') or '').splitlines()[0][:200] if n.get('message') else ''}")
-          try:
-              lines = open("device-test-output/instrument.txt", encoding="utf-8", errors="replace").read().splitlines()
-              for i, l in enumerate(lines):
-                  m = re.match(r"Error in (\S+)\((\S+)\):", l)
-                  if m and i + 1 < len(lines):
-                      fails.append(f"Emulator: {m.group(2)}.{m.group(1)}: {lines[i + 1][:200]}")
-          except FileNotFoundError:
-              pass
+          for folder, label in (("device-test-output", "Emulator"), ("device-test-output-android16", "Emulator Android 16")):
+              try:
+                  lines = open(f"{folder}/instrument.txt", encoding="utf-8", errors="replace").read().splitlines()
+                  for i, l in enumerate(lines):
+                      m = re.match(r"Error in (\S+)\((\S+)\):", l)
+                      if m and i + 1 < len(lines):
+                          fails.append(f"{label}: {m.group(2)}.{m.group(1)}: {lines[i + 1][:200]}")
+              except FileNotFoundError:
+                  pass
           for path in glob.glob("app/build/reports/lint-results-debug.xml"):
               for i in ET.parse(path).getroot().findall("issue"):
                   if i.get("severity") in ("Error", "Fatal"):
