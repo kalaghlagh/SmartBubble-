@@ -68,6 +68,8 @@ class ThesisRepository(
     private fun projectDir(projectId: String) = File(root, projectId)
 
     fun observeProjects(): Flow<List<ThesisProjectEntity>> = dao.observeProjects()
+    /** The projects now (newest first), read directly. */
+    suspend fun projects(): List<ThesisProjectEntity> = dao.projects()
     fun observeProject(id: String): Flow<ThesisProjectEntity?> = dao.observeProject(id)
     fun observeRevisions(projectId: String): Flow<List<ThesisRevisionEntity>> = dao.observeRevisions(projectId)
     fun observeOpenProposals(projectId: String): Flow<List<ThesisProposalEntity>> = dao.observeOpenProposals(projectId)

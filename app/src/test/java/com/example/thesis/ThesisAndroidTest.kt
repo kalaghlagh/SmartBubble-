@@ -514,6 +514,7 @@ class ThesisAndroidTest {
         val st = controller.state.value
         append("state: screen=${st.screen} busy=${st.busy} review=${st.review != null} assist=${st.assist != null} ")
         append("draft=${st.draft?.text?.replace("\n", "\\n")?.take(300)}\n")
+        append("projects listed: ${controller.projects.value.map { it.id to it.title }}; in the database: ${try { runBlocking { repo.projects() }.map { it.id to it.title } } catch (e: Throwable) { e.toString() }}\n")
         try { append(compose.onAllNodes(androidx.compose.ui.test.isRoot()).printToString(maxDepth = 60)) } catch (e: Throwable) { append("semantics tree unavailable: $e") }
         // Threads waiting in the database or in coroutines, to show where a load is blocked.
         append("\nInsert from Chat loads (now ${System.currentTimeMillis()}): ${chatLoads.toList()}\n")
@@ -1440,20 +1441,20 @@ class ThesisAndroidTest {
         val id = runBlocking { repo.createProject(meta()) }
         controller.openWorkspace()
         showWorkspace(host)
-        compose.waitUntil(10_000) { tagExists("thesis_project_$id") }
+        await("project listed", 10_000) { tagExists("thesis_project_$id") }
         tap("thesis_project_menu_$id")
         tap("thesis_project_rename")
         compose.onNodeWithTag("thesis_text_input").performTextClearance()
         compose.onNodeWithTag("thesis_text_input").performTextInput("Nitrates in groundwater")
         tap("thesis_text_confirm")
         waitFor { repo.snapshot(id).meta.title == "Nitrates in groundwater" }
-        compose.waitUntil(10_000) { textExists("Nitrates in groundwater") }
+        await("new title listed", 10_000) { textExists("Nitrates in groundwater") }
         runBlocking { idle() }
         tap("thesis_project_menu_$id")
         tap("thesis_project_delete")
         tap("thesis_delete_project_confirm")
         waitFor { repo.observeProjects().first().isEmpty() }
-        compose.waitUntil(10_000) { tagExists("thesis_empty_state") }
+        await("empty list", 10_000) { tagExists("thesis_empty_state") }
     }
 
     /** Continue in Chat from the editor targets the section; Chat content is reviewed before it is added. */

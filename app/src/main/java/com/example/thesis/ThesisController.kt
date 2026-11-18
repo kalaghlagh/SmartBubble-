@@ -51,7 +51,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
@@ -259,8 +261,18 @@ class ThesisController(
      */
     private val projectsRefresh = MutableStateFlow(0)
 
-    val projects: StateFlow<List<ThesisProjectEntity>> = projectsRefresh
-        .flatMapLatest { repository.observeProjects() }
+    /**
+     * Projects shown on the home screen. Every value is a direct read of the database
+     * ([ThesisRepository.projects]) made after its trigger: the list being shown (the refresh
+     * counter's current value), the app's own changes ([projectsRefresh]) and Room's change
+     * notification for changes made elsewhere, which is used only as a signal. The list no
+     * longer waits for Room's Flow to deliver rows: that delivery was seen not arriving within
+     * 10 s on a busy CI runner, not only after a change (runs #52, #68) but also for the first
+     * list (run #82), with the project already in the database. [mapLatest] drops a read still
+     * running when a newer trigger comes, so an older list never replaces a newer one.
+     */
+    val projects: StateFlow<List<ThesisProjectEntity>> = merge(projectsRefresh, repository.observeProjects().map { -1 })
+        .mapLatest { repository.projects() }
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Workspace progress (0..100) of every project, for the projects list. */

@@ -291,7 +291,8 @@ internal fun ExtractionReviewContent(host: ThesisHost, onBack: () -> Unit) {
                 // Item index of each page's heading, to jump to it from the chips.
                 val headerIndex = HashMap<Int, Int>()
                 run { var n = 0; doc.pages.forEach { p -> headerIndex[p.index] = n; n += 4 + p.blocks.size } }
-                if (doc.pages.size > 1) FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                // One scrollable row (many pages must not push the text out of view).
+                if (doc.pages.size > 1) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     doc.pages.forEach { p ->
                         FilterChip(selected = false, onClick = { scope.launch { listState.animateScrollToItem(headerIndex[p.index] ?: 0) } },
                             label = { Text(stringResource(R.string.dx_page_n, originalPageNumber(p)) + if (p.error != null || p.reviewRecommended) " ⚠" else "") },
@@ -355,7 +356,10 @@ internal fun ExtractionReviewContent(host: ThesisHost, onBack: () -> Unit) {
                 // Insertion: always into the section the extraction was started from, from this
                 // review's pages (never the whole PDF or an earlier extraction).
                 val tables = doc.pages.sumOf { it.tables }
-                FlowRow(Modifier.fillMaxWidth().padding(10.dp).testTag("dx_actions"), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // One row that scrolls sideways: every action stays within reach without taking
+                // the height the text needs (on a small screen a wrapped bar covered most of it).
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(10.dp).testTag("dx_actions"),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(onClick = { controller.insertExtraction(ExtractionInsertMode.AT_CURSOR) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_cursor")) { Text(stringResource(R.string.dx_insert_cursor)) }
                     OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.APPEND) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_append")) { Text(stringResource(R.string.dx_insert_append)) }
                     OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.AS_PARAGRAPHS) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_paragraphs")) { Text(stringResource(R.string.dx_insert_paragraphs)) }
