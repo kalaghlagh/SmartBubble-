@@ -75,7 +75,58 @@ class ThesisEditorDeviceTest {
         try { compose.waitUntil(timeout) { condition() } } catch (e: Throwable) { throw AssertionError("Timed out: $step\n" + diagnostics(), e) }
     }
 
+    /**
+     * Insets animations (the soft keyboard opening or closing) running in the app window, counted
+     * on the main thread by a WindowInsetsAnimation callback on the content view (dispatch
+     * continues to the Compose view below it, which animates WindowInsets.ime as before).
+     */
+    private val insetsAnimating = java.util.concurrent.atomic.AtomicInteger()
+    private var watchedContent: android.view.View? = null
+
+    private fun watchInsetsAnimations() = compose.runOnUiThread {
+        val content = compose.activity.findViewById<android.view.View>(android.R.id.content)
+        if (watchedContent === content) return@runOnUiThread
+        watchedContent = content
+        insetsAnimating.set(0)
+        androidx.core.view.ViewCompat.setWindowInsetsAnimationCallback(content,
+            object : androidx.core.view.WindowInsetsAnimationCompat.Callback(androidx.core.view.WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+                override fun onPrepare(animation: androidx.core.view.WindowInsetsAnimationCompat) { insetsAnimating.incrementAndGet() }
+                override fun onProgress(insets: androidx.core.view.WindowInsetsCompat, running: List<androidx.core.view.WindowInsetsAnimationCompat>) = insets
+                override fun onEnd(animation: androidx.core.view.WindowInsetsAnimationCompat) { insetsAnimating.updateAndGet { maxOf(0, it - 1) } }
+            })
+    }
+
+    private fun imeShown(): Boolean {
+        var shown = false
+        compose.runOnUiThread {
+            shown = androidx.core.view.ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+                ?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true
+        }
+        return shown
+    }
+
+    /**
+     * Waits until the keyboard has stopped moving (and is shown, when [shown] is true) before the
+     * next interaction reads the semantics tree. Compose test reads semantics on this
+     * (instrumentation) thread once the UI is idle, but the keyboard's insets animation is driven
+     * by the platform frame by frame and is not pending work for Compose: between two of its
+     * frames the UI counts as idle, and a semantics read then overlapped the main thread laying
+     * out the editor for the next frame (run #83: "Detected multithreaded access to
+     * SnapshotStateObserver", main thread id 2 and this thread, right after the field was typed
+     * into and the keyboard was opening). Only main-thread values are read while waiting.
+     */
+    private fun awaitKeyboardSettled(step: String, shown: Boolean = false) {
+        watchInsetsAnimations()
+        try {
+            compose.waitUntil(20_000) { insetsAnimating.get() == 0 && (!shown || imeShown()) }
+        } catch (e: Throwable) {
+            throw AssertionError("Keyboard still moving: $step (animations=${insetsAnimating.get()}, ime=${imeShown()})", e)
+        }
+        compose.waitForIdle()
+    }
+
     private fun tap(tag: String) {
+        awaitKeyboardSettled("before tapping $tag")
         await("node $tag") { exists(tag) }
         val node = compose.onNodeWithTag(tag)
         // Scroll it into view in every enclosing container, then check. The keyboard opens after a
@@ -164,6 +215,7 @@ class ThesisEditorDeviceTest {
      * (not clipped) and its bounds are the same on two reads 200 ms apart.
      */
     private fun settledBounds(tag: String): androidx.compose.ui.geometry.Rect {
+        awaitKeyboardSettled("before measuring $tag")
         await("node $tag") { exists(tag) }
         var last: androidx.compose.ui.geometry.Rect? = null
         val deadline = android.os.SystemClock.uptimeMillis() + 5_000
@@ -209,6 +261,7 @@ class ThesisEditorDeviceTest {
 
     /** A real long press on the first word of the field: selection handles and text toolbar show. */
     private fun longPressFirstWord() {
+        awaitKeyboardSettled("before the long press")
         field().performScrollTo()
         field().performTouchInput { longClick(Offset(36.dp.toPx(), 30.dp.toPx())) }
         compose.waitForIdle()
@@ -216,6 +269,7 @@ class ThesisEditorDeviceTest {
 
     /** A real tap in the text: caret (and its handle) at that place. */
     private fun tapInText() {
+        awaitKeyboardSettled("before the tap in the text")
         field().performScrollTo()
         field().performTouchInput { click(Offset(60.dp.toPx(), 30.dp.toPx())) }
         compose.waitForIdle()
@@ -312,7 +366,8 @@ class ThesisEditorDeviceTest {
     fun arabicRightToLeft_formatAndPaste() {
         openEditor()
         field().performTextInput("المياه الجوفية مصدر أساسي للشرب.\nسطر ثانٍ.")
-        compose.waitForIdle()
+        // Typing focused the field: the keyboard opens (animated) before the first long press.
+        awaitKeyboardSettled("keyboard opened by typing", shown = true)
         for (tag in listOf("thesis_fmt_bold", "thesis_fmt_italic", "thesis_fmt_underline", "thesis_align_end", "thesis_fmt_bullets")) press(tag) { longPressFirstWord() }
         setClip(ClipData.newPlainText("ar", "نص ملصوق بالعربية\nمع سطر ثانٍ و emoji 🌍 et français é"))
         press("thesis_paste_text") { longPressFirstWord() }
