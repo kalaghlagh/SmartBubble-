@@ -5,7 +5,8 @@
 # its stack trace, and the screenshots the test wrote. Exits non-zero when a test failed or the
 # app process crashed.
 set -u
-out=device-test-output
+# OUT: evidence folder; TEST_CLASSES: comma-separated test classes to run (default: all).
+out=${OUT:-device-test-output}
 pkg=com.aistudio.smartbubble.prod
 mkdir -p "$out"
 apk=$(ls app/build/outputs/apk/debug/*.apk | head -1)
@@ -26,7 +27,7 @@ adb install -r -g "$test_apk"
 adb logcat -b all -G 16M || adb logcat -G 16M || true
 adb logcat -b all -c
 adb shell dumpsys window displays | grep -E "mCurrentFocus" | sed 's/^/before tests: /' > "$out/window-focus-start.txt" || true
-adb shell am instrument -w -r "$pkg.test/androidx.test.runner.AndroidJUnitRunner" | tee "$out/instrument.txt"
+adb shell am instrument -w -r ${TEST_CLASSES:+-e class "$TEST_CLASSES"} "$pkg.test/androidx.test.runner.AndroidJUnitRunner" | tee "$out/instrument.txt"
 adb logcat -b all -d -v threadtime > "$out/logcat.txt"
 adb shell dumpsys window displays | grep -E "mCurrentFocus|mFocusedApp" > "$out/window-focus.txt" || true
 for d in thesis-device app-device; do

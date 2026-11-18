@@ -44,6 +44,19 @@ class AdaptiveRulesTest {
     }
 
     @Test
+    fun actionBar_stacksWhenTheTextNeedsMoreThanTheWidth() {
+        assertFalse(AdaptiveRules.actionBarStacked(411f, 1f))
+        assertTrue(AdaptiveRules.actionBarStacked(320f, 1f))
+        assertTrue(AdaptiveRules.actionBarStacked(411f, 1.3f))
+        assertFalse(AdaptiveRules.actionBarStacked(600f, 1.5f))
+        assertTrue(AdaptiveRules.actionBarStacked(600f, 2f))
+        assertFalse(AdaptiveRules.actionBarStacked(840f, 2f))
+        assertTrue(AdaptiveRules.actionBarButtonsInColumn(320f, 2f))
+        assertFalse(AdaptiveRules.actionBarButtonsInColumn(320f, 1f))
+        assertFalse(AdaptiveRules.actionBarButtonsInColumn(600f, 2f))
+    }
+
+    @Test
     fun contentKeepsAThird_atLeast120dp_neverMoreThanTheSpace() {
         assertEquals(120f, AdaptiveRules.minContentHeightDp(300f), 0.01f)
         assertEquals(315f, AdaptiveRules.minContentHeightDp(900f), 0.01f)

@@ -18,6 +18,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -34,12 +40,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -52,6 +56,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -101,28 +106,32 @@ private fun rememberDisplayName(uri: Uri): String? {
 }
 
 /**
- * The PDF page viewer in its own window: the real pages of [uri], several of which can be
- * selected ([selected], [onToggle]); [onNext] goes on with the selected pages.
+ * The PDF page viewer on its own (as in the Thesis editor's extraction layer): the real pages of
+ * [uri], several of which can be selected ([selected], [onToggle]); the floating bar's Next
+ * ([onNext]) goes on with them, its Cancel ([onCancel]) clears the selection.
  */
 @Composable
-fun PdfPageViewer(uri: Uri, title: String, marks: Map<Int, PdfPageMark>, selected: Set<Int>, onToggle: (Int) -> Unit, onNext: () -> Unit, onClose: () -> Unit) {
+fun PdfPageViewer(uri: Uri, title: String, marks: Map<Int, PdfPageMark>, selected: Set<Int>, onToggle: (Int) -> Unit, onNext: () -> Unit, onClose: () -> Unit, onCancel: () -> Unit = {}) {
     val opened = rememberPdfPages(uri)
-    com.example.ui.adaptive.FullScreenDialog(onDismissRequest = onClose) {
-        PdfPagesPane(opened, title, marks, selected, onToggle, onNext, onClose)
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        PdfPagesPane(opened, title, marks, selected, onToggle, onNext, onClose, onCancel)
     }
 }
 
 /**
  * Step 1 of a PDF extraction: the PDF itself, page after page (in order, at the screen's width,
  * their proportions kept), drawn only when shown. Tapping a page selects it, tapping it again
- * deselects it; any pages can be selected, consecutive or not. Nothing is extracted on a tap:
- * the bar at the bottom shows how many pages are selected and "Next" (enabled once one page is
- * selected) goes on with them. [marks] puts the extraction state of pages already extracted on them.
+ * deselects it; any pages can be selected, consecutive or not. Nothing is extracted on a tap.
+ * Once a page is selected, a floating bar appears at the bottom, over the pages and never inside
+ * the scrolling list: how many pages are selected, Cancel ([onCancel]: clears the selection,
+ * nothing is extracted, the viewer stays) and Next ([onNext]: goes on with them). It disappears
+ * again when no page is selected. The top bar's back arrow ([onClose]) leaves the viewer.
+ * [marks] puts the extraction state of pages already extracted on them.
  */
 @Composable
 internal fun PdfPagesPane(
     opened: Result<PdfPageRenderer>?, title: String, marks: Map<Int, PdfPageMark>, selected: Set<Int>,
-    onToggle: (Int) -> Unit, onNext: () -> Unit, onClose: () -> Unit
+    onToggle: (Int) -> Unit, onNext: () -> Unit, onClose: () -> Unit, onCancel: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().testTag("pdf_viewer")) {
         BlueTopBar(title, onBack = onClose, backTag = "pdf_back")
@@ -143,27 +152,73 @@ internal fun PdfPagesPane(
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("pdf_info"))
                 BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
-                    val pageWidthPx = with(LocalDensity.current) { (maxWidth - 32.dp).roundToPx() }
+                    val density = LocalDensity.current
+                    val pageWidthPx = with(density) { (maxWidth - 32.dp).roundToPx() }
+                    // Room under the last page for the floating bar (its measured height, one line
+                    // or stacked), so no page stays under it.
+                    var barHeight by remember { mutableStateOf(0.dp) }
                     LazyColumn(Modifier.fillMaxSize().testTag("pdf_pages"), state = rememberLazyListState(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp + barHeight), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(count, key = { it }) { index ->
                             PdfPageItem(renderer, index, count, pageWidthPx, index in selected, marks[index]) { onToggle(index) }
                         }
                     }
+                    PdfSelectionBar(chosen.size, onCancel, onNext,
+                        Modifier.align(Alignment.BottomCenter).onSizeChanged { barHeight = with(density) { it.height.toDp() } })
                 }
-                HorizontalDivider()
-                // Always in view below the pages: how many are selected, and Next.
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (chosen.isEmpty()) stringResource(R.string.dx_pdf_none_selected) else stringResource(R.string.dx_pdf_selected_count, chosen.size),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (chosen.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.weight(1f).semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }.testTag("pdf_selected_label")
-                    )
-                    TextButton(onClick = onClose, modifier = Modifier.heightIn(min = 48.dp).testTag("pdf_close")) { Text(stringResource(R.string.action_close)) }
-                    Button(onClick = onNext, enabled = chosen.isNotEmpty(), modifier = Modifier.heightIn(min = 48.dp).testTag("pdf_next")) {
-                        Text(stringResource(R.string.dx_pdf_next))
+            }
+        }
+    }
+}
+
+/**
+ * The floating bar of the page viewer: shown only while pages are selected ([count] > 0), at the
+ * bottom of the viewer above the system navigation bar and the keyboard (safe-drawing insets not
+ * already consumed by the screen around it), with the selected count, Cancel and Next. It adapts
+ * to the width it gets and the font scale: one line; or the count on top and the two buttons
+ * sharing the width below ([AdaptiveRules.actionBarStacked]); or, with very little width for
+ * the text, each button on its own line ([AdaptiveRules.actionBarButtonsInColumn]).
+ */
+@Composable
+internal fun PdfSelectionBar(count: Int, onCancel: () -> Unit, onNext: () -> Unit, modifier: Modifier) {
+    androidx.compose.animation.AnimatedVisibility(
+        visible = count > 0,
+        modifier = modifier.fillMaxWidth()
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(),
+        exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut()
+    ) {
+        Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 6.dp, shadowElevation = 8.dp, modifier = Modifier.fillMaxWidth().testTag("pdf_action_bar")) {
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val fontScale = LocalDensity.current.fontScale
+                val stacked = com.example.ui.adaptive.AdaptiveRules.actionBarStacked(maxWidth.value, fontScale)
+                val inColumn = com.example.ui.adaptive.AdaptiveRules.actionBarButtonsInColumn(maxWidth.value, fontScale)
+                val label: @Composable (Modifier) -> Unit = { m ->
+                    Text(stringResource(R.string.dx_pdf_selected_count, count), style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = m.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }.testTag("pdf_selected_label"))
+                }
+                val cancel: @Composable (Modifier) -> Unit = { m ->
+                    OutlinedButton(onClick = onCancel, modifier = m.heightIn(min = 48.dp).testTag("pdf_cancel")) {
+                        Text(stringResource(R.string.action_cancel), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     }
+                }
+                val next: @Composable (Modifier) -> Unit = { m ->
+                    Button(onClick = onNext, modifier = m.heightIn(min = 48.dp).testTag("pdf_next")) {
+                        Text(stringResource(R.string.dx_pdf_next), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    }
+                }
+                if (stacked) Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    label(Modifier.padding(horizontal = 4.dp))
+                    if (inColumn) { cancel(Modifier.fillMaxWidth()); next(Modifier.fillMaxWidth()) }
+                    else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        cancel(Modifier.weight(1f)); next(Modifier.weight(1f))
+                    }
+                } else Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    label(Modifier.weight(1f)); cancel(Modifier); next(Modifier)
                 }
             }
         }
@@ -242,7 +297,7 @@ private fun PdfPageItem(renderer: PdfPageRenderer, index: Int, count: Int, width
  * again without extracting again). Inserting closes the whole flow.
  */
 @Composable
-internal fun PdfExtractionFlow(host: ThesisHost, uri: Uri, cursor: () -> Int, sync: () -> Unit) {
+internal fun PdfExtractionFlow(host: ThesisHost, uri: Uri, cursor: Int) {
     val controller = host.thesis
     val state by controller.state.collectAsState()
     val opened = rememberPdfPages(uri)
@@ -272,18 +327,52 @@ internal fun PdfExtractionFlow(host: ThesisHost, uri: Uri, cursor: () -> Int, sy
             reviewing = true
             return@next
         }
-        sync()
         controller.startExtraction(listOf(com.example.extraction.ExtractionSource(uri, isPdf = true, pages = selected.toSortedSet())),
-            host.ocrLanguageCode, cursor(), host.extractor())
+            host.ocrLanguageCode, cursor, host.extractor())
         reviewing = true
     }
-    // Edge to edge on every Android version, content inside the safe area (system bars, cutout,
-    // keyboard): the same layout as Android 15+ gives apps targeting SDK 35+.
-    com.example.ui.adaptive.FullScreenDialog(onDismissRequest = { if (reviewing && x != null) back() else controller.closePdfViewer() },
-        modifier = Modifier.testTag("pdf_flow")) {
+    // Drawn in the app's window over the editor (ExtractionLayer), not in a dialog window: on
+    // Android 16 (Samsung S22) the full-screen dialog's frame did not match the area its content
+    // was laid out for, and the bottom of the viewer (with Next) was cut off.
+    ExtractionSurface(Modifier.testTag("pdf_flow"), onBack = { if (reviewing && x != null) back() else controller.closePdfViewer() }) {
         if (reviewing && x != null) ExtractionReviewContent(host, onBack = back)
         else PdfPagesPane(opened, fileName ?: stringResource(R.string.dx_pdf_viewer_title), marks, selected,
             onToggle = { i -> selection = if (i in selected) selection.filter { it != i }.toIntArray() else selection + i },
-            onNext = next, onClose = { controller.closePdfViewer() })
+            onNext = next, onClose = { controller.closePdfViewer() },
+            // Cancel: the selection is cleared; nothing is extracted and the viewer stays open.
+            onCancel = { selection = intArrayOf() })
+    }
+}
+
+/**
+ * Extraction into the open section, drawn over the section editor in the app's own window (whose
+ * insets the screens around it already handle): the PDF flow ([PdfExtractionFlow]) or, for
+ * images, the review of their extracted content.
+ */
+@Composable
+internal fun ExtractionLayer(host: ThesisHost) {
+    val state by host.thesis.state.collectAsState()
+    val shown = state.draft != null && (state.pdfToExtract != null || state.extraction != null)
+    // The section editor under the layer loses the focus when the layer opens, which closes
+    // its keyboard: in the same window, the keyboard opened for the editor would otherwise
+    // stay up over the PDF pages and the review (taking half of the screen). Fields of the
+    // review can take the focus afterwards.
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    LaunchedEffect(shown) { if (shown) { focus.clearFocus(force = true); keyboard?.hide() } }
+    if (state.draft == null) return
+    val uri = state.pdfToExtract
+    if (uri != null) PdfExtractionFlow(host, uri, state.pdfCursor)
+    else if (state.extraction != null) ExtractionSurface(Modifier.testTag("dx_review_layer"), onBack = { host.thesis.cancelExtraction() }) {
+        ExtractionReviewContent(host, onBack = { host.thesis.cancelExtraction() })
+    }
+}
+
+/** A full-size opaque layer (taps do not reach the screen below); system Back runs [onBack]. */
+@Composable
+private fun ExtractionSurface(modifier: Modifier, onBack: () -> Unit, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    androidx.activity.compose.BackHandler(onBack = onBack)
+    Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(Modifier.fillMaxSize(), content = content)
     }
 }
