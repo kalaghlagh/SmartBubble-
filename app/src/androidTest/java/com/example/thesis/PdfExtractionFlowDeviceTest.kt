@@ -156,6 +156,21 @@ class PdfExtractionFlowDeviceTest {
     /** Lowest pixel a control may reach: above the navigation bar and the keyboard, measured on the device. */
     private fun usableBottom(): Float { val b = keyboard.bottoms(); return windowHeight() - maxOf(b.navigation, b.ime) }
 
+    /** The floating bar's Cancel and Next are displayed, wholly above the navigation bar and the keyboard. */
+    private fun assertBarAboveNavigation(label: String): Pair<androidx.compose.ui.geometry.Rect, androidx.compose.ui.geometry.Rect> {
+        await("action bar") { exists("pdf_action_bar") }
+        keyboard.awaitSettled("action bar shown")
+        compose.onNodeWithTag("pdf_next").assertIsDisplayed()
+        compose.onNodeWithTag("pdf_cancel").assertIsDisplayed()
+        val next = compose.onNodeWithTag("pdf_next").fetchSemanticsNode().boundsInRoot
+        val cancel = compose.onNodeWithTag("pdf_cancel").fetchSemanticsNode().boundsInRoot
+        val bottom = usableBottom()
+        android.util.Log.i("PdfReviewEvidence", "$label pdf_next=$next pdf_cancel=$cancel usableBottom=$bottom")
+        assertTrue("Next $next under the navigation bar or the keyboard (usable bottom $bottom)", next.top >= 0f && next.bottom <= bottom + 1f)
+        assertTrue("Cancel $cancel under the navigation bar or the keyboard (usable bottom $bottom)", cancel.top >= 0f && cancel.bottom <= bottom + 1f)
+        return next to cancel
+    }
+
     /** Display, density, font scale and insets of this run (logcat PdfReviewEvidence, printed in the CI summary). */
     private fun logMetrics(label: String) {
         val m = context.resources.displayMetrics
@@ -205,8 +220,7 @@ class PdfExtractionFlowDeviceTest {
         openPdf(uri)
         for (i in pages) tapPage(i)
         keyboard.awaitSettled("pages selected")
-        val next = compose.onNodeWithTag("pdf_next").fetchSemanticsNode().boundsInRoot
-        assertTrue("Next $next under the navigation bar or the keyboard (usable bottom ${usableBottom()})", next.bottom <= usableBottom() + 1f)
+        assertBarAboveNavigation("pages ${pages.sorted()}")
         tap("pdf_next")
         await("review of ${pages.sorted()}", timeout) {
             exists("dx_review") && vm.thesis.state.value.extraction?.document?.pages?.map { it.sourcePage } == pages.sorted()
@@ -250,8 +264,16 @@ class PdfExtractionFlowDeviceTest {
         openEditor()
         val uri = makePdf()
         openPdf(uri)
-        // Nothing selected: Next disabled.
-        compose.onNodeWithTag("pdf_next").assertIsNotEnabled()
+        // Nothing selected: no floating bar.
+        assertTrue("action bar without a selection", !exists("pdf_action_bar") && !exists("pdf_next"))
+        // Cancel: the selection is cleared, nothing extracted, still the pages.
+        tapPage(1)
+        await("bar shown") { exists("pdf_action_bar") }
+        tap("pdf_cancel")
+        await("bar hidden after Cancel") { !exists("pdf_action_bar") }
+        assertTrue("no extraction after Cancel", vm.thesis.state.value.extraction == null)
+        assertTrue(exists("pdf_viewer"))
+        assertPageSelected(1, false)
         // Pages 5, 1, 3 (that order; not consecutive).
         for (i in listOf(4, 0, 2)) tapPage(i)
         compose.onNodeWithTag("pdf_selected_label").assertTextEquals(context.getString(com.example.R.string.dx_pdf_selected_count, 3))
@@ -316,7 +338,7 @@ class PdfExtractionFlowDeviceTest {
         await("review", timeout = 60_000) { vm.thesis.state.value.extraction?.document != null }
         tap("dx_back")
         await("pages") { exists("pdf_viewer") }
-        tap("pdf_close")
+        tap("pdf_back")
         await("closed") { !exists("pdf_flow") && vm.thesis.state.value.pdfToExtract == null && vm.thesis.state.value.extraction == null }
         await("copy released") { (File(context.cacheDir, "pdf-viewer").listFiles()?.size ?: 0) == 0 }
         assertEquals("Existing paragraph.", draftText.trim())
@@ -449,5 +471,37 @@ class PdfExtractionFlowDeviceTest {
         assertTrue("Arabic text inserted", text.count { it in '\u0600'..'\u06FF' } > 600)
         assertEquals(1, count(text, "Existing paragraph."))
         assertTrue("crash report written", CrashLog.read(context) == null)
+    }
+
+    /**
+     * Arabic (right to left): the floating bar appears with the first selected page, above the
+     * navigation bar, Next at the start side (left in RTL) of Cancel; Next opens the review, Back
+     * returns to the pages as selected; the top bar's back arrow closes the viewer.
+     */
+    @Test
+    fun arabic_floatingBar_rightToLeft_aboveNavigation_nextReviewBackClose() {
+        openEditor()
+        vm.setAppLanguage("ar")
+        // The app language is kept by the app: back to English whatever happens, for the next tests.
+        try { arabicFlow() } finally { compose.runOnUiThread { vm.setAppLanguage("en") } }
+    }
+
+    private fun arabicFlow() {
+        await("arabic") { compose.activity.resources.configuration.layoutDirection == android.view.View.LAYOUT_DIRECTION_RTL && exists("thesis_editor_text") }
+        val uri = makePdf()
+        openPdf(uri)
+        assertTrue(!exists("pdf_action_bar"))
+        tapPage(2)
+        val (next, cancel) = assertBarAboveNavigation("arabic")
+        assertTrue("RTL order: Next $next left of Cancel $cancel", next.left < cancel.left)
+        shot("pdf-viewer-arabic-bar")
+        tap("pdf_next")
+        await("review", timeout = 60_000) { exists("dx_review") && vm.thesis.state.value.extraction?.document?.pages?.map { it.sourcePage } == listOf(2) }
+        assertActionsDisplayed("pdf-review-arabic-rtl")
+        tap("dx_back")
+        await("pages again") { exists("pdf_viewer") && !exists("dx_review") }
+        assertPageSelected(2, true)
+        tap("pdf_back")
+        await("closed") { !exists("pdf_flow") && vm.thesis.state.value.pdfToExtract == null }
     }
 }

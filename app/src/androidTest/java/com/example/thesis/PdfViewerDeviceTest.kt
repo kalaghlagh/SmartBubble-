@@ -13,6 +13,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -139,7 +140,7 @@ class PdfViewerDeviceTest {
             MaterialTheme {
                 if (open()) PdfPageViewer(uri, "PDF", marks(), selected,
                     onToggle = { i -> selected = if (i in selected) selected - i else selected + i },
-                    onNext = { nexts += selected }, onClose = onClose)
+                    onNext = { nexts += selected }, onClose = onClose, onCancel = { selected = emptySet() })
             }
         }
     }
@@ -161,12 +162,9 @@ class PdfViewerDeviceTest {
         await("pdf_page_image_0")
         // Lazy: the last page is not drawn before it is scrolled to.
         assertTrue(!exists("pdf_page_image_${PAGES - 1}"))
-        // Nothing selected at first: no page is, Next is disabled and says why.
+        // Nothing selected at first: no page is, and the floating bar (Cancel, Next) is not shown.
         compose.onNodeWithTag("pdf_page_0").assertIsNotSelected()
-        compose.onNodeWithTag("pdf_next").assertIsNotEnabled()
-        assertEquals(context.getString(com.example.R.string.dx_pdf_none_selected), label())
-        compose.onNodeWithTag("pdf_next").performClick()
-        assertTrue("Next without a page", nexts.isEmpty())
+        assertTrue("action bar without a selection", !exists("pdf_action_bar") && !exists("pdf_next") && !exists("pdf_cancel"))
         // Portrait and landscape pages fill the width, their height in their own proportions.
         // (Measured on the laid-out page once scrolled into view: boundsInRoot alone is clipped
         // to the visible part of the list, which is what run #79 measured: 995x213.)
@@ -176,7 +174,10 @@ class PdfViewerDeviceTest {
         tapPage(8)
         compose.onNodeWithTag("pdf_page_8").assertIsSelected()
         assertEquals(context.getString(com.example.R.string.dx_pdf_selected_count, 1), label())
-        compose.onNodeWithTag("pdf_next").assertIsEnabled()
+        // The bar appears with the first selected page: both buttons on screen, enabled.
+        await("pdf_action_bar")
+        compose.onNodeWithTag("pdf_next").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithTag("pdf_cancel").assertIsDisplayed().assertIsEnabled()
         for (i in listOf(0, 2, 6)) tapPage(i)
         assertEquals(setOf(8, 0, 2, 6), selected)
         assertEquals(context.getString(com.example.R.string.dx_pdf_selected_count, 4), label())
@@ -200,11 +201,22 @@ class PdfViewerDeviceTest {
         compose.onNodeWithTag("pdf_next").performClick()
         compose.waitForIdle()
         assertEquals(listOf(setOf(0, 6, 8)), nexts.toList())
+        // Cancel clears the selection: the bar goes, nothing else is handed on.
+        compose.onNodeWithTag("pdf_cancel").performClick()
+        compose.waitUntil(10_000) { !exists("pdf_action_bar") }
+        assertTrue(selected.isEmpty())
+        assertEquals(1, nexts.size)
+        // Deselecting the only selected page hides the bar too.
+        tapPage(3)
+        await("pdf_action_bar")
+        tapPage(3)
+        compose.waitUntil(10_000) { !exists("pdf_action_bar") }
+        assertTrue(selected.isEmpty())
         // The extraction state of a page is shown on it.
         marks = mapOf(6 to PdfPageMark.CHECK, 8 to PdfPageMark.EXTRACTED)
         await("pdf_mark_check_6")
         // Closing releases the renderer and deletes the copy.
-        compose.onNodeWithTag("pdf_close").performClick()
+        compose.onNodeWithTag("pdf_back").performClick()
         compose.waitForIdle()
         compose.waitUntil(10_000) { !exists("pdf_viewer") && (viewerDir.listFiles()?.size ?: 0) == 0 }
     }

@@ -209,18 +209,6 @@ private fun BlockEditor(b: ExtractedBlock, onChange: (ExtractedBlock?) -> Unit, 
     }
 }
 
-/**
- * Review of extracted content before it goes into the section it was started from, in its own
- * full-screen window (images; a PDF is reviewed inside its page viewer, [PdfExtractionFlow]).
- */
-@Composable
-internal fun ExtractionReviewDialog(host: ThesisHost) {
-    val controller = host.thesis
-    com.example.ui.adaptive.FullScreenDialog(onDismissRequest = { controller.cancelExtraction() }) {
-        ExtractionReviewContent(host, onBack = { controller.cancelExtraction() })
-    }
-}
-
 /** Original number (1-based) of an extracted page: its page in the PDF, or its place among the images. */
 internal fun originalPageNumber(p: com.example.extraction.ExtractedPage): Int = (p.sourcePage ?: p.index) + 1
 

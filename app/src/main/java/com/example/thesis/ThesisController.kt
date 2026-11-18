@@ -127,7 +127,9 @@ data class ThesisUiState(
     /** Content being extracted from images or PDFs for the open section ("Extract from Image/PDF"). */
     val extraction: ExtractionReview? = null,
     /** PDF open in the page viewer for extraction into the open section (pages chosen, then reviewed). */
-    val pdfToExtract: android.net.Uri? = null
+    val pdfToExtract: android.net.Uri? = null,
+    /** Cursor position in the section's text when that PDF was picked (where "Insert at cursor" puts it). */
+    val pdfCursor: Int = 0
 )
 
 /** Extractor provided by the app (on-device OCR and PDF reading): sources, language mode, progress. */
@@ -1095,9 +1097,9 @@ class ThesisController(
      * Opens [uri] in the PDF page viewer of the open section: the user selects pages, then they
      * are extracted ([startExtraction] with those pages) and reviewed.
      */
-    fun openPdfForExtraction(uri: android.net.Uri) {
+    fun openPdfForExtraction(uri: android.net.Uri, cursor: Int = 0) {
         if (_state.value.draft == null) return
-        update { it.copy(pdfToExtract = uri) }
+        update { it.copy(pdfToExtract = uri, pdfCursor = cursor) }
     }
 
     /** Closes the PDF page viewer; an extraction of that PDF not inserted yet is dropped. */

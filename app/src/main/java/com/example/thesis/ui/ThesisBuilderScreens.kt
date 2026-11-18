@@ -128,6 +128,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -202,6 +203,10 @@ fun ThesisWorkspaceContent(host: ThesisHost, embedded: Boolean = false) {
     }
     Surface(Modifier.fillMaxSize().testTag("thesis_workspace"), color = MaterialTheme.colorScheme.background) {
         Box(if (embedded) Modifier.imePadding() else Modifier.systemBarsPadding().imePadding()) {
+            // While an extraction layer covers the editor, the editor below is not read by
+            // accessibility services (it stays composed: its text, cursor and undo are kept).
+            val covered = state.screen == ThesisScreen.SECTION && state.draft != null && (state.pdfToExtract != null || state.extraction != null)
+            Box(if (covered) Modifier.fillMaxSize().clearAndSetSemantics { } else Modifier.fillMaxSize()) {
             when (state.screen) {
                 ThesisScreen.HOME -> ThesisHomeScreen(host, showClose = !embedded)
                 ThesisScreen.CREATE -> ThesisCreateScreen(host)
@@ -213,6 +218,10 @@ fun ThesisWorkspaceContent(host: ThesisHost, embedded: Boolean = false) {
                 ThesisScreen.HISTORY -> Screen(stringResource(R.string.thesis_history), controller) { ThesisHistoryScreen(controller) }
                 ThesisScreen.SETTINGS -> Screen(stringResource(R.string.thesis_project_settings), controller) { ThesisSettingsScreen(host) }
             }
+            }
+            // Extraction into the open section (PDF pages, then the review), over the editor and
+            // under the snackbar (its messages stay visible).
+            if (state.screen == ThesisScreen.SECTION) ExtractionLayer(host)
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp).testTag("thesis_snackbar"))
         }
     }
@@ -1102,12 +1111,9 @@ private fun ThesisSectionEditor(host: ThesisHost) {
     }
     if (pickChat) ChatPickerDialog(host, onDismiss = { pickChat = false }) { text -> pickChat = false; insertAtCursor(text) }
     if (extracting) ExtractChooser(host, cursor = { value.selection.end }, sync = { controller.updateDraft(value.text) }, onDismiss = { extracting = false },
-        onPdf = { controller.openPdfForExtraction(it) })
-    // A PDF: its pages, the pages chosen, then the review of their text (one window, two steps).
-    state.pdfToExtract?.let { uri ->
-        PdfExtractionFlow(host, uri, cursor = { value.selection.end }, sync = { controller.updateDraft(value.text) })
-    }
-    if (state.extraction != null && state.pdfToExtract == null) ExtractionReviewDialog(host)
+        onPdf = { controller.updateDraft(value.text); controller.openPdfForExtraction(it, value.selection.end) })
+    // The PDF page viewer and the extraction review are drawn by ThesisWorkspaceContent over this
+    // screen, in the app's window (see ExtractionLayer).
     pendingImage?.let { uri ->
         MediaDataDialog(ElementData(), isImage = true, onDismiss = { pendingImage = null }) { data ->
             pendingImage = null
