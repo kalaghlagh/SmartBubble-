@@ -123,7 +123,9 @@ data class ThesisUiState(
     /** Logo chosen on the "New thesis" form, copied into app storage until the project exists. */
     val pendingLogo: File? = null,
     /** Content being extracted from images or PDFs for the open section ("Extract from Image/PDF"). */
-    val extraction: ExtractionReview? = null
+    val extraction: ExtractionReview? = null,
+    /** PDF open in the page viewer for extraction into the open section (pages chosen, then reviewed). */
+    val pdfToExtract: android.net.Uri? = null
 )
 
 /** Extractor provided by the app (on-device OCR and PDF reading): sources, language mode, progress. */
@@ -340,7 +342,7 @@ class ThesisController(
             ThesisScreen.CREATE -> show(ThesisScreen.HOME)
             ThesisScreen.PROJECT -> show(ThesisScreen.HOME)
             ThesisScreen.AI -> update { it.copy(screen = ThesisScreen.SECTION) }
-            ThesisScreen.SECTION -> if (st.draft?.dirty == true) saveDraft(thenShow = ThesisScreen.PROJECT) else update { it.copy(screen = ThesisScreen.PROJECT, draft = null, assist = null) }
+            ThesisScreen.SECTION -> if (st.draft?.dirty == true) saveDraft(thenShow = ThesisScreen.PROJECT) else update { it.copy(screen = ThesisScreen.PROJECT, draft = null, assist = null, pdfToExtract = null) }
             // "Preview page" returns to the section being edited.
             ThesisScreen.PREVIEW -> update { it.copy(screen = if (it.previewSectionId != null && it.draft != null) ThesisScreen.SECTION else ThesisScreen.PROJECT) }
             else -> show(ThesisScreen.PROJECT)
@@ -489,7 +491,7 @@ class ThesisController(
         if (_state.value.chatProjectId == projectId) exitChatMode()
         if (_state.value.projectId == projectId) {
             projectIdFlow.value = null
-            update { it.copy(projectId = null, snapshot = null, screen = ThesisScreen.HOME, review = null, compare = null, draft = null, assist = null, lastExport = null) }
+            update { it.copy(projectId = null, snapshot = null, screen = ThesisScreen.HOME, review = null, compare = null, draft = null, assist = null, pdfToExtract = null, lastExport = null) }
         }
         onMessage(ThesisMessage.Deleted)
     }
@@ -895,7 +897,7 @@ class ThesisController(
     }
 
     /** Leaves the editor without saving (the user confirmed discarding the changes). */
-    fun discardDraft() = update { it.copy(draft = null, assist = null, screen = ThesisScreen.PROJECT) }
+    fun discardDraft() = update { it.copy(draft = null, assist = null, pdfToExtract = null, screen = ThesisScreen.PROJECT) }
 
     /**
      * Imports a picked image into the project and inserts its placeholder (for example
@@ -1056,6 +1058,8 @@ class ThesisController(
     fun startExtraction(sources: List<com.example.extraction.ExtractionSource>, languageCode: String, cursor: Int, extract: Extractor) {
         val d = _state.value.draft ?: return
         if (sources.isEmpty()) return
+        // The same request again while it runs (a repeated tap): one job, not two.
+        _state.value.extraction?.let { x -> if (x.running && x.sectionId == d.sectionId && x.sources == sources) return }
         extractionJob?.cancel()
         update { it.copy(extraction = ExtractionReview(d.sectionId, cursor, sources, languageCode)) }
         extractionJob = scope.launch {
@@ -1073,6 +1077,22 @@ class ThesisController(
                 update { st -> st.copy(extraction = st.extraction?.copy(running = false, error = "failed")) }
             }
         }
+    }
+
+    /**
+     * Opens [uri] in the PDF page viewer of the open section: the user selects pages, then they
+     * are extracted ([startExtraction] with those pages) and reviewed.
+     */
+    fun openPdfForExtraction(uri: android.net.Uri) {
+        if (_state.value.draft == null) return
+        update { it.copy(pdfToExtract = uri) }
+    }
+
+    /** Closes the PDF page viewer; an extraction of that PDF not inserted yet is dropped. */
+    fun closePdfViewer() {
+        val uri = _state.value.pdfToExtract ?: return
+        if (_state.value.extraction?.sources?.any { it.uri == uri } == true) cancelExtraction()
+        update { it.copy(pdfToExtract = null) }
     }
 
     /** Stops a running extraction and closes the review (nothing is inserted). */
@@ -1145,7 +1165,9 @@ class ThesisController(
         if (insertion.text.isBlank()) { onMessage(ThesisMessage.ExtractionNothing); return }
         val text = ExtractionToThesis.place(d.text, x.cursor, insertion, mode)
         update {
-            it.copy(extraction = null, draft = d.copy(text = text, media = d.media + insertion.media, mediaChanged = d.mediaChanged || insertion.media.isNotEmpty()))
+            // Inserted: the PDF viewer it came from (if any) closes with the review.
+            it.copy(extraction = null, pdfToExtract = null,
+                draft = d.copy(text = text, media = d.media + insertion.media, mediaChanged = d.mediaChanged || insertion.media.isNotEmpty()))
         }
         extractionJob = null
     }

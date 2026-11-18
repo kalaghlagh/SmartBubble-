@@ -223,11 +223,11 @@ private val CompletedGreen = Color(0xFF1E9E5A)
 
 /** Blue top bar of the Thesis Builder screens (back follows the layout direction). */
 @Composable
-internal fun BlueTopBar(title: String, onBack: (() -> Unit)?, actions: @Composable RowScope.() -> Unit = {}) {
+internal fun BlueTopBar(title: String, onBack: (() -> Unit)?, backTag: String = "thesis_back", actions: @Composable RowScope.() -> Unit = {}) {
     Surface(color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) {
         Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if (onBack != null) {
-                IconButton(onClick = onBack, modifier = Modifier.testTag("thesis_back")) {
+                IconButton(onClick = onBack, modifier = Modifier.testTag(backTag)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.thesis_back))
                 }
             } else Spacer(Modifier.width(12.dp))
@@ -852,9 +852,6 @@ private fun ThesisSectionEditor(host: ThesisHost) {
     val context = LocalContext.current
     val view = androidx.compose.ui.platform.LocalView.current
     var value by remember(draft?.sectionId) { mutableStateOf(TextFieldValue(draft?.text.orEmpty())) }
-    // The PDF open in the page viewer (Extract from PDF) and the state of its extracted pages.
-    var pdfToView by remember(draft?.sectionId) { mutableStateOf<android.net.Uri?>(null) }
-    var pdfMarks by remember(draft?.sectionId) { mutableStateOf<Map<Int, PdfPageMark>>(emptyMap()) }
     // Undo / redo of the text (typing is grouped by pauses).
     val undo = remember(draft?.sectionId) { mutableStateListOf<TextFieldValue>() }
     val redo = remember(draft?.sectionId) { mutableStateListOf<TextFieldValue>() }
@@ -1099,25 +1096,12 @@ private fun ThesisSectionEditor(host: ThesisHost) {
     }
     if (pickChat) ChatPickerDialog(host, onDismiss = { pickChat = false }) { text -> pickChat = false; insertAtCursor(text) }
     if (extracting) ExtractChooser(host, cursor = { value.selection.end }, sync = { controller.updateDraft(value.text) }, onDismiss = { extracting = false },
-        onPdf = { pdfToView = it; pdfMarks = emptyMap() })
-    pdfToView?.let { uri ->
-        // The extraction of the page chosen in the viewer: its state goes on that page.
-        val x = state.extraction
-        LaunchedEffect(x?.document) {
-            val src = x?.sources?.singleOrNull()
-            val page = src?.pages?.singleOrNull()
-            val doc = x?.document
-            if (src != null && src.uri == uri && page != null && doc != null) {
-                pdfMarks = pdfMarks + (page to if (doc.pages.any { it.error != null || it.reviewRecommended }) PdfPageMark.CHECK else PdfPageMark.EXTRACTED)
-            }
-        }
-        PdfPageViewer(uri, stringResource(R.string.dx_pdf_viewer_title), pdfMarks, onExtract = { page ->
-            controller.updateDraft(value.text)
-            controller.startExtraction(listOf(com.example.extraction.ExtractionSource(uri, isPdf = true, pages = setOf(page))),
-                host.ocrLanguageCode, value.selection.end, host.extractor())
-        }, onClose = { pdfToView = null })
+        onPdf = { controller.openPdfForExtraction(it) })
+    // A PDF: its pages, the pages chosen, then the review of their text (one window, two steps).
+    state.pdfToExtract?.let { uri ->
+        PdfExtractionFlow(host, uri, cursor = { value.selection.end }, sync = { controller.updateDraft(value.text) })
     }
-    if (state.extraction != null) ExtractionReviewDialog(host)
+    if (state.extraction != null && state.pdfToExtract == null) ExtractionReviewDialog(host)
     pendingImage?.let { uri ->
         MediaDataDialog(ElementData(), isImage = true, onDismiss = { pendingImage = null }) { data ->
             pendingImage = null

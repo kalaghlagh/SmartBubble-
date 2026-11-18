@@ -1094,13 +1094,11 @@
     <string name="dx_note_rerouted">%1$s lignes relues avec le modèle de leur écriture</string>
     <string name="dx_note_missing">%1$s lignes de texte de l\'image n\'ont pas pu être lues : comparez avec la page originale</string>
     <string name="dx_pdf_viewer_title">Choisir une page</string>
-    <string name="dx_pdf_hint">Touchez une page pour la sélectionner, puis extrayez son texte.</string>
+    <string name="dx_pdf_hint">Touchez les pages pour les sélectionner ou les désélectionner, puis appuyez sur Suivant.</string>
     <string name="dx_pdf_loading">Ouverture du PDF…</string>
     <string name="dx_pdf_open_error">Ce PDF ne peut pas être affiché (endommagé ou protégé par un mot de passe).</string>
     <string name="dx_pdf_page_error">Cette page n\'a pas pu être affichée.</string>
     <string name="dx_pdf_selected">Sélectionnée</string>
-    <string name="dx_pdf_selected_of">Page %1$d sur %2$d sélectionnée</string>
-    <string name="dx_pdf_extract_page">Extraire la page %1$d</string>
     <string name="dx_pdf_page_desc">Page %1$d sur %2$d</string>
     <string name="dx_pdf_page_selected_desc">Page %1$d sur %2$d, sélectionnée</string>
     <string name="dx_pdf_extracted">Texte extrait</string>
@@ -1112,4 +1110,19 @@
     <string name="st_settings_collapse">Masquer les réglages des modèles intelligents</string>
     <string name="st_settings_expanded">Développé</string>
     <string name="st_settings_collapsed">Réduit</string>
+    <string name="dx_pdf_next">Suivant</string>
+    <string name="dx_pdf_selected_count">Pages sélectionnées : %1$d</string>
+    <string name="dx_pdf_none_selected">Aucune page sélectionnée : sélectionnez au moins une page.</string>
+    <string name="dx_pdf_select_page">Sélectionner la page</string>
+    <string name="dx_pdf_deselect_page">Désélectionner la page</string>
+    <string name="dx_pdf_not_selected">Non sélectionnée</string>
+    <string name="dx_review_pages">Pages : %1$s</string>
+    <string name="dx_progress_page">Extraction de la page %1$d (%2$d sur %3$d)…</string>
+    <string name="dx_extracted_summary">Extraction terminée : %1$d page(s) lue(s) sur %2$d.</string>
+    <string name="dx_page_failed">La page %1$d n\'a pas pu être extraite.</string>
+    <string name="dx_retry">Réessayer</string>
+    <plurals name="dx_pdf_page_count">
+        <item quantity="one">%d page</item>
+        <item quantity="other">%d pages</item>
+    </plurals>
 </resources>

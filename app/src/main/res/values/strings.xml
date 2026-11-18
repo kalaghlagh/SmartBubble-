@@ -1094,13 +1094,11 @@
     <string name="dx_note_rerouted">%1$s lines read again with the model of their script</string>
     <string name="dx_note_missing">%1$s text lines on the image could not be read: compare with the original page</string>
     <string name="dx_pdf_viewer_title">Choose a page</string>
-    <string name="dx_pdf_hint">Tap a page to select it, then extract its text.</string>
+    <string name="dx_pdf_hint">Tap pages to select or deselect them, then press Next.</string>
     <string name="dx_pdf_loading">Opening the PDF…</string>
     <string name="dx_pdf_open_error">This PDF cannot be displayed (damaged or password-protected).</string>
     <string name="dx_pdf_page_error">This page could not be displayed.</string>
     <string name="dx_pdf_selected">Selected</string>
-    <string name="dx_pdf_selected_of">Page %1$d of %2$d selected</string>
-    <string name="dx_pdf_extract_page">Extract page %1$d</string>
     <string name="dx_pdf_page_desc">Page %1$d of %2$d</string>
     <string name="dx_pdf_page_selected_desc">Page %1$d of %2$d, selected</string>
     <string name="dx_pdf_extracted">Text extracted</string>
@@ -1112,4 +1110,19 @@
     <string name="st_settings_collapse">Hide Smart Templates settings</string>
     <string name="st_settings_expanded">Expanded</string>
     <string name="st_settings_collapsed">Collapsed</string>
+    <string name="dx_pdf_next">Next</string>
+    <string name="dx_pdf_selected_count">Selected pages: %1$d</string>
+    <string name="dx_pdf_none_selected">No pages selected: select at least one page.</string>
+    <string name="dx_pdf_select_page">Select page</string>
+    <string name="dx_pdf_deselect_page">Deselect page</string>
+    <string name="dx_pdf_not_selected">Not selected</string>
+    <string name="dx_review_pages">Pages: %1$s</string>
+    <string name="dx_progress_page">Extracting page %1$d (%2$d of %3$d)…</string>
+    <string name="dx_extracted_summary">Extraction completed: %1$d of %2$d pages read.</string>
+    <string name="dx_page_failed">Page %1$d could not be extracted.</string>
+    <string name="dx_retry">Retry</string>
+    <plurals name="dx_pdf_page_count">
+        <item quantity="one">%d page</item>
+        <item quantity="other">%d pages</item>
+    </plurals>
 </resources>

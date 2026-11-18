@@ -12,6 +12,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -128,54 +130,79 @@ class PdfViewerDeviceTest {
     private fun exists(tag: String) = compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
     private fun await(tag: String) = compose.waitUntil(20_000) { exists(tag) }
 
-    @Test
-    fun viewer_showsPages_lazily_selectsTheTappedPage_extractsIt_releasesOnClose() {
-        val extracted = mutableListOf<Int>()
-        var open by mutableStateOf(true)
-        var marks by mutableStateOf<Map<Int, PdfPageMark>>(emptyMap())
+    /** Pages tapped so far (tap selects, tap again deselects) and what Next received. */
+    private var selected by mutableStateOf(setOf<Int>())
+    private val nexts = mutableListOf<Set<Int>>()
+
+    private fun viewer(uri: Uri, marks: () -> Map<Int, PdfPageMark> = { emptyMap() }, open: () -> Boolean = { true }, onClose: () -> Unit = {}) {
         compose.setContent {
             MaterialTheme {
-                if (open) PdfPageViewer(Uri.fromFile(pdf), "PDF", marks, onExtract = { extracted += it }, onClose = { open = false })
+                if (open()) PdfPageViewer(uri, "PDF", marks(), selected,
+                    onToggle = { i -> selected = if (i in selected) selected - i else selected + i },
+                    onNext = { nexts += selected }, onClose = onClose)
             }
         }
+    }
+
+    private fun tapPage(index: Int) {
+        compose.onNodeWithTag("pdf_pages").performScrollToIndex(index)
+        await("pdf_page_$index")
+        compose.onNodeWithTag("pdf_page_$index").performClick()
+        compose.waitForIdle()
+    }
+
+    private fun label() = compose.onNodeWithTag("pdf_selected_label").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.Text].joinToString { it.text }
+
+    @Test
+    fun viewer_multiSelection_nonConsecutive_deselect_count_next_lazy_releasedOnClose() {
+        var open by mutableStateOf(true)
+        var marks by mutableStateOf<Map<Int, PdfPageMark>>(emptyMap())
+        viewer(Uri.fromFile(pdf), marks = { marks }, open = { open }, onClose = { open = false })
         await("pdf_page_image_0")
         // Lazy: the last page is not drawn before it is scrolled to.
         assertTrue(!exists("pdf_page_image_${PAGES - 1}"))
-        // Page 1 selected by default.
-        compose.onNodeWithTag("pdf_page_0").assertIsSelected()
-        assertTrue(exists("pdf_selected_badge_0"))
+        // Nothing selected at first: no page is, Next is disabled and says why.
+        compose.onNodeWithTag("pdf_page_0").assertIsNotSelected()
+        compose.onNodeWithTag("pdf_next").assertIsNotEnabled()
+        assertEquals(context.getString(com.example.R.string.dx_pdf_none_selected), label())
+        compose.onNodeWithTag("pdf_next").performClick()
+        assertTrue("Next without a page", nexts.isEmpty())
         // Portrait and landscape pages fill the width, their height in their own proportions.
         // (Measured on the laid-out page once scrolled into view: boundsInRoot alone is clipped
         // to the visible part of the list, which is what run #79 measured: 995x213.)
         assertShownInProportion(0, 595, 842)
         assertShownInProportion(1, 842, 595)
-        // Tap page 4: it is selected (outlined, badge), page 1 no longer is, and it is extracted.
-        compose.onNodeWithTag("pdf_pages").performScrollToIndex(3)
-        await("pdf_page_3")
-        compose.onNodeWithTag("pdf_page_3").performClick()
-        compose.waitForIdle()
-        compose.onNodeWithTag("pdf_page_3").assertIsSelected()
-        assertTrue(exists("pdf_selected_badge_3"))
-        assertTrue(!exists("pdf_selected_badge_0"))
-        await("pdf_page_image_3")
-        compose.onNodeWithTag("pdf_extract").performClick()
-        compose.waitForIdle()
-        assertEquals(listOf(3), extracted)
-        // Another page then: exactly that one.
-        compose.onNodeWithTag("pdf_pages").performScrollToIndex(1)
-        await("pdf_page_1")
-        compose.onNodeWithTag("pdf_page_1").performClick()
-        compose.waitForIdle()
-        compose.onNodeWithTag("pdf_page_3").let { if (exists("pdf_page_3")) it.assertIsNotSelected() }
-        compose.onNodeWithTag("pdf_extract").performClick()
-        compose.waitForIdle()
-        assertEquals(listOf(3, 1), extracted)
-        // The extraction state of a page is shown on it.
-        marks = mapOf(1 to PdfPageMark.CHECK, 3 to PdfPageMark.EXTRACTED)
-        await("pdf_mark_check_1")
-        // The last page can be reached and drawn.
+        // One page, then more, not consecutive and not in order: 9, 1, 3, 7.
+        tapPage(8)
+        compose.onNodeWithTag("pdf_page_8").assertIsSelected()
+        assertEquals(context.getString(com.example.R.string.dx_pdf_selected_count, 1), label())
+        compose.onNodeWithTag("pdf_next").assertIsEnabled()
+        for (i in listOf(0, 2, 6)) tapPage(i)
+        assertEquals(setOf(8, 0, 2, 6), selected)
+        assertEquals(context.getString(com.example.R.string.dx_pdf_selected_count, 4), label())
+        // Tapping a selected page deselects it.
+        tapPage(2)
+        compose.onNodeWithTag("pdf_page_2").assertIsNotSelected()
+        assertTrue(!exists("pdf_selected_badge_2") && !exists("pdf_check_2"))
+        assertEquals(context.getString(com.example.R.string.dx_pdf_selected_count, 3), label())
+        // The selection is kept while scrolling the whole document and back.
         compose.onNodeWithTag("pdf_pages").performScrollToIndex(PAGES - 1)
         await("pdf_page_image_${PAGES - 1}")
+        compose.onNodeWithTag("pdf_pages").performScrollToIndex(0)
+        await("pdf_page_0")
+        compose.onNodeWithTag("pdf_page_0").assertIsSelected()
+        assertTrue(exists("pdf_selected_badge_0") && exists("pdf_check_0"))
+        compose.onNodeWithTag("pdf_pages").performScrollToIndex(6)
+        await("pdf_page_6")
+        compose.onNodeWithTag("pdf_page_6").assertIsSelected()
+        // No page was extracted by a tap; Next gets the selection.
+        assertTrue(nexts.isEmpty())
+        compose.onNodeWithTag("pdf_next").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf(setOf(0, 6, 8)), nexts.toList())
+        // The extraction state of a page is shown on it.
+        marks = mapOf(6 to PdfPageMark.CHECK, 8 to PdfPageMark.EXTRACTED)
+        await("pdf_mark_check_6")
         // Closing releases the renderer and deletes the copy.
         compose.onNodeWithTag("pdf_close").performClick()
         compose.waitForIdle()
@@ -185,11 +212,10 @@ class PdfViewerDeviceTest {
     @Test
     fun viewer_damagedPdf_showsTheError_noExtraction() {
         val bad = File(context.cacheDir, "damaged-view.pdf").apply { writeText("not a pdf") }
-        val extracted = mutableListOf<Int>()
-        compose.setContent { MaterialTheme { PdfPageViewer(Uri.fromFile(bad), "PDF", emptyMap(), onExtract = { extracted += it }, onClose = {}) } }
+        viewer(Uri.fromFile(bad))
         await("pdf_viewer_error")
-        assertTrue(!exists("pdf_extract"))
-        assertTrue(extracted.isEmpty())
+        assertTrue(!exists("pdf_next"))
+        assertTrue(nexts.isEmpty())
     }
 
     /**
@@ -219,19 +245,15 @@ class PdfViewerDeviceTest {
     @Test
     fun viewer_landscapeRatios_andRotatedPages_keepTheirProportions_selectedPageExtracted() {
         val f = File(context.cacheDir, "viewer-ratios.pdf").apply { writeBytes(pdfBytes(MIXED)) }
-        val extracted = mutableListOf<Int>()
-        compose.setContent { MaterialTheme { PdfPageViewer(Uri.fromFile(f), "PDF", emptyMap(), onExtract = { extracted += it }, onClose = {}) } }
+        viewer(Uri.fromFile(f))
         await("pdf_page_image_0")
         MIXED.forEachIndexed { i, (w, h, rotate) -> if (rotate % 180 == 0) assertShownInProportion(i, w, h) else assertShownInProportion(i, h, w) }
-        // The rotated page tapped is the one extracted.
-        compose.onNodeWithTag("pdf_pages").performScrollToIndex(3)
-        await("pdf_page_3")
-        compose.onNodeWithTag("pdf_page_3").performClick()
-        compose.waitForIdle()
+        // The rotated page tapped is the one handed on.
+        tapPage(3)
         compose.onNodeWithTag("pdf_page_3").assertIsSelected()
-        compose.onNodeWithTag("pdf_extract").performClick()
+        compose.onNodeWithTag("pdf_next").performClick()
         compose.waitForIdle()
-        assertEquals(listOf(3), extracted)
+        assertEquals(listOf(setOf(3)), nexts.toList())
     }
 
     @Test
