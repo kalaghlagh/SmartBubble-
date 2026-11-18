@@ -344,6 +344,70 @@ class SmartBubbleMigrationTest {
         assertEquals("letters.recommendation", db.documentDao().getDocumentById("doc-2")!!.documentKind)
     }
 
+    /**
+     * v7 -> v8 (Agent): only the agent_tasks table is added. Conversations, messages, providers and
+     * documents written before the update stay exactly as they were, and the Agent's checkpoints work.
+     */
+    @Test
+    fun migrateFromVersion7_addsAgentTasksAndKeepsConversations() = runBlocking {
+        val thesisV7 = thesisV4Ddl + arrayOf(
+            "ALTER TABLE `thesis_sections` ADD COLUMN `completed` INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE `thesis_sections` ADD COLUMN `description` TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE `thesis_projects` ADD COLUMN `subtitle` TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE `thesis_projects` ADD COLUMN `studentId` TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE `thesis_projects` ADD COLUMN `submissionDate` TEXT NOT NULL DEFAULT ''",
+            // v6
+            "ALTER TABLE `templates` ADD COLUMN `categoryId` TEXT",
+            "ALTER TABLE `templates` ADD COLUMN `subcategoryId` TEXT",
+            "ALTER TABLE `documents` ADD COLUMN `documentKind` TEXT",
+            "ALTER TABLE `documents` ADD COLUMN `contentJson` TEXT",
+            "ALTER TABLE `documents` ADD COLUMN `sourceRequest` TEXT",
+            "ALTER TABLE `documents` ADD COLUMN `documentLanguage` TEXT",
+            "CREATE TABLE IF NOT EXISTS `template_defaults` (`scopeId` TEXT NOT NULL, `templateId` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`scopeId`))",
+            "CREATE TABLE IF NOT EXISTS `template_favorites` (`templateId` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`templateId`))",
+            // v7
+            "ALTER TABLE `thesis_projects` ADD COLUMN `tocDepth` INTEGER NOT NULL DEFAULT 3",
+            "ALTER TABLE `thesis_projects` ADD COLUMN `frontMatterRoman` INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE `thesis_projects` ADD COLUMN `mainPageStart` INTEGER NOT NULL DEFAULT 1"
+        )
+        createRawDatabase(7, documentsDdl, templatesV2Ddl, providersDdl, chatMessagesDdl, conversationsDdl, *thesisV7) { db ->
+            insertProvider(db, "p-1", "My OpenAI", isDefault = true)
+            insertProvider(db, "p-2", "My Claude", isDefault = false)
+            db.insertRow(
+                "conversations", "id" to "conv-1", "title" to "Plan de thèse",
+                "lastMessagePreview" to "Here is the plan", "updatedAt" to 1_700_000_100_000L,
+                "createdAt" to 1_700_000_000_000L
+            )
+            insertMessage(db, "m-1", "conv-1", true, "اكتب خطة", 1_700_000_000_000L)
+            insertMessage(db, "m-2", "conv-1", false, "Here is the plan", 1_700_000_100_000L)
+            insertDocument(db, "doc-1", "Plan.docx", "/data/generated_docs/plan.docx")
+        }
+
+        val db = openProduction() // runs 7 -> 8; Room validates the schema against the entities
+
+        assertEquals("Plan de thèse", db.conversationDao().getConversationById("conv-1")?.title)
+        assertEquals(listOf("اكتب خطة", "Here is the plan"), db.chatDao().getMessagesForSession("conv-1").first().map { it.content })
+        assertEquals("My OpenAI", db.providerDao().getDefaultProvider()?.name)
+        assertEquals(2, countRows(db, "ai_providers"))
+        assertEquals("Plan.docx", db.documentDao().getDocumentById("doc-1")?.title)
+        assertEquals(0, countRows(db, "agent_tasks"))
+
+        // The new table stores and finds task checkpoints.
+        val dao = db.agentTaskDao()
+        dao.upsert(com.example.data.model.AgentTaskEntity("t-1", "conv-1", "PAUSED", "{}", 1L, 2L))
+        dao.upsert(com.example.data.model.AgentTaskEntity("t-2", "conv-1", "COMPLETED", "{}", 3L, 4L))
+        assertEquals(listOf("t-1", "t-2"), dao.forSession("conv-1").map { it.id })
+        assertEquals(listOf("t-1"), dao.unfinished().map { it.id })
+        dao.upsert(com.example.data.model.AgentTaskEntity("t-1", "conv-1", "CANCELLED", "{}", 1L, 5L))
+        assertEquals(emptyList<String>(), dao.unfinished().map { it.id })
+
+        // Clearing a conversation removes its task records too, never other data.
+        com.example.data.db.ConversationCleaner(db).clearConversation("conv-1", "New Conversation")
+        assertEquals(0, countRows(db, "agent_tasks"))
+        assertEquals(2, countRows(db, "ai_providers"))
+        assertEquals("Plan.docx", db.documentDao().getDocumentById("doc-1")?.title)
+    }
+
     /** Data written through Room survives closing and reopening with the production config. */
     @Test
     fun roomCreatedDatabase_survivesReopen() = runBlocking {

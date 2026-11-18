@@ -2,7 +2,7 @@
     <string name="app_name">SmartBubble</string>
 
     <!-- Bottom Navigation -->
-    <string name="nav_chat">Chat</string>
+    <string name="nav_chat">Agent</string>
     <string name="nav_templates">My Templates</string>
     <string name="nav_library">Library</string>
     <string name="nav_thesis">Thesis</string>
@@ -1125,4 +1125,63 @@
         <item quantity="one">%d page</item>
         <item quantity="other">%d pages</item>
     </plurals>
+
+    <!-- Agent (Chat became Agent): routing, tasks, approval, settings -->
+    <string name="ai_err_no_compatible_model">No enabled model in your Agent priority list can handle this request.</string>
+    <string name="ai_error_agent_failed">None of the models in your Agent priority list could complete the request (last tried: %1$s): %2$s You can retry, or change the order in Settings.</string>
+    <string name="agent_result_incomplete">The result may be incomplete: please check it.</string>
+    <string name="agent_result_warnings">Completed with warnings: please check the result.</string>
+    <string name="agent_failed">The Agent task stopped: a step could not run (%1$s).</string>
+    <string name="agent_busy">The Agent is already working on a request.</string>
+    <string name="agent_model_line">Model: %1$s · %2$s</string>
+    <string name="agent_event_failed">%1$s failed, trying the next model: %2$s</string>
+    <string name="agent_event_stopped">%1$s could not handle the request: %2$s</string>
+    <string name="agent_event_skipped">%1$s skipped: %2$s</string>
+    <string name="agent_waiting">Waiting %1$d s before pass %2$d over the model list.</string>
+    <string name="agent_skip_disabled">switched off</string>
+    <string name="agent_skip_structured">no structured output</string>
+    <string name="agent_skip_image">no image input</string>
+    <string name="agent_skip_tools">no tool calling</string>
+    <string name="agent_skip_context">request too long for this model</string>
+    <string name="agent_skip_excluded">failed earlier in this task</string>
+    <string name="agent_status_planning">Planning</string>
+    <string name="agent_status_running">Running</string>
+    <string name="agent_status_waiting">Waiting for your approval</string>
+    <string name="agent_status_paused">Paused</string>
+    <string name="agent_status_completed">Completed</string>
+    <string name="agent_status_warnings">Completed with warnings</string>
+    <string name="agent_status_incomplete">Incomplete</string>
+    <string name="agent_status_failed">Failed</string>
+    <string name="agent_status_cancelled">Cancelled</string>
+    <string name="agent_step_pending">Pending</string>
+    <string name="agent_step_running">Running</string>
+    <string name="agent_step_waiting">Waiting for approval</string>
+    <string name="agent_step_done">Done</string>
+    <string name="agent_step_failed">Failed</string>
+    <string name="agent_step_cancelled">Cancelled</string>
+    <string name="agent_step_rejected">Rejected</string>
+    <string name="agent_step_unknown">Result not confirmed</string>
+    <string name="agent_tool_read">Read “%1$s”</string>
+    <string name="agent_tool_generate">Write the answer</string>
+    <string name="agent_tool_generate_format">Create the %1$s document</string>
+    <string name="agent_tool_validate">Check the result</string>
+    <string name="agent_tool_share">Share the document</string>
+    <string name="agent_task_title">Agent task</string>
+    <string name="agent_progress">%1$d of %2$d steps done</string>
+    <string name="agent_approval_share">Share the created document with another app?</string>
+    <string name="agent_approval_unknown">The app stopped during this step and its result could not be confirmed. Run it again?</string>
+    <string name="agent_pause">Pause</string>
+    <string name="agent_resume">Resume</string>
+    <string name="agent_cancel">Cancel</string>
+    <string name="agent_approve">Approve</string>
+    <string name="agent_reject">Reject</string>
+    <string name="agent_dismiss">Close</string>
+    <string name="agent_settings_title">Agent model order</string>
+    <string name="agent_settings_hint">The Agent uses the first model in this list. If it cannot connect or the service fails, it tries the next one, in this order.</string>
+    <string name="agent_settings_empty">Add an AI provider above to use the Agent.</string>
+    <string name="agent_settings_no_key">No API key: not used</string>
+    <string name="agent_move_up">Move %1$s up</string>
+    <string name="agent_move_down">Move %1$s down</string>
+    <string name="agent_use_model">Use %1$s</string>
+    <string name="agent_settings_cycles">Passes over the list before giving up</string>
 </resources>

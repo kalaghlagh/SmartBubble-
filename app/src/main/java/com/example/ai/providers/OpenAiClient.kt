@@ -53,7 +53,7 @@ open class OpenAiClient(
             // The JSON is then requested via instructions only (same provider, same model).
             result = AiHttp.execute(AiHttp.jsonPost(chatUrl, headers, buildChatBody(model, request, useJsonMode = false)), apiKey)
         }
-        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey)
+        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey, result.retryAfterSeconds)
         return parseChatResponse(result.body)
     }
 
@@ -69,7 +69,7 @@ open class OpenAiClient(
                 AiHttp.jsonPost(chatUrl, streamHeaders, buildChatBody(model, request, useJsonMode = false) + ("stream" to true)), apiKey
             ) { acc.accept(it) }
         }
-        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey)
+        if (result.code !in 200..299) throw AiHttp.mapHttpError(result.code, result.body, apiKey, result.retryAfterSeconds)
         if (!result.streamed) {
             // A server that ignores "stream" answers with one normal response.
             return parseChatResponse(result.body).also { onText(it.text) }
@@ -89,10 +89,10 @@ open class OpenAiClient(
                 return models
             }
             // Only "this list does not exist here" moves on to the next source.
-            if (result.code !in setOf(404, 405)) throw AiHttp.mapHttpError(result.code, result.body, apiKey)
+            if (result.code !in setOf(404, 405)) throw AiHttp.mapHttpError(result.code, result.body, apiKey, result.retryAfterSeconds)
             last = result
         }
-        throw AiHttp.mapHttpError(last!!.code, last.body, apiKey)
+        throw AiHttp.mapHttpError(last!!.code, last.body, apiKey, last.retryAfterSeconds)
     }
 
     override suspend fun testConnection(): Long {
@@ -109,9 +109,9 @@ open class OpenAiClient(
                     val body = buildChatBody(model, ping, useJsonMode = false) + ("max_tokens" to 1)
                     val r2 = AiHttp.execute(AiHttp.jsonPost(chatUrl, headers, body), apiKey)
                     if (r2.code in 200..299) return System.currentTimeMillis() - start
-                    throw AiHttp.mapHttpError(r2.code, r2.body, apiKey)
+                    throw AiHttp.mapHttpError(r2.code, r2.body, apiKey, r2.retryAfterSeconds)
                 }
-                throw AiHttp.mapHttpError(result.code, result.body, apiKey)
+                throw AiHttp.mapHttpError(result.code, result.body, apiKey, result.retryAfterSeconds)
             }
             ConnectionTest.LIST_MODELS -> {
                 // The model list is public on some providers: check the key on its own first.
@@ -120,7 +120,7 @@ open class OpenAiClient(
                     val result = AiHttp.execute(AiHttp.get(url, headers), apiKey)
                     if (result.code in 200..299) break
                     if (result.code == 404 && path != dialect.authCheckPaths.last()) continue
-                    throw AiHttp.mapHttpError(result.code, result.body, apiKey)
+                    throw AiHttp.mapHttpError(result.code, result.body, apiKey, result.retryAfterSeconds)
                 }
                 val models = listModels().orEmpty()
                 if (!modelIsListed(model, models, dialect.allowsVariantSuffix)) {

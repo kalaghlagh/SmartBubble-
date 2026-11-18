@@ -5,7 +5,8 @@ import androidx.room.withTransaction
 /**
  * The two deletions of the "/clear" command. Each runs in one Room transaction: either
  * everything is deleted or nothing is. Only the chat tables (conversations, chat_messages) are
- * touched; documents, templates, providers and API keys are never deleted here.
+ * touched (plus the Agent task records of those conversations); documents, templates, providers
+ * and API keys are never deleted here.
  */
 class ConversationCleaner(private val database: SmartBubbleDatabase) {
 
@@ -19,6 +20,7 @@ class ConversationCleaner(private val database: SmartBubbleDatabase) {
         val conversationDao = database.conversationDao()
         val deleted = chatDao.getMessagesForSessionOnce(id).size
         chatDao.deleteMessagesBySessionId(id)
+        database.agentTaskDao().deleteForSession(id)
         val existing = conversationDao.getConversationById(id)
         if (existing != null) {
             conversationDao.updateConversation(
@@ -35,6 +37,7 @@ class ConversationCleaner(private val database: SmartBubbleDatabase) {
     suspend fun deleteAllConversations(): Int = database.withTransaction {
         val count = database.conversationDao().countConversations()
         database.chatDao().deleteAllMessages()
+        database.agentTaskDao().deleteAll()
         database.conversationDao().deleteAllConversations()
         count
     }

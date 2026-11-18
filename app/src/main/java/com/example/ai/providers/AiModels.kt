@@ -75,6 +75,8 @@ enum class AiErrorKind {
     TRUNCATED_RESPONSE,
     CONTENT_BLOCKED,
     INVALID_CONFIGURATION,
+    /** Agent routing: no enabled model in the priority list supports what the request needs. */
+    NO_COMPATIBLE_MODEL,
     UNKNOWN
 }
 
@@ -86,7 +88,9 @@ class AiException(
     val kind: AiErrorKind,
     val detail: String? = null,
     val httpCode: Int? = null,
-    cause: Throwable? = null
+    cause: Throwable? = null,
+    /** Seconds the provider asked to wait (HTTP Retry-After), when it said so. */
+    val retryAfterSeconds: Long? = null
 ) : Exception("${kind.name}${httpCode?.let { " (HTTP $it)" } ?: ""}${detail?.let { ": $it" } ?: ""}", cause)
 
 /** Removes secrets from text that might be shown or logged. */

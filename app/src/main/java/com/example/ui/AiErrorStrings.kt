@@ -25,5 +25,6 @@ fun aiErrorStringRes(kind: AiErrorKind): Int = when (kind) {
     AiErrorKind.TRUNCATED_RESPONSE -> R.string.ai_err_truncated
     AiErrorKind.CONTENT_BLOCKED -> R.string.ai_err_blocked
     AiErrorKind.INVALID_CONFIGURATION -> R.string.ai_err_configuration
+    AiErrorKind.NO_COMPATIBLE_MODEL -> R.string.ai_err_no_compatible_model
     AiErrorKind.UNKNOWN -> R.string.ai_err_unknown
 }

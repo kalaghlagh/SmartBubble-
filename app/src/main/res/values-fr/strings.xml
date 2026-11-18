@@ -2,7 +2,7 @@
     <string name="app_name">SmartBubble</string>
 
     <!-- Bottom Navigation -->
-    <string name="nav_chat">Discussion</string>
+    <string name="nav_chat">Agent</string>
     <string name="nav_templates">Mes Modèles</string>
     <string name="nav_library">Bibliothèque</string>
     <string name="nav_thesis">Mémoire</string>
@@ -1125,4 +1125,63 @@
         <item quantity="one">%d page</item>
         <item quantity="other">%d pages</item>
     </plurals>
+
+    <!-- Agent (Chat became Agent): routing, tasks, approval, settings -->
+    <string name="ai_err_no_compatible_model">Aucun modèle activé dans l’ordre de priorité de l’Agent ne peut traiter cette demande.</string>
+    <string name="ai_error_agent_failed">Aucun modèle de l’ordre de priorité de l’Agent n’a pu terminer la demande (dernier essayé : %1$s) : %2$s Vous pouvez réessayer ou modifier l’ordre dans les Paramètres.</string>
+    <string name="agent_result_incomplete">Le résultat est peut-être incomplet : vérifiez-le.</string>
+    <string name="agent_result_warnings">Terminé avec des avertissements : vérifiez le résultat.</string>
+    <string name="agent_failed">La tâche de l’Agent s’est arrêtée : une étape n’a pas pu s’exécuter (%1$s).</string>
+    <string name="agent_busy">L’Agent traite déjà une demande.</string>
+    <string name="agent_model_line">Modèle : %1$s · %2$s</string>
+    <string name="agent_event_failed">%1$s a échoué, essai du modèle suivant : %2$s</string>
+    <string name="agent_event_stopped">%1$s n’a pas pu traiter la demande : %2$s</string>
+    <string name="agent_event_skipped">%1$s ignoré : %2$s</string>
+    <string name="agent_waiting">Attente de %1$d s avant le passage %2$d sur la liste des modèles.</string>
+    <string name="agent_skip_disabled">désactivé</string>
+    <string name="agent_skip_structured">pas de sortie structurée</string>
+    <string name="agent_skip_image">pas d’entrée d’image</string>
+    <string name="agent_skip_tools">pas d’appel d’outils</string>
+    <string name="agent_skip_context">demande trop longue pour ce modèle</string>
+    <string name="agent_skip_excluded">a échoué plus tôt dans cette tâche</string>
+    <string name="agent_status_planning">Planification</string>
+    <string name="agent_status_running">En cours</string>
+    <string name="agent_status_waiting">En attente de votre accord</string>
+    <string name="agent_status_paused">En pause</string>
+    <string name="agent_status_completed">Terminée</string>
+    <string name="agent_status_warnings">Terminée avec avertissements</string>
+    <string name="agent_status_incomplete">Incomplète</string>
+    <string name="agent_status_failed">Échec</string>
+    <string name="agent_status_cancelled">Annulée</string>
+    <string name="agent_step_pending">En attente</string>
+    <string name="agent_step_running">En cours</string>
+    <string name="agent_step_waiting">En attente d’accord</string>
+    <string name="agent_step_done">Terminée</string>
+    <string name="agent_step_failed">Échec</string>
+    <string name="agent_step_cancelled">Annulée</string>
+    <string name="agent_step_rejected">Refusée</string>
+    <string name="agent_step_unknown">Résultat non confirmé</string>
+    <string name="agent_tool_read">Lire « %1$s »</string>
+    <string name="agent_tool_generate">Rédiger la réponse</string>
+    <string name="agent_tool_generate_format">Créer le document %1$s</string>
+    <string name="agent_tool_validate">Vérifier le résultat</string>
+    <string name="agent_tool_share">Partager le document</string>
+    <string name="agent_task_title">Tâche de l’Agent</string>
+    <string name="agent_progress">%1$d étape(s) sur %2$d terminée(s)</string>
+    <string name="agent_approval_share">Partager le document créé avec une autre application ?</string>
+    <string name="agent_approval_unknown">L’application s’est arrêtée pendant cette étape et son résultat n’a pas pu être confirmé. La relancer ?</string>
+    <string name="agent_pause">Pause</string>
+    <string name="agent_resume">Reprendre</string>
+    <string name="agent_cancel">Annuler</string>
+    <string name="agent_approve">Approuver</string>
+    <string name="agent_reject">Refuser</string>
+    <string name="agent_dismiss">Fermer</string>
+    <string name="agent_settings_title">Ordre des modèles de l’Agent</string>
+    <string name="agent_settings_hint">L’Agent utilise le premier modèle de cette liste. S’il ne peut pas se connecter ou si le service échoue, il essaie le suivant, dans cet ordre.</string>
+    <string name="agent_settings_empty">Ajoutez un fournisseur d’IA ci-dessus pour utiliser l’Agent.</string>
+    <string name="agent_settings_no_key">Pas de clé API : non utilisé</string>
+    <string name="agent_move_up">Monter %1$s</string>
+    <string name="agent_move_down">Descendre %1$s</string>
+    <string name="agent_use_model">Utiliser %1$s</string>
+    <string name="agent_settings_cycles">Passages sur la liste avant d’abandonner</string>
 </resources>
