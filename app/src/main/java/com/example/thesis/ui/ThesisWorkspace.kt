@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -601,7 +603,7 @@ fun ThesisReviewDialog(controller: ThesisController, review: ProposalReview) {
     val numbering = remember(review.before) { ThesisStructure.numbering(review.before) }
     Dialog(onDismissRequest = { controller.closeReview() }, properties = com.example.ui.adaptive.fullScreenDialogProperties()) {
         Surface(Modifier.fillMaxSize().testTag("thesis_review"), color = MaterialTheme.colorScheme.background) {
-            Column(Modifier.windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing)) {
+            Column(Modifier.windowInsetsPadding(WindowInsets.safeDrawing)) {
                 Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { controller.closeReview() }) { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close)) }
                     Text(stringResource(R.string.thesis_review_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).semantics { heading() })
