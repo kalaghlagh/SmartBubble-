@@ -210,7 +210,12 @@ class ThesisAndroidTest {
 
     @After
     fun tearDown() {
-        scope.cancel()
+        // Wait for the controller's coroutines to finish before closing the database. Cancelling
+        // does not interrupt a query already running on Dispatchers.Default (e.g. the projects
+        // list read after a change): closed under it, it failed with "connection pool has been
+        // closed" in a cancelled coroutine, reported as an uncaught exception at the start of the
+        // next test (run #87, home_listsProjects_english). Same order as the logo restart test.
+        runBlocking { scope.coroutineContext[Job]!!.cancelAndJoin() }
         db.close()
     }
 
