@@ -17,6 +17,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import kotlinx.coroutines.launch
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.heading
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -207,102 +213,164 @@ private fun BlockEditor(b: ExtractedBlock, onChange: (ExtractedBlock?) -> Unit, 
 }
 
 /**
- * Review of extracted content before it goes into the section it was started from: progress
- * (with Cancel), what was found on each page, the original page image, editable text and
- * tables, reading a page again in another language, and the ways to insert or copy it.
+ * Review of extracted content before it goes into the section it was started from, in its own
+ * full-screen window (images; a PDF is reviewed inside its page viewer, [PdfExtractionFlow]).
+ */
+@Composable
+internal fun ExtractionReviewDialog(host: ThesisHost) {
+    val controller = host.thesis
+    Dialog(onDismissRequest = { controller.cancelExtraction() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            ExtractionReviewContent(host, onBack = { controller.cancelExtraction() })
+        }
+    }
+}
+
+/** Original number (1-based) of an extracted page: its page in the PDF, or its place among the images. */
+internal fun originalPageNumber(p: com.example.extraction.ExtractedPage): Int = (p.sourcePage ?: p.index) + 1
+
+/**
+ * Review of extracted content: progress (with Cancel), then every page in document order under
+ * its own page heading (its original page number; the headings are not inserted), with what was
+ * found on it, the original page image, editable text and tables, reading it again (another
+ * language, or Retry when it failed), and the ways to insert or copy the content. The actions
+ * always use this review's content (the pages extracted for it, as corrected here), into the
+ * section it was started from. [onBack] leaves the review (Back, Cancel).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun ExtractionReviewDialog(host: ThesisHost) {
+internal fun ExtractionReviewContent(host: ThesisHost, onBack: () -> Unit) {
     val controller = host.thesis
     val state by controller.state.collectAsState()
     val x = state.extraction ?: return
     val context = LocalContext.current
     val sectionTitle = state.snapshot?.let { s -> s.section(x.sectionId)?.let { com.example.thesis.core.ThesisStructure.displayTitle(it, com.example.thesis.core.ThesisStructure.numbering(s), s.meta.language) } }.orEmpty()
-    var pageIndex by remember(x.document) { mutableStateOf(x.document?.pages?.firstOrNull()?.index ?: 0) }
-    var showOriginal by remember { mutableStateOf(false) }
-    var confirmRetry by remember { mutableStateOf<String?>(null) }
-    Dialog(onDismissRequest = { controller.cancelExtraction() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize().testTag("dx_review"), color = MaterialTheme.colorScheme.background) {
-            Column(Modifier.fillMaxSize()) {
-                BlueTopBar(stringResource(R.string.dx_review_title), onBack = { controller.cancelExtraction() })
-                Text(stringResource(R.string.dx_for_section, sectionTitle), style = MaterialTheme.typography.titleSmall.copy(textDirection = TextDirection.Content),
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("dx_target_section"))
-                val doc = x.document
-                when {
-                    x.running -> Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(if (x.total > 0) stringResource(R.string.dx_progress, x.page, x.total) else stringResource(R.string.dx_starting), modifier = Modifier.testTag("dx_progress"))
-                        LinearProgressIndicator(Modifier.fillMaxWidth())
-                        Text(stringResource(R.string.dx_keep_working), style = MaterialTheme.typography.bodySmall)
-                        OutlinedButton(onClick = { controller.cancelExtraction() }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_cancel")) { Text(stringResource(R.string.action_cancel)) }
+    var shownOriginals by remember { mutableStateOf(emptySet<Int>()) }
+    var confirmRetry by remember { mutableStateOf<Pair<Int, String>?>(null) }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+    val numbers = remember(locale) { java.text.NumberFormat.getIntegerInstance(locale) }
+    // Pages asked for, in document order (one PDF with chosen pages): shown in the header and progress.
+    val pdfPages = x.sources.singleOrNull()?.takeIf { it.isPdf }?.pages?.sorted()
+    Column(Modifier.fillMaxSize().testTag("dx_review")) {
+        BlueTopBar(stringResource(R.string.dx_review_title), onBack = onBack, backTag = "dx_back")
+        Text(stringResource(R.string.dx_for_section, sectionTitle), style = MaterialTheme.typography.titleSmall.copy(textDirection = TextDirection.Content),
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp).testTag("dx_target_section"))
+        if (pdfPages != null) Text(stringResource(R.string.dx_review_pages, pdfPages.joinToString(if (locale.language == "ar") "، " else ", ") { numbers.format(it + 1) }),
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp).testTag("dx_review_pages"))
+        Spacer(Modifier.height(6.dp))
+        val doc = x.document
+        when {
+            x.running -> Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                val text = when {
+                    x.total <= 0 -> stringResource(R.string.dx_starting)
+                    pdfPages != null && pdfPages.size == x.total && x.page in 1..x.total ->
+                        stringResource(R.string.dx_progress_page, pdfPages[x.page - 1] + 1, x.page, x.total)
+                    else -> stringResource(R.string.dx_progress, x.page, x.total)
+                }
+                Text(text, modifier = Modifier.testTag("dx_progress"))
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(stringResource(R.string.dx_keep_working), style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = onBack, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_cancel")) { Text(stringResource(R.string.action_cancel)) }
+            }
+            doc == null -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(when (x.error) {
+                    "ocr_unavailable" -> R.string.scan_ocr_unavailable
+                    else -> R.string.dx_failed
+                }), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("dx_error"))
+                OutlinedButton(onClick = onBack, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.action_back)) }
+            }
+            else -> {
+                val failed = doc.pages.count { it.error != null }
+                Text(stringResource(R.string.dx_extracted_summary, doc.pages.size - failed, doc.pages.size),
+                    style = MaterialTheme.typography.bodySmall, color = if (failed > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp).testTag("dx_summary"))
+                if (x.error == "no_text") Text(stringResource(R.string.dx_no_text_anywhere), color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp).testTag("dx_no_text"))
+                // Item index of each page's heading, to jump to it from the chips.
+                val headerIndex = HashMap<Int, Int>()
+                run { var n = 0; doc.pages.forEach { p -> headerIndex[p.index] = n; n += 4 + p.blocks.size } }
+                if (doc.pages.size > 1) FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    doc.pages.forEach { p ->
+                        FilterChip(selected = false, onClick = { scope.launch { listState.animateScrollToItem(headerIndex[p.index] ?: 0) } },
+                            label = { Text(stringResource(R.string.dx_page_n, originalPageNumber(p)) + if (p.error != null || p.reviewRecommended) " ⚠" else "") },
+                            modifier = Modifier.testTag("dx_page_${p.index}"))
                     }
-                    doc == null -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(stringResource(when (x.error) {
-                            "ocr_unavailable" -> R.string.scan_ocr_unavailable
-                            else -> R.string.dx_failed
-                        }), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("dx_error"))
-                        OutlinedButton(onClick = { controller.cancelExtraction() }) { Text(stringResource(R.string.action_close)) }
-                    }
-                    else -> {
-                        val page = doc.pages.firstOrNull { it.index == pageIndex } ?: doc.pages.first()
-                        Column(Modifier.weight(1f)) {
-                            if (x.error == "no_text") Text(stringResource(R.string.dx_no_text_anywhere), color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp).testTag("dx_no_text"))
-                            if (doc.pages.size > 1) FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                doc.pages.forEach { p ->
-                                    FilterChip(selected = p.index == page.index, onClick = { pageIndex = p.index },
-                                        label = { Text(stringResource(R.string.dx_page_n, p.index + 1) + if (p.error != null || p.reviewRecommended) " ⚠" else "") },
-                                        modifier = Modifier.testTag("dx_page_${p.index}"))
+                }
+                // Bounded (weight): the list scrolls and each text field inside it is bounded too.
+                LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp).testTag("dx_pages"), state = listState,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    doc.pages.forEach { page ->
+                        val n = originalPageNumber(page)
+                        item(key = "h${page.index}") {
+                            // Page separator: shown here only, never inserted.
+                            Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+                                Text(stringResource(R.string.dx_page_n, n), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 6.dp).semantics { heading() }.testTag("dx_page_header_${page.index}"))
+                            }
+                        }
+                        item(key = "r${page.index}") {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                com.example.ui.components.ExtractionPageReport(page)
+                                if (page.error != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(stringResource(R.string.dx_page_failed, n), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.weight(1f).testTag("dx_page_failed_${page.index}"))
+                                    Button(onClick = { controller.retryExtractedPage(page.index, x.languageCode, host.extractor()) }, enabled = x.retryingPage == null,
+                                        modifier = Modifier.heightIn(min = 48.dp).testTag("dx_retry_failed_${page.index}")) { Text(stringResource(R.string.dx_retry)) }
                                 }
                             }
-                            LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                item { com.example.ui.components.ExtractionPageReport(page) }
-                                item {
-                                    // Read this page again in another language mode (other pages and corrections are kept).
-                                    Column {
-                                        Text(stringResource(R.string.dx_retry_page), style = MaterialTheme.typography.labelLarge)
-                                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            listOf("auto" to R.string.dx_lang_auto, "ar" to R.string.dx_lang_ar, "fr" to R.string.dx_lang_fr, "en" to R.string.dx_lang_en).forEach { (code, label) ->
-                                                FilterChip(selected = false, enabled = x.retryingPage == null, onClick = {
-                                                    if (page.index in x.editedPages) confirmRetry = code
-                                                    else controller.retryExtractedPage(page.index, code, host.extractor())
-                                                }, label = { Text(stringResource(label)) }, modifier = Modifier.testTag("dx_retry_$code"))
-                                            }
-                                        }
-                                        if (x.retryingPage == page.index) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("dx_retrying"))
-                                        page.imageUri?.let {
-                                            TextButton(onClick = { showOriginal = !showOriginal }, modifier = Modifier.testTag("dx_show_original")) {
-                                                Text(stringResource(if (showOriginal) R.string.dx_hide_original else R.string.dx_show_original))
-                                            }
-                                            if (showOriginal) AsyncImage(model = it, contentDescription = stringResource(R.string.dx_original_page), modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp))
-                                        }
+                        }
+                        item(key = "a${page.index}") {
+                            // Read this page again in another language mode (other pages and corrections are kept).
+                            Column {
+                                Text(stringResource(R.string.dx_retry_page), style = MaterialTheme.typography.labelLarge)
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    listOf("auto" to R.string.dx_lang_auto, "ar" to R.string.dx_lang_ar, "fr" to R.string.dx_lang_fr, "en" to R.string.dx_lang_en).forEach { (code, label) ->
+                                        FilterChip(selected = false, enabled = x.retryingPage == null, onClick = {
+                                            if (page.index in x.editedPages) confirmRetry = page.index to code
+                                            else controller.retryExtractedPage(page.index, code, host.extractor())
+                                        }, label = { Text(stringResource(label)) }, modifier = Modifier.testTag("dx_retry_${code}_${page.index}"))
                                     }
                                 }
-                                itemsIndexed(page.blocks) { i, b ->
-                                    BlockEditor(b, { nb -> controller.updateExtractedBlock(page.index, i, nb) }, "dx_block_$i")
+                                if (x.retryingPage == page.index) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("dx_retrying"))
+                                page.imageUri?.let {
+                                    val shown = page.index in shownOriginals
+                                    TextButton(onClick = { shownOriginals = if (shown) shownOriginals - page.index else shownOriginals + page.index },
+                                        modifier = Modifier.testTag("dx_show_original_${page.index}")) {
+                                        Text(stringResource(if (shown) R.string.dx_hide_original else R.string.dx_show_original))
+                                    }
+                                    if (shown) AsyncImage(model = it, contentDescription = stringResource(R.string.dx_original_page), modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp))
                                 }
                             }
                         }
-                        HorizontalDivider()
-                        // Insertion: always into the section the extraction was started from.
-                        val tables = doc.pages.sumOf { it.tables }
-                        FlowRow(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Button(onClick = { controller.insertExtraction(ExtractionInsertMode.AT_CURSOR) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_cursor")) { Text(stringResource(R.string.dx_insert_cursor)) }
-                            OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.APPEND) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_append")) { Text(stringResource(R.string.dx_insert_append)) }
-                            OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.AS_PARAGRAPHS) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_paragraphs")) { Text(stringResource(R.string.dx_insert_paragraphs)) }
-                            OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.HEADING_AND_CONTENT) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_heading")) { Text(stringResource(R.string.dx_insert_heading)) }
-                            OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.TABLES_ONLY) }, enabled = tables > 0, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_tables")) { Text(stringResource(R.string.dx_insert_tables, tables)) }
-                            OutlinedButton(onClick = {
-                                (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.setPrimaryClip(ClipData.newPlainText("SmartBubble", ExtractionText.plain(doc)))
-                                android.widget.Toast.makeText(context, context.getString(R.string.scan_text_copied), android.widget.Toast.LENGTH_SHORT).show()
-                            }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_copy")) { Text(stringResource(R.string.scan_copy_text)) }
-                            TextButton(onClick = { controller.cancelExtraction() }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_cancel_review")) { Text(stringResource(R.string.action_cancel)) }
+                        itemsIndexed(page.blocks, key = { i, _ -> "b${page.index}_$i" }) { i, b ->
+                            BlockEditor(b, { nb -> controller.updateExtractedBlock(page.index, i, nb) }, "dx_block_${page.index}_$i")
                         }
+                        item(key = "e${page.index}") { Spacer(Modifier.height(2.dp)) }
                     }
+                }
+                HorizontalDivider()
+                // Insertion: always into the section the extraction was started from, from this
+                // review's pages (never the whole PDF or an earlier extraction).
+                val tables = doc.pages.sumOf { it.tables }
+                FlowRow(Modifier.fillMaxWidth().padding(10.dp).testTag("dx_actions"), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(onClick = { controller.insertExtraction(ExtractionInsertMode.AT_CURSOR) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_cursor")) { Text(stringResource(R.string.dx_insert_cursor)) }
+                    OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.APPEND) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_append")) { Text(stringResource(R.string.dx_insert_append)) }
+                    OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.AS_PARAGRAPHS) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_paragraphs")) { Text(stringResource(R.string.dx_insert_paragraphs)) }
+                    OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.HEADING_AND_CONTENT) }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_heading")) { Text(stringResource(R.string.dx_insert_heading)) }
+                    OutlinedButton(onClick = { controller.insertExtraction(ExtractionInsertMode.TABLES_ONLY) }, enabled = tables > 0, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_insert_tables")) { Text(stringResource(R.string.dx_insert_tables, tables)) }
+                    OutlinedButton(onClick = {
+                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.setPrimaryClip(ClipData.newPlainText("SmartBubble", ExtractionText.plain(doc)))
+                        android.widget.Toast.makeText(context, context.getString(R.string.scan_text_copied), android.widget.Toast.LENGTH_SHORT).show()
+                    }, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_copy")) { Text(stringResource(R.string.scan_copy_text)) }
+                    TextButton(onClick = onBack, modifier = Modifier.heightIn(min = 48.dp).testTag("dx_cancel_review")) { Text(stringResource(R.string.action_cancel)) }
                 }
             }
         }
     }
-    confirmRetry?.let { code ->
+    confirmRetry?.let { (pageIndex, code) ->
         AlertDialog(
             onDismissRequest = { confirmRetry = null },
             title = { Text(stringResource(R.string.dx_retry_page)) },

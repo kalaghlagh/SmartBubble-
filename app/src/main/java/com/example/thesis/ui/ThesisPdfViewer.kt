@@ -20,9 +20,15 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Warning
@@ -64,62 +70,103 @@ import com.example.ui.pdf.PdfPageRenderer
 enum class PdfPageMark { EXTRACTED, CHECK }
 
 /**
- * The selected PDF itself, page after page, to choose the page whose text is extracted: the real
- * pages are drawn (in order, at the screen's width, their proportions kept), the tapped page is
- * selected and outlined, and "Extract page N" sends exactly that page to the shared extraction
- * ([onExtract] gets its 0-based index). Pages are drawn only when shown and the renderer is
- * released when the viewer closes. [marks] puts the extraction state of pages already extracted
- * (done, or to check) on them.
+ * The PDF at [uri] opened for viewing: null while it opens, a failure when it cannot be
+ * displayed. The renderer is closed when the caller leaves the composition (or [uri] changes).
  */
 @Composable
-fun PdfPageViewer(uri: Uri, title: String, marks: Map<Int, PdfPageMark>, onExtract: (Int) -> Unit, onClose: () -> Unit) {
+internal fun rememberPdfPages(uri: Uri): Result<PdfPageRenderer>? {
     val context = LocalContext.current
-    // null while opening; Result.failure when the PDF cannot be displayed.
     val opened by produceState<Result<PdfPageRenderer>?>(null, uri) {
         val r = PdfPageRenderer.open(context, uri)
         value = if (r != null) Result.success(r) else Result.failure(IllegalStateException("unreadable"))
     }
     val renderer = opened?.getOrNull()
     DisposableEffect(renderer) { onDispose { renderer?.close() } }
-    var selected by rememberSaveable(uri) { mutableStateOf(0) }
+    return opened
+}
 
+/** File name of [uri] as the picker shows it, or null. */
+@Composable
+private fun rememberDisplayName(uri: Uri): String? {
+    val context = LocalContext.current
+    val name by produceState<String?>(null, uri) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                if (uri.scheme == "file") uri.lastPathSegment
+                else context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) c.getString(0) else null
+                }
+            } catch (e: Exception) { null }
+        }
+    }
+    return name
+}
+
+/**
+ * The PDF page viewer in its own window: the real pages of [uri], several of which can be
+ * selected ([selected], [onToggle]); [onNext] goes on with the selected pages.
+ */
+@Composable
+fun PdfPageViewer(uri: Uri, title: String, marks: Map<Int, PdfPageMark>, selected: Set<Int>, onToggle: (Int) -> Unit, onNext: () -> Unit, onClose: () -> Unit) {
+    val opened = rememberPdfPages(uri)
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize().testTag("pdf_viewer"), color = MaterialTheme.colorScheme.background) {
-            Column(Modifier.fillMaxSize()) {
-                BlueTopBar(title, onBack = onClose)
-                when {
-                    opened == null -> Column(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(Modifier.testTag("pdf_viewer_loading"))
-                        Spacer(Modifier.size(12.dp))
-                        Text(stringResource(R.string.dx_pdf_loading), style = MaterialTheme.typography.bodyMedium)
-                    }
-                    renderer == null -> Column(Modifier.fillMaxWidth().weight(1f).padding(24.dp), verticalArrangement = Arrangement.Center) {
-                        Text(stringResource(R.string.dx_pdf_open_error), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("pdf_viewer_error"))
-                    }
-                    else -> {
-                        val count = renderer.pageCount
-                        if (selected !in 0 until count) selected = 0
-                        Text(stringResource(R.string.dx_pdf_hint), style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
-                        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
-                            val pageWidthPx = with(LocalDensity.current) { (maxWidth - 32.dp).roundToPx() }
-                            LazyColumn(Modifier.fillMaxSize().testTag("pdf_pages"), state = rememberLazyListState(),
-                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                                items((0 until count).toList(), key = { it }) { index ->
-                                    PdfPageItem(renderer, index, count, pageWidthPx, selected == index, marks[index]) { selected = index }
-                                }
-                            }
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            PdfPagesPane(opened, title, marks, selected, onToggle, onNext, onClose)
+        }
+    }
+}
+
+/**
+ * Step 1 of a PDF extraction: the PDF itself, page after page (in order, at the screen's width,
+ * their proportions kept), drawn only when shown. Tapping a page selects it, tapping it again
+ * deselects it; any pages can be selected, consecutive or not. Nothing is extracted on a tap:
+ * the bar at the bottom shows how many pages are selected and "Next" (enabled once one page is
+ * selected) goes on with them. [marks] puts the extraction state of pages already extracted on them.
+ */
+@Composable
+internal fun PdfPagesPane(
+    opened: Result<PdfPageRenderer>?, title: String, marks: Map<Int, PdfPageMark>, selected: Set<Int>,
+    onToggle: (Int) -> Unit, onNext: () -> Unit, onClose: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().testTag("pdf_viewer")) {
+        BlueTopBar(title, onBack = onClose, backTag = "pdf_back")
+        val renderer = opened?.getOrNull()
+        when {
+            opened == null -> Column(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(Modifier.testTag("pdf_viewer_loading"))
+                Spacer(Modifier.size(12.dp))
+                Text(stringResource(R.string.dx_pdf_loading), style = MaterialTheme.typography.bodyMedium)
+            }
+            renderer == null -> Column(Modifier.fillMaxWidth().weight(1f).padding(24.dp), verticalArrangement = Arrangement.Center) {
+                Text(stringResource(R.string.dx_pdf_open_error), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("pdf_viewer_error"))
+            }
+            else -> {
+                val count = renderer.pageCount
+                val chosen = selected.filter { it in 0 until count }
+                Text(pluralStringResource(R.plurals.dx_pdf_page_count, count, count) + " · " + stringResource(R.string.dx_pdf_hint),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("pdf_info"))
+                BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+                    val pageWidthPx = with(LocalDensity.current) { (maxWidth - 32.dp).roundToPx() }
+                    LazyColumn(Modifier.fillMaxSize().testTag("pdf_pages"), state = rememberLazyListState(),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        items(count, key = { it }) { index ->
+                            PdfPageItem(renderer, index, count, pageWidthPx, index in selected, marks[index]) { onToggle(index) }
                         }
-                        HorizontalDivider()
-                        // Compact actions: the page stays in view; the extracted text opens in the review.
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(stringResource(R.string.dx_pdf_selected_of, selected + 1, count), style = MaterialTheme.typography.labelLarge,
-                                modifier = Modifier.weight(1f).testTag("pdf_selected_label"))
-                            TextButton(onClick = onClose, modifier = Modifier.heightIn(min = 48.dp).testTag("pdf_close")) { Text(stringResource(R.string.action_close)) }
-                            Button(onClick = { onExtract(selected) }, modifier = Modifier.heightIn(min = 48.dp).testTag("pdf_extract")) {
-                                Text(stringResource(R.string.dx_pdf_extract_page, selected + 1))
-                            }
-                        }
+                    }
+                }
+                HorizontalDivider()
+                // Always in view below the pages: how many are selected, and Next.
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (chosen.isEmpty()) stringResource(R.string.dx_pdf_none_selected) else stringResource(R.string.dx_pdf_selected_count, chosen.size),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (chosen.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f).semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }.testTag("pdf_selected_label")
+                    )
+                    TextButton(onClick = onClose, modifier = Modifier.heightIn(min = 48.dp).testTag("pdf_close")) { Text(stringResource(R.string.action_close)) }
+                    Button(onClick = onNext, enabled = chosen.isNotEmpty(), modifier = Modifier.heightIn(min = 48.dp).testTag("pdf_next")) {
+                        Text(stringResource(R.string.dx_pdf_next))
                     }
                 }
             }
@@ -128,15 +175,17 @@ fun PdfPageViewer(uri: Uri, title: String, marks: Map<Int, PdfPageMark>, onExtra
 }
 
 @Composable
-private fun PdfPageItem(renderer: PdfPageRenderer, index: Int, count: Int, widthPx: Int, isSelected: Boolean, mark: PdfPageMark?, onSelect: () -> Unit) {
+private fun PdfPageItem(renderer: PdfPageRenderer, index: Int, count: Int, widthPx: Int, isSelected: Boolean, mark: PdfPageMark?, onToggle: () -> Unit) {
     val (pw, ph) = renderer.pageSizes[index]
     // Drawn only while the page is composed (on screen), at the width it is shown; kept in the
-    // renderer's bounded cache, so scrolling back does not draw it again.
+    // renderer's bounded cache, so scrolling back (or selecting it) does not draw it again.
     val bitmap by produceState<Result<Bitmap>?>(null, renderer, index, widthPx) {
         val b = renderer.render(index, widthPx)
         value = if (b != null) Result.success(b) else Result.failure(IllegalStateException())
     }
     val description = if (isSelected) stringResource(R.string.dx_pdf_page_selected_desc, index + 1, count) else stringResource(R.string.dx_pdf_page_desc, index + 1, count)
+    val actionLabel = stringResource(if (isSelected) R.string.dx_pdf_deselect_page else R.string.dx_pdf_select_page)
+    val stateLabel = stringResource(if (isSelected) R.string.dx_pdf_selected else R.string.dx_pdf_not_selected)
     val outline = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
     Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
@@ -163,19 +212,82 @@ private fun PdfPageItem(renderer: PdfPageRenderer, index: Int, count: Int, width
                 .aspectRatio(pw.toFloat() / ph.toFloat())
                 .border(if (isSelected) 3.dp else 1.dp, outline, RoundedCornerShape(4.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
-                .semantics { selected = isSelected; contentDescription = description }
-                .clickable(role = Role.Button, onClick = onSelect)
+                .semantics { selected = isSelected; stateDescription = stateLabel; contentDescription = description }
+                .clickable(onClickLabel = actionLabel, role = Role.Checkbox, onClick = onToggle)
                 .testTag("pdf_page_$index"),
             contentAlignment = Alignment.Center
         ) {
             val b = bitmap
             when {
                 b == null -> CircularProgressIndicator(Modifier.size(28.dp))
-                b.isSuccess -> Image(b.getOrThrow().asImageBitmap(), contentDescription = null, contentScale = ContentScale.FillBounds,
+                // Fit, never FillBounds: the outline padding makes the inner area a little off the
+                // page's proportions, and the page must not be stretched to it.
+                b.isSuccess -> Image(b.getOrThrow().asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize().padding(if (isSelected) 3.dp else 1.dp).testTag("pdf_page_image_$index"))
                 else -> Text(stringResource(R.string.dx_pdf_page_error), color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(16.dp).testTag("pdf_page_error_$index"))
             }
+            // Selection mark in the page's corner (the outline alone is easy to miss).
+            if (isSelected) Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(28.dp).testTag("pdf_check_$index")) {
+                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.padding(4.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Extraction from a PDF into the open section, in one window with two steps sharing the open
+ * PDF: (1) the page viewer, where pages are selected; Next extracts them (in document order,
+ * whatever the order they were selected in) with the shared extraction ([startExtraction]:
+ * text pages read directly, scanned ones by PaddleOCR); (2) the review of the extracted text with
+ * every insertion action. Back from the review returns to the pages as they were selected (a
+ * running extraction is stopped; a finished one is kept, so Next with the same pages shows it
+ * again without extracting again). Inserting closes the whole flow.
+ */
+@Composable
+internal fun PdfExtractionFlow(host: ThesisHost, uri: Uri, cursor: () -> Int, sync: () -> Unit) {
+    val controller = host.thesis
+    val state by controller.state.collectAsState()
+    val opened = rememberPdfPages(uri)
+    val fileName = rememberDisplayName(uri)
+    var selection by rememberSaveable(uri) { mutableStateOf(intArrayOf()) }
+    val selected = remember(selection) { selection.toSet() }
+    var reviewing by rememberSaveable(uri) { mutableStateOf(false) }
+    var marks by remember(uri) { mutableStateOf(emptyMap<Int, PdfPageMark>()) }
+    val x = state.extraction
+    // The extraction of this PDF, if the current one is (never one of another file).
+    val ours = x?.sources?.singleOrNull()?.takeIf { it.isPdf && it.uri == uri }
+    LaunchedEffect(x?.document) {
+        val doc = x?.document
+        if (ours != null && doc != null) {
+            marks = marks + doc.pages.mapNotNull { p -> p.sourcePage?.let { it to if (p.reviewRecommended) PdfPageMark.CHECK else PdfPageMark.EXTRACTED } }
+        }
+    }
+    LaunchedEffect(x == null) { if (x == null) reviewing = false }
+    val back: () -> Unit = {
+        reviewing = false
+        if (x?.running == true) controller.cancelExtraction()
+    }
+    val next: () -> Unit = next@{
+        if (selected.isEmpty()) return@next
+        if (x != null && ours != null && ours.pages == selected && (x.running || x.document != null)) {
+            // Same pages as the extraction already made (or running): shown again, not repeated.
+            reviewing = true
+            return@next
+        }
+        sync()
+        controller.startExtraction(listOf(com.example.extraction.ExtractionSource(uri, isPdf = true, pages = selected.toSortedSet())),
+            host.ocrLanguageCode, cursor(), host.extractor())
+        reviewing = true
+    }
+    Dialog(onDismissRequest = { if (reviewing && x != null) back() else controller.closePdfViewer() },
+        properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize().testTag("pdf_flow"), color = MaterialTheme.colorScheme.background) {
+            if (reviewing && x != null) ExtractionReviewContent(host, onBack = back)
+            else PdfPagesPane(opened, fileName ?: stringResource(R.string.dx_pdf_viewer_title), marks, selected,
+                onToggle = { i -> selection = if (i in selected) selection.filter { it != i }.toIntArray() else selection + i },
+                onNext = next, onClose = { controller.closePdfViewer() })
         }
     }
 }

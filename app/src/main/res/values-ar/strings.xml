@@ -1094,13 +1094,11 @@
     <string name="dx_note_rerouted">أُعيدت قراءة %1$s سطرًا بنموذج كتابتها</string>
     <string name="dx_note_missing">تعذرت قراءة %1$s سطرًا من الصورة: قارن مع الصفحة الأصلية</string>
     <string name="dx_pdf_viewer_title">اختر صفحة</string>
-    <string name="dx_pdf_hint">المس صفحة لتحديدها، ثم استخرج نصها.</string>
+    <string name="dx_pdf_hint">المس الصفحات لتحديدها أو إلغاء تحديدها، ثم اضغط «التالي».</string>
     <string name="dx_pdf_loading">جارٍ فتح ملف PDF…</string>
     <string name="dx_pdf_open_error">لا يمكن عرض ملف PDF هذا (تالف أو محمي بكلمة مرور).</string>
     <string name="dx_pdf_page_error">تعذر عرض هذه الصفحة.</string>
     <string name="dx_pdf_selected">محددة</string>
-    <string name="dx_pdf_selected_of">الصفحة %1$d من %2$d محددة</string>
-    <string name="dx_pdf_extract_page">استخراج الصفحة %1$d</string>
     <string name="dx_pdf_page_desc">الصفحة %1$d من %2$d</string>
     <string name="dx_pdf_page_selected_desc">الصفحة %1$d من %2$d، محددة</string>
     <string name="dx_pdf_extracted">تم استخراج النص</string>
@@ -1112,4 +1110,23 @@
     <string name="st_settings_collapse">إخفاء إعدادات القوالب الذكية</string>
     <string name="st_settings_expanded">موسّع</string>
     <string name="st_settings_collapsed">مطوي</string>
+    <string name="dx_pdf_next">التالي</string>
+    <string name="dx_pdf_selected_count">الصفحات المحددة: %1$d</string>
+    <string name="dx_pdf_none_selected">لم تُحدَّد أي صفحة: حدد صفحة واحدة على الأقل.</string>
+    <string name="dx_pdf_select_page">تحديد الصفحة</string>
+    <string name="dx_pdf_deselect_page">إلغاء تحديد الصفحة</string>
+    <string name="dx_pdf_not_selected">غير محددة</string>
+    <string name="dx_review_pages">الصفحات: %1$s</string>
+    <string name="dx_progress_page">جارٍ استخراج الصفحة %1$d (%2$d من %3$d)…</string>
+    <string name="dx_extracted_summary">اكتمل الاستخراج: قُرئت %1$d من %2$d صفحات.</string>
+    <string name="dx_page_failed">تعذر استخراج الصفحة %1$d.</string>
+    <string name="dx_retry">إعادة المحاولة</string>
+    <plurals name="dx_pdf_page_count">
+        <item quantity="zero">لا توجد صفحات</item>
+        <item quantity="one">صفحة واحدة</item>
+        <item quantity="two">صفحتان</item>
+        <item quantity="few">%d صفحات</item>
+        <item quantity="many">%d صفحة</item>
+        <item quantity="other">%d صفحة</item>
+    </plurals>
 </resources>

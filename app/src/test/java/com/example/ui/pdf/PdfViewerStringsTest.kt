@@ -21,27 +21,32 @@ class PdfViewerStringsTest {
         R.string.dx_pdf_viewer_title, R.string.dx_pdf_hint, R.string.dx_pdf_loading, R.string.dx_pdf_open_error,
         R.string.dx_pdf_page_error, R.string.dx_pdf_selected, R.string.dx_pdf_extracted, R.string.dx_pdf_needs_review,
         R.string.st_settings_subtitle, R.string.st_group_automatic, R.string.st_group_new_documents,
-        R.string.st_settings_expand, R.string.st_settings_collapse, R.string.st_settings_expanded, R.string.st_settings_collapsed
+        R.string.st_settings_expand, R.string.st_settings_collapse, R.string.st_settings_expanded, R.string.st_settings_collapsed,
+        R.string.dx_pdf_next, R.string.dx_pdf_none_selected, R.string.dx_pdf_select_page, R.string.dx_pdf_deselect_page,
+        R.string.dx_pdf_not_selected, R.string.dx_retry
     )
-    private val counters = listOf(R.string.dx_pdf_selected_of, R.string.dx_pdf_page_desc, R.string.dx_pdf_page_selected_desc)
+    private val counters = listOf(R.string.dx_pdf_page_desc, R.string.dx_pdf_page_selected_desc, R.string.dx_extracted_summary)
 
     private fun texts(): List<String> {
         val c: Context = ApplicationProvider.getApplicationContext()
-        return keys.map { c.getString(it) } + counters.map { c.getString(it, 3, 12) } + c.getString(R.string.dx_pdf_extract_page, 3)
+        return keys.map { c.getString(it) } + counters.map { c.getString(it, 3, 12) } + c.getString(R.string.dx_pdf_selected_count, 3)
     }
 
     private fun english(): List<String> {
         val c: Context = ApplicationProvider.getApplicationContext()
         val conf = android.content.res.Configuration(c.resources.configuration).apply { setLocale(java.util.Locale.ENGLISH) }
         val en = c.createConfigurationContext(conf)
-        return keys.map { en.getString(it) } + counters.map { en.getString(it, 3, 12) } + en.getString(R.string.dx_pdf_extract_page, 3)
+        return keys.map { en.getString(it) } + counters.map { en.getString(it, 3, 12) } + en.getString(R.string.dx_pdf_selected_count, 3)
     }
 
     private fun check(arabicScript: Boolean) {
         val t = texts(); val en = english()
         t.forEach { assertTrue("empty text", it.isNotBlank()) }
-        counters.indices.forEach { i -> val s = t[keys.size + i]; assertTrue(s, s.contains("3") && s.contains("12")) }
-        assertTrue(t.last(), t.last().contains("3"))
+        // Numbers in the locale's digits (Arabic-Indic in Arabic), as String.format writes them.
+        val loc = (ApplicationProvider.getApplicationContext() as Context).resources.configuration.locales[0]
+        val three = String.format(loc, "%d", 3); val twelve = String.format(loc, "%d", 12)
+        counters.indices.forEach { i -> val s = t[keys.size + i]; assertTrue(s, s.contains(three) && s.contains(twelve)) }
+        assertTrue(t.last(), t.last().contains(three))
         t.zip(en).forEach { (local, english) -> assertNotEquals("not translated: $english", english, local) }
         if (arabicScript) t.forEach { s -> assertTrue("not Arabic: $s", s.any { it in '؀'..'ۿ' }) }
     }

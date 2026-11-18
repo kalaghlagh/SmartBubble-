@@ -171,6 +171,10 @@ class ThesisAndroidTest {
         override fun openExportedDocument(document: DocumentEntity) { opened.add(document) }
         override fun shareExportedDocument(document: DocumentEntity) { opened.add(document) }
         override suspend fun aiProviderInfo(): Pair<String, String>? = ai.provider?.let { it to "fake-model" }
+        /** The on-device extractor's stand-in (reading a page again from the review uses it). */
+        var extract: com.example.thesis.Extractor? = null
+        override suspend fun extractDocument(sources: List<com.example.extraction.ExtractionSource>, languageCode: String, progress: (Int, Int) -> Unit) =
+            (extract ?: throw UnsupportedOperationException("no extractor"))(sources, languageCode, progress)
         // Same path as the app (SmartBubbleViewModel): a blocking query on Dispatchers.IO.
         override suspend fun recentChatMessages(limit: Int): List<ChatSnippet> {
             // Each call is recorded (start, query done on which thread, result size, return): when
@@ -1101,6 +1105,229 @@ class ThesisAndroidTest {
         assertEquals(1, count(text, "Content of page 1"))
         assertEquals(0, count(text, "Content of page 2"))
         assertTrue("page 3 first, then page 1", text.indexOf("Content of page 3") < text.indexOf("Content of page 1"))
+    }
+
+    /** A project whose Introduction holds "Existing text.", open in the section editor; returns its id. */
+    private fun introEditor(host: TestHost): String {
+        val id = runBlocking { repo.createProject(meta(), aiAssist = false) }
+        val introId = intro(runBlocking { repo.snapshot(id) })
+        runBlocking { repo.applyDirect(id, listOf(ThesisOp.AddElements(introId, null, listOf(NewElement("p1", ElementType.PARAGRAPH, "Existing text.")))), ChangeSource.USER, "x") }
+        controller.openProject(id)
+        showWorkspace(host)
+        await("snapshot") { controller.state.value.snapshot?.element("p1") != null }
+        controller.selectSection(introId)
+        await("editor") { tagExists("thesis_editor_text") && controller.state.value.draft != null }
+        return introId
+    }
+
+    /** Content of PDF page [p] (0-based) as DocumentExtractionEngine gives it: heading, Latin and Arabic text, a table on page 5. */
+    private fun pdfPage(i: Int, p: Int, failed: Boolean = false, paragraphs: Int = 1): com.example.extraction.ExtractedPage =
+        if (failed) com.example.extraction.ExtractedPage(i, com.example.extraction.PageSource.PDF_OCR, emptyList(), error = "page_unreadable", sourcePage = p)
+        else com.example.extraction.ExtractedPage(i, if (p % 2 == 0) com.example.extraction.PageSource.PDF_TEXT else com.example.extraction.PageSource.PDF_OCR,
+            listOf<com.example.extraction.ExtractedBlock>(com.example.extraction.ExtractedBlock.Heading("Title of page ${p + 1}", 1, rtl = false)) +
+                (1..paragraphs).flatMap { k -> listOf(
+                    com.example.extraction.ExtractedBlock.Paragraph("Body of page ${p + 1}" + (if (k > 1) " part $k" else "") + ": wells and springs were sampled.", rtl = false),
+                    com.example.extraction.ExtractedBlock.Paragraph("نص الصفحة ${p + 1} عن المياه الجوفية ودرجة الحموضة pH.", rtl = true)) } +
+                (if (p == 4) listOf(com.example.extraction.ExtractedBlock.Table(listOf(
+                    listOf(com.example.extraction.TableCell("Well"), com.example.extraction.TableCell("Depth")),
+                    listOf(com.example.extraction.TableCell("W5"), com.example.extraction.TableCell("120"))), header = true, rtl = false)) else emptyList()),
+            scripts = setOf(com.example.extraction.Script.LATIN, com.example.extraction.Script.ARABIC),
+            level = com.example.extraction.ReconstructionLevel.STRUCTURE, confidence = if (p % 2 == 0) null else 0.9f, sourcePage = p)
+
+    /** Extracts the pages asked for in document order (as DocumentExtractionEngine), [failing] pages failing once. */
+    private fun pagesExtractor(asked: MutableList<Set<Int>?>, failing: MutableSet<Int> = mutableSetOf(), paragraphs: Int = 1): com.example.thesis.Extractor = { sources, _, progress ->
+        val pages = sources.single().pages.orEmpty().sorted()
+        asked.add(sources.single().pages)
+        com.example.extraction.ExtractedDocument(pages.mapIndexed { i, p ->
+            progress(i + 1, pages.size)
+            pdfPage(i, p, failed = failing.remove(p), paragraphs = paragraphs)
+        })
+    }
+
+    /** The text [after] has that [before] had not (one insertion). */
+    private fun insertedPart(before: String, after: String): String {
+        var p = 0
+        while (p < before.length && p < after.length && before[p] == after[p]) p++
+        var q = 0
+        while (q < before.length - p && q < after.length - p && before[before.length - 1 - q] == after[after.length - 1 - q]) q++
+        return after.substring(p, after.length - q)
+    }
+
+    private val pdfUri = android.net.Uri.parse("file:///report.pdf")
+    private fun pdfSource(vararg pages: Int) = com.example.extraction.ExtractionSource(pdfUri, isPdf = true, pages = linkedSetOf(*pages.toTypedArray()))
+
+    /**
+     * Several PDF pages (selected out of order: 7, 2, 5): the review shows them in document order
+     * under their original page numbers, the page headings are not inserted, and every action
+     * (Insert at Cursor, Append, As Paragraphs, Heading + Content, Tables only, Copy) uses exactly
+     * the content of those pages, once each, in document order.
+     */
+    @Test
+    @Config(qualifiers = "en")
+    fun extraction_multiplePdfPages_everyActionUsesTheSelectedPages_inDocumentOrder() {
+        val host = TestHost()
+        introEditor(host)
+        val asked = CopyOnWriteArrayList<Set<Int>?>()
+        val extractor = pagesExtractor(asked)
+        fun extract() {
+            compose.runOnIdle { controller.startExtraction(listOf(pdfSource(6, 1, 4)), "auto", 0, extractor) }
+            await("review") { tagExists("dx_review") && controller.state.value.extraction?.document != null }
+        }
+        extract()
+        // Review: the pages chosen, each under its own original page number, in document order.
+        compose.onNodeWithTag("dx_review_pages").assertTextEquals("Pages: 2, 5, 7")
+        assertEquals(listOf(1, 4, 6), controller.state.value.extraction!!.document!!.pages.map { it.sourcePage })
+        listOf(0 to "Page 2", 1 to "Page 5", 2 to "Page 7").forEach { (i, label) ->
+            compose.onNodeWithTag("dx_pages").performScrollToNode(androidx.compose.ui.test.hasTestTag("dx_page_header_$i"))
+            compose.onNodeWithTag("dx_page_header_$i").assertTextEquals(label)
+        }
+        compose.onNodeWithTag("dx_summary").assertTextEquals("Extraction completed: 3 of 3 pages read.")
+        // Every action of the review is there.
+        listOf("dx_insert_cursor", "dx_insert_append", "dx_insert_paragraphs", "dx_insert_heading", "dx_insert_tables", "dx_copy", "dx_cancel_review").forEach {
+            assertTrue("action $it", tagExists(it))
+        }
+        // Copy: the text of the three pages.
+        tap("dx_copy")
+        val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).primaryClip!!.getItemAt(0).text.toString()
+        assertTrue(clip, clip.indexOf("Body of page 2") in 0 until clip.indexOf("Body of page 5") && clip.indexOf("Body of page 5") < clip.indexOf("Body of page 7"))
+        fun body(n: Int) = "Body of page $n: wells and springs were sampled."
+        for (action in listOf("dx_insert_cursor", "dx_insert_append", "dx_insert_paragraphs", "dx_insert_heading", "dx_insert_tables")) {
+            if (controller.state.value.extraction == null) extract()
+            val before = controller.state.value.draft!!.text
+            tap(action)
+            await("inserted $action") { controller.state.value.extraction == null }
+            val text = controller.state.value.draft!!.text
+            val added = text.length - before.length
+            assertTrue("$action added nothing", added > 0)
+            assertEquals("$action kept the section's text", count(before, "Existing text."), count(text, "Existing text."))
+            // No page heading of the review is inserted.
+            assertTrue("$action inserted a page separator: $text", text.lines().none { it.trim().matches(Regex("(-+ )?Page \\d+( -+)?")) })
+            if (action == "dx_insert_tables") {
+                listOf(2, 5, 7).forEach { n -> assertEquals("$action: only tables", count(before, body(n)), count(text, body(n))) }
+                assertTrue(text, text.length > before.length && count(text, "[Table") > count(before, "[Table"))
+            } else {
+                listOf(2, 5, 7).forEach { n ->
+                    assertEquals("$action: page $n once", count(before, body(n)) + 1, count(text, body(n)))
+                    assertEquals("$action: Arabic of page $n once", count(before, "نص الصفحة $n عن") + 1, count(text, "نص الصفحة $n عن"))
+                }
+                // Document order in what was inserted (not the order of selection).
+                val inserted = insertedPart(before, text)
+                val a = inserted.indexOf(body(2)); val b = inserted.indexOf(body(5)); val c = inserted.indexOf(body(7))
+                assertTrue("$action order: $a $b $c", a in 0 until b && b < c)
+                assertEquals("$action: never another page", 0, count(text, "Body of page 1:") + count(text, "Body of page 3:"))
+            }
+        }
+        // Each extraction asked for exactly the pages selected.
+        assertTrue(asked.toList().toString(), asked.all { it == setOf(1, 4, 6) })
+    }
+
+    /**
+     * A selected page that fails is shown as failed (not as extracted), the others are kept, and
+     * Retry reads it again; Insert then has all the pages. Progress names the original page.
+     */
+    @Test
+    @Config(qualifiers = "en")
+    fun extraction_failedPage_keepsTheOthers_retryReadsItAgain() {
+        val host = TestHost()
+        introEditor(host)
+        val asked = CopyOnWriteArrayList<Set<Int>?>()
+        val failing = mutableSetOf(4)
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val inner = pagesExtractor(asked, failing)
+        // The first extraction waits after reporting page 2 of 3 (original page 5).
+        val extractor: com.example.thesis.Extractor = { sources, lang, progress ->
+            if (sources.single().pages!!.size == 3) { progress(2, 3); gate.await() }
+            inner(sources, lang, progress)
+        }
+        host.extract = extractor
+        compose.runOnIdle { controller.startExtraction(listOf(pdfSource(1, 4, 6)), "auto", 0, extractor) }
+        await("progress") { tagExists("dx_progress") }
+        compose.onNodeWithTag("dx_progress").assertTextEquals("Extracting page 5 (2 of 3)…")
+        gate.complete(Unit)
+        await("review") { controller.state.value.extraction?.document != null }
+        compose.onNodeWithTag("dx_summary").assertTextEquals("Extraction completed: 2 of 3 pages read.")
+        compose.onNodeWithTag("dx_pages").performScrollToNode(androidx.compose.ui.test.hasTestTag("dx_page_failed_1"))
+        compose.onNodeWithTag("dx_page_failed_1").assertTextEquals("Page 5 could not be extracted.")
+        val doc = controller.state.value.extraction!!.document!!
+        assertEquals(listOf(null, "page_unreadable", null), doc.pages.map { it.error })
+        assertTrue(doc.pages[0].blocks.isNotEmpty() && doc.pages[2].blocks.isNotEmpty())
+        tap("dx_retry_failed_1")
+        await("page read again") { controller.state.value.extraction?.document?.pages?.get(1)?.error == null && controller.state.value.extraction?.retryingPage == null }
+        assertEquals(setOf(4), asked.last())
+        assertEquals(listOf(1, 4, 6), controller.state.value.extraction!!.document!!.pages.map { it.sourcePage })
+        tap("dx_insert_append")
+        await("inserted") { controller.state.value.extraction == null }
+        val text = controller.state.value.draft!!.text
+        listOf(2, 5, 7).forEach { n -> assertEquals(1, count(text, "Body of page $n:")) }
+    }
+
+    /**
+     * Next tapped again while the same pages are being extracted starts no second job; a new
+     * selection replaces the earlier extraction, and only its result can be inserted.
+     */
+    @Test
+    @Config(qualifiers = "en")
+    fun extraction_repeatedRequest_oneJob_newSelectionReplacesTheOldResult() {
+        val host = TestHost()
+        introEditor(host)
+        val asked = CopyOnWriteArrayList<Set<Int>?>()
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val inner = pagesExtractor(asked)
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        val extractor: com.example.thesis.Extractor = { sources, lang, progress -> calls.incrementAndGet(); gate.await(); inner(sources, lang, progress) }
+        compose.runOnIdle {
+            controller.startExtraction(listOf(pdfSource(0, 2)), "auto", 0, extractor)
+            controller.startExtraction(listOf(pdfSource(0, 2)), "auto", 0, extractor)
+            controller.startExtraction(listOf(pdfSource(2, 0)), "auto", 0, extractor)
+        }
+        compose.waitForIdle()
+        assertEquals("one job for the same pages", 1, calls.get())
+        // Another selection while it runs: the first job is dropped, the new one is the result.
+        compose.runOnIdle { controller.startExtraction(listOf(pdfSource(5)), "auto", 0, extractor) }
+        compose.waitForIdle()
+        gate.complete(Unit)
+        await("review") { controller.state.value.extraction?.document != null }
+        assertEquals(listOf(5), controller.state.value.extraction!!.document!!.pages.map { it.sourcePage })
+        tap("dx_insert_append")
+        await("inserted") { controller.state.value.extraction == null }
+        val text = controller.state.value.draft!!.text
+        assertEquals(1, count(text, "Body of page 6:"))
+        assertEquals(0, count(text, "Body of page 1:") + count(text, "Body of page 3:"))
+        assertEquals(listOf<Set<Int>?>(setOf(5)), asked.toList())
+    }
+
+    /**
+     * Long multi-page extraction (three pages of Arabic, Latin and mixed text, ~4,500 blocks):
+     * the review list and its fields stay bounded and scroll, repeated insertions do not crash or
+     * duplicate, and the section editor stays within the window and can be edited.
+     */
+    @Test
+    @Config(qualifiers = "ar")
+    fun extraction_longMultiPage_reviewAndInsert_noLayoutCrash() {
+        val host = TestHost()
+        introEditor(host)
+        val asked = CopyOnWriteArrayList<Set<Int>?>()
+        val extractor = pagesExtractor(asked, paragraphs = 350)
+        for ((k, action) in listOf("dx_insert_paragraphs", "dx_insert_heading", "dx_insert_append").withIndex()) {
+            compose.runOnIdle { controller.startExtraction(listOf(pdfSource(0, 3 + k, 8 + k)), "auto", controller.state.value.draft!!.text.length, extractor) }
+            await("review $action") { tagExists("dx_pages") && controller.state.value.extraction?.document != null }
+            val root = compose.onAllNodes(androidx.compose.ui.test.isRoot()).fetchSemanticsNodes().maxOf { it.size.height }
+            assertTrue("review list bounded", compose.onNodeWithTag("dx_pages").fetchSemanticsNode().size.height <= root)
+            compose.onNodeWithTag("dx_pages").performTouchInput { swipeUp() }
+            compose.onNodeWithTag("dx_pages").performScrollToNode(androidx.compose.ui.test.hasTestTag("dx_page_header_2"))
+            tap(action)
+            await("inserted $action") { controller.state.value.extraction == null && tagExists("thesis_editor_text") }
+            compose.waitForIdle()
+            val editor = compose.onNodeWithTag("thesis_editor_text").fetchSemanticsNode()
+            assertTrue("editor ${editor.size.height} within ${compose.onRoot().fetchSemanticsNode().size.height}", editor.size.height <= compose.onRoot().fetchSemanticsNode().size.height)
+        }
+        val text = controller.state.value.draft!!.text
+        // Page 1 was in every extraction: three times; the others once.
+        assertEquals(3, count(text, "Body of page 1:"))
+        listOf(4, 9, 5, 10, 6, 11).forEach { n -> assertEquals("page $n", 1, count(text, "Body of page $n:")) }
+        compose.onNodeWithTag("thesis_editor_text").performTouchInput { swipeUp() }
+        compose.onNodeWithTag("thesis_editor_text").performTextInput("تعديل.")
+        await("edited") { controller.state.value.draft!!.text.contains("تعديل.") }
     }
 
     /** Extracted content never lands in another section than the one it was started from. */
