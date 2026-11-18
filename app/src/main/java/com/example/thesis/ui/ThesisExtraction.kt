@@ -81,7 +81,7 @@ internal fun ThesisHost.extractor(): com.example.thesis.Extractor = { sources, l
  * the draft first.
  */
 @Composable
-internal fun ExtractChooser(host: ThesisHost, cursor: () -> Int, sync: () -> Unit, onDismiss: () -> Unit) {
+internal fun ExtractChooser(host: ThesisHost, cursor: () -> Int, sync: () -> Unit, onDismiss: () -> Unit, onPdf: (Uri) -> Unit) {
     val controller = host.thesis
     fun start(sources: List<ExtractionSource>) {
         sync()
@@ -93,7 +93,8 @@ internal fun ExtractChooser(host: ThesisHost, cursor: () -> Int, sync: () -> Uni
     }
     val pdf = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         onDismiss()
-        if (uri != null) start(listOf(ExtractionSource(uri, isPdf = true)))
+        // A PDF opens in the page viewer: the user sees its pages and extracts the one chosen.
+        if (uri != null) onPdf(uri)
     }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -169,6 +170,9 @@ private fun TableEditor(t: ExtractedBlock.Table, onChange: (ExtractedBlock.Table
 
 @Composable
 private fun BlockEditor(b: ExtractedBlock, onChange: (ExtractedBlock?) -> Unit, tag: String) {
+    // Each block is an item of a LazyColumn, measured with an unbounded height: its field is
+    // bounded to part of the screen and scrolls inside, however long the block.
+    val maxBlockHeight = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.6f).dp
     val label = stringResource(when (b) {
         is ExtractedBlock.Heading -> R.string.dx_block_heading
         is ExtractedBlock.Paragraph -> R.string.dx_block_paragraph
@@ -189,14 +193,14 @@ private fun BlockEditor(b: ExtractedBlock, onChange: (ExtractedBlock?) -> Unit, 
         val style = MaterialTheme.typography.bodyMedium.copy(textDirection = if (b.rtl) TextDirection.Rtl else TextDirection.Content)
         when (b) {
             is ExtractedBlock.Table -> TableEditor(b) { onChange(it) }
-            is ExtractedBlock.Heading -> OutlinedTextField(b.text, { onChange(b.copy(text = it)) }, textStyle = style.copy(fontWeight = FontWeight.Bold), modifier = Modifier.fillMaxWidth().testTag("${tag}_text"))
+            is ExtractedBlock.Heading -> OutlinedTextField(b.text, { onChange(b.copy(text = it)) }, textStyle = style.copy(fontWeight = FontWeight.Bold), modifier = Modifier.fillMaxWidth().heightIn(max = maxBlockHeight).testTag("${tag}_text"))
             is ExtractedBlock.Paragraph -> {
-                OutlinedTextField(b.text, { onChange(b.copy(text = it, uncertainWords = emptyList())) }, textStyle = style, modifier = Modifier.fillMaxWidth().testTag("${tag}_text"))
+                OutlinedTextField(b.text, { onChange(b.copy(text = it, uncertainWords = emptyList())) }, textStyle = style, modifier = Modifier.fillMaxWidth().heightIn(max = maxBlockHeight).testTag("${tag}_text"))
                 if (b.uncertainWords.isNotEmpty()) Text(stringResource(R.string.dx_check_words, b.uncertainWords.take(8).joinToString("، ")),
                     style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content), color = MaterialTheme.colorScheme.tertiary)
             }
-            is ExtractedBlock.ListItem -> OutlinedTextField(b.text, { onChange(b.copy(text = it)) }, textStyle = style, prefix = { Text(b.marker + " ") }, modifier = Modifier.fillMaxWidth().testTag("${tag}_text"))
-            is ExtractedBlock.Caption -> OutlinedTextField(b.text, { onChange(b.copy(text = it)) }, textStyle = style, modifier = Modifier.fillMaxWidth().testTag("${tag}_text"))
+            is ExtractedBlock.ListItem -> OutlinedTextField(b.text, { onChange(b.copy(text = it)) }, textStyle = style, prefix = { Text(b.marker + " ") }, modifier = Modifier.fillMaxWidth().heightIn(max = maxBlockHeight).testTag("${tag}_text"))
+            is ExtractedBlock.Caption -> OutlinedTextField(b.text, { onChange(b.copy(text = it)) }, textStyle = style, modifier = Modifier.fillMaxWidth().heightIn(max = maxBlockHeight).testTag("${tag}_text"))
             is ExtractedBlock.PageNumber -> Text(b.text, style = MaterialTheme.typography.bodySmall)
         }
     }

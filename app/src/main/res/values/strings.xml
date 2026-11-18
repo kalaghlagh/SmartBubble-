@@ -1093,4 +1093,23 @@
     <string name="dx_regions_to_review">%1$d parts of this page to check (outlined)</string>
     <string name="dx_note_rerouted">%1$s lines read again with the model of their script</string>
     <string name="dx_note_missing">%1$s text lines on the image could not be read: compare with the original page</string>
+    <string name="dx_pdf_viewer_title">Choose a page</string>
+    <string name="dx_pdf_hint">Tap a page to select it, then extract its text.</string>
+    <string name="dx_pdf_loading">Opening the PDF…</string>
+    <string name="dx_pdf_open_error">This PDF cannot be displayed (damaged or password-protected).</string>
+    <string name="dx_pdf_page_error">This page could not be displayed.</string>
+    <string name="dx_pdf_selected">Selected</string>
+    <string name="dx_pdf_selected_of">Page %1$d of %2$d selected</string>
+    <string name="dx_pdf_extract_page">Extract page %1$d</string>
+    <string name="dx_pdf_page_desc">Page %1$d of %2$d</string>
+    <string name="dx_pdf_page_selected_desc">Page %1$d of %2$d, selected</string>
+    <string name="dx_pdf_extracted">Text extracted</string>
+    <string name="dx_pdf_needs_review">Extracted text to check</string>
+    <string name="st_settings_subtitle">Automatic formatting, language, format and default templates</string>
+    <string name="st_group_automatic">Automatic formatting</string>
+    <string name="st_group_new_documents">New documents</string>
+    <string name="st_settings_expand">Show Smart Templates settings</string>
+    <string name="st_settings_collapse">Hide Smart Templates settings</string>
+    <string name="st_settings_expanded">Expanded</string>
+    <string name="st_settings_collapsed">Collapsed</string>
 </resources>

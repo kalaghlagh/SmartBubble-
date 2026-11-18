@@ -84,6 +84,9 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.test.swipeDown
 import org.robolectric.annotation.GraphicsMode
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -999,6 +1002,105 @@ class ThesisAndroidTest {
         assertEquals(2, els[1].data.headingLevel)
         assertEquals(listOf("Well", "Nitrates"), els[3].data.tableHeader)
         assertEquals(listOf(listOf("W1", "35")), els[3].data.tableRows)
+    }
+
+    /** A page of [paragraphs] paragraphs (Latin, Arabic and mixed), headed by [heading]. */
+    private fun longPage(heading: String, paragraphs: Int, index: Int = 0) = com.example.extraction.ExtractedPage(index, com.example.extraction.PageSource.PDF_OCR,
+        listOf(com.example.extraction.ExtractedBlock.Heading(heading, 1, rtl = false)) + (1..paragraphs).map { i ->
+            when (i % 3) {
+                0 -> com.example.extraction.ExtractedBlock.Paragraph("تعد المياه الجوفية مصدرا أساسيا لمياه الشرب في المناطق الجافة، الفقرة $i.", rtl = true)
+                1 -> com.example.extraction.ExtractedBlock.Paragraph("Paragraph $i: the wells of the basin were sampled every month for nitrates.", rtl = false)
+                else -> com.example.extraction.ExtractedBlock.Paragraph("تم قياس درجة الحموضة pH والناقلية في البئر W$i سنة 2024.", rtl = true)
+            }
+        }, scripts = setOf(com.example.extraction.Script.ARABIC, com.example.extraction.Script.LATIN),
+        level = com.example.extraction.ReconstructionLevel.STRUCTURE, confidence = 0.9f)
+
+    private fun count(text: String, part: String) = text.windowed(part.length).count { it == part }
+
+    /**
+     * Device crash (Samsung SM-S901B, Android 16, build 5a4b978): "Can't represent a width of 984
+     * and height of 362745 in Constraints" in OutlinedTextField measurement after an insertion
+     * action. The section editor's text field sat in the page's vertical scroll with only a
+     * minimum height, so it was measured at the full height of the inserted multi-page text,
+     * beyond what Constraints can hold. Here every insertion action puts a page tall enough to
+     * exceed that limit into the editor, repeatedly: the editor stays bounded and usable, each
+     * action inserts the content once, and the text can be edited and scrolled.
+     */
+    @Test
+    @Config(qualifiers = "en")
+    fun extraction_longPage_everyInsertAction_noLayoutCrash_noDuplication() {
+        val host = TestHost()
+        val id = runBlocking { repo.createProject(meta(), aiAssist = false) }
+        val introId = intro(runBlocking { repo.snapshot(id) })
+        controller.openProject(id)
+        showWorkspace(host)
+        await("snapshot") { controller.state.value.snapshot != null }
+        controller.selectSection(introId)
+        await("editor") { tagExists("thesis_editor_text") && controller.state.value.draft != null }
+        // ~4,000 paragraphs: tens of thousands of pixels more than a Constraints height can hold.
+        val pdf = android.net.Uri.parse("file:///thesis.pdf")
+        val actions = listOf("dx_insert_paragraphs", "dx_insert_heading", "dx_insert_cursor", "dx_insert_append")
+        actions.forEachIndexed { k, action ->
+            val marker = "Extracted page marker $k"
+            val doc = com.example.extraction.ExtractedDocument(listOf(longPage(marker, if (k == 0) 4000 else 300)))
+            val src = com.example.extraction.ExtractionSource(pdf, isPdf = true, pages = setOf(k))
+            compose.runOnIdle { controller.startExtraction(listOf(src), "auto", controller.state.value.draft!!.text.length, { _, _, progress -> progress(1, 1); doc }) }
+            await("review $action") { tagExists("dx_review") && controller.state.value.extraction?.document != null }
+            tap(action)
+            await("inserted $action") { controller.state.value.extraction == null && tagExists("thesis_editor_text") }
+            compose.waitForIdle()
+            val text = controller.state.value.draft!!.text
+            assertEquals("$action inserts the page once", 1, count(text, marker))
+            // The editor is measured within the screen, whatever the length of its text.
+            val editor = compose.onNodeWithTag("thesis_editor_text").fetchSemanticsNode()
+            val root = compose.onRoot().fetchSemanticsNode()
+            assertTrue("editor height ${editor.size.height} within the window ${root.size.height}", editor.size.height <= root.size.height)
+        }
+        val text = controller.state.value.draft!!.text
+        actions.indices.forEach { k -> assertEquals(1, count(text, "Extracted page marker $k")) }
+        assertTrue("Arabic and mixed content kept", text.contains("تعد المياه الجوفية") && text.contains("درجة الحموضة pH والناقلية"))
+        // The long text scrolls and can still be edited.
+        compose.onNodeWithTag("thesis_editor_text").performTouchInput { swipeUp() }
+        compose.onNodeWithTag("thesis_editor_text").performTouchInput { swipeDown() }
+        compose.onNodeWithTag("thesis_editor_text").performTextInput("Edited.")
+        await("edited") { controller.state.value.draft!!.text.contains("Edited.") }
+        assertEquals(text.length + "Edited.".length, controller.state.value.draft!!.text.length)
+    }
+
+    /**
+     * Thesis Builder PDF viewer: the page chosen there is the only page extracted and inserted;
+     * choosing another page afterwards extracts that one.
+     */
+    @Test
+    @Config(qualifiers = "en")
+    fun extraction_chosenPdfPage_isTheOnlyPageInserted() {
+        val host = TestHost()
+        val id = runBlocking { repo.createProject(meta(), aiAssist = false) }
+        val introId = intro(runBlocking { repo.snapshot(id) })
+        controller.openProject(id)
+        showWorkspace(host)
+        await("snapshot") { controller.state.value.snapshot != null }
+        controller.selectSection(introId)
+        await("editor") { tagExists("thesis_editor_text") && controller.state.value.draft != null }
+        val pdf = android.net.Uri.parse("file:///report.pdf")
+        // The extractor reads only the pages asked for, as DocumentExtractionEngine does.
+        val asked = CopyOnWriteArrayList<Set<Int>?>()
+        val extractor: com.example.thesis.Extractor = { sources, _, progress ->
+            asked.add(sources.single().pages); progress(1, 1)
+            com.example.extraction.ExtractedDocument(sources.single().pages.orEmpty().map { p -> longPage("Content of page ${p + 1}", 2, index = 0).copy(sourcePage = p) })
+        }
+        for (page in listOf(2, 0)) {
+            compose.runOnIdle { controller.startExtraction(listOf(com.example.extraction.ExtractionSource(pdf, isPdf = true, pages = setOf(page))), "auto", 0, extractor) }
+            await("review $page") { tagExists("dx_review") && controller.state.value.extraction?.document != null }
+            tap("dx_insert_append")
+            await("inserted $page") { controller.state.value.extraction == null }
+        }
+        assertEquals(listOf<Set<Int>?>(setOf(2), setOf(0)), asked.toList())
+        val text = controller.state.value.draft!!.text
+        assertEquals(1, count(text, "Content of page 3"))
+        assertEquals(1, count(text, "Content of page 1"))
+        assertEquals(0, count(text, "Content of page 2"))
+        assertTrue("page 3 first, then page 1", text.indexOf("Content of page 3") < text.indexOf("Content of page 1"))
     }
 
     /** Extracted content never lands in another section than the one it was started from. */

@@ -852,6 +852,9 @@ private fun ThesisSectionEditor(host: ThesisHost) {
     val context = LocalContext.current
     val view = androidx.compose.ui.platform.LocalView.current
     var value by remember(draft?.sectionId) { mutableStateOf(TextFieldValue(draft?.text.orEmpty())) }
+    // The PDF open in the page viewer (Extract from PDF) and the state of its extracted pages.
+    var pdfToView by remember(draft?.sectionId) { mutableStateOf<android.net.Uri?>(null) }
+    var pdfMarks by remember(draft?.sectionId) { mutableStateOf<Map<Int, PdfPageMark>>(emptyMap()) }
     // Undo / redo of the text (typing is grouped by pauses).
     val undo = remember(draft?.sectionId) { mutableStateListOf<TextFieldValue>() }
     val redo = remember(draft?.sectionId) { mutableStateListOf<TextFieldValue>() }
@@ -1008,8 +1011,13 @@ private fun ThesisSectionEditor(host: ThesisHost) {
                 placeholder = { Text(stringResource(R.string.thesis_paste_placeholder)) },
                 textStyle = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content, lineHeight = 24.sp),
                 shape = RoundedCornerShape(14.dp),
+                // Its height is always finite: inside the page's vertical scroll the field would
+                // otherwise be measured at the full height of its text, and a long section (an
+                // extracted multi-page PDF: 362745 px on a device) cannot be represented in layout
+                // Constraints and crashes. Bounded to the visible area, the text scrolls inside.
                 modifier = Modifier.fillMaxWidth()
-                    .then(if (typing) Modifier.height((viewport - 96.dp).coerceAtLeast(140.dp)) else Modifier.heightIn(min = 260.dp))
+                    .then(if (typing) Modifier.height((viewport - 96.dp).coerceAtLeast(140.dp))
+                        else Modifier.heightIn(min = minOf(260.dp, viewport), max = viewport.coerceAtLeast(260.dp)))
                     .onFocusChanged { editorFocused = it.isFocused }
                     .testTag("thesis_editor_text")
             )
@@ -1090,7 +1098,25 @@ private fun ThesisSectionEditor(host: ThesisHost) {
         }
     }
     if (pickChat) ChatPickerDialog(host, onDismiss = { pickChat = false }) { text -> pickChat = false; insertAtCursor(text) }
-    if (extracting) ExtractChooser(host, cursor = { value.selection.end }, sync = { controller.updateDraft(value.text) }, onDismiss = { extracting = false })
+    if (extracting) ExtractChooser(host, cursor = { value.selection.end }, sync = { controller.updateDraft(value.text) }, onDismiss = { extracting = false },
+        onPdf = { pdfToView = it; pdfMarks = emptyMap() })
+    pdfToView?.let { uri ->
+        // The extraction of the page chosen in the viewer: its state goes on that page.
+        val x = state.extraction
+        LaunchedEffect(x?.document) {
+            val src = x?.sources?.singleOrNull()
+            val page = src?.pages?.singleOrNull()
+            val doc = x?.document
+            if (src != null && src.uri == uri && page != null && doc != null) {
+                pdfMarks = pdfMarks + (page to if (doc.pages.any { it.error != null || it.reviewRecommended }) PdfPageMark.CHECK else PdfPageMark.EXTRACTED)
+            }
+        }
+        PdfPageViewer(uri, stringResource(R.string.dx_pdf_viewer_title), pdfMarks, onExtract = { page ->
+            controller.updateDraft(value.text)
+            controller.startExtraction(listOf(com.example.extraction.ExtractionSource(uri, isPdf = true, pages = setOf(page))),
+                host.ocrLanguageCode, value.selection.end, host.extractor())
+        }, onClose = { pdfToView = null })
+    }
     if (state.extraction != null) ExtractionReviewDialog(host)
     pendingImage?.let { uri ->
         MediaDataDialog(ElementData(), isImage = true, onDismiss = { pendingImage = null }) { data ->

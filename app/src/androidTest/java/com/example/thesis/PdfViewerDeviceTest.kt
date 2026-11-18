@@ -1,0 +1,194 @@
+package com.example.thesis
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.pdf.PdfDocument
+import android.net.Uri
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.example.thesis.ui.PdfPageMark
+import com.example.thesis.ui.PdfPageViewer
+import com.example.ui.pdf.PdfPageRenderer
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+import java.io.FileOutputStream
+import kotlin.math.abs
+
+/**
+ * The PDF page viewer of Thesis Builder on a real Android runtime: a 25-page PDF made on the
+ * device (A4 portrait and landscape pages alternating, each with a black block at a known place)
+ * is drawn by the platform renderer; the drawn pages hold that content, keep their proportions,
+ * are drawn lazily into a bounded cache and released on close; the tapped page is the one
+ * selected and the one handed to extraction.
+ */
+@RunWith(AndroidJUnit4::class)
+class PdfViewerDeviceTest {
+
+    @get:Rule
+    val compose = createComposeRule()
+
+    private val context: Context get() = InstrumentationRegistry.getInstrumentation().targetContext
+    private val viewerDir get() = File(context.cacheDir, "pdf-viewer")
+    private lateinit var pdf: File
+
+    private fun portrait(i: Int) = i % 2 == 0
+
+    @Before
+    fun makePdf() {
+        viewerDir.deleteRecursively()
+        pdf = File(context.cacheDir, "viewer-test.pdf")
+        val doc = PdfDocument()
+        val black = Paint().apply { color = Color.BLACK }
+        val text = Paint().apply { color = Color.BLACK; textSize = 18f }
+        for (i in 0 until PAGES) {
+            val (w, h) = if (portrait(i)) 595 to 842 else 842 to 595
+            val page = doc.startPage(PdfDocument.PageInfo.Builder(w, h, i + 1).create())
+            // Portrait: block in the upper left; landscape: block in the lower right.
+            if (portrait(i)) page.canvas.drawRect(w * 0.1f, h * 0.1f, w * 0.4f, h * 0.3f, black)
+            else page.canvas.drawRect(w * 0.6f, h * 0.7f, w * 0.9f, h * 0.9f, black)
+            page.canvas.drawText("Page ${i + 1}", w * 0.45f, h * 0.5f, text)
+            doc.finishPage(page)
+        }
+        FileOutputStream(pdf).use { doc.writeTo(it) }
+        doc.close()
+    }
+
+    private fun dark(b: Bitmap, l: Float, t: Float, r: Float, btm: Float): Double {
+        var n = 0; var all = 0
+        for (y in (t * b.height).toInt() until (btm * b.height).toInt() step 2) for (x in (l * b.width).toInt() until (r * b.width).toInt() step 2) {
+            val c = b.getPixel(x, y); all++
+            if ((Color.red(c) + Color.green(c) + Color.blue(c)) / 3 < 100) n++
+        }
+        return n.toDouble() / all
+    }
+
+    @Test
+    fun renderer_drawsTheRealPages_proportionsKept_cacheBounded_releasedOnClose() = runBlocking {
+        val r = checkNotNull(PdfPageRenderer.open(context, Uri.fromFile(pdf))) { "PDF not opened" }
+        assertEquals(PAGES, r.pageCount)
+        assertEquals(595 to 842, r.pageSizes[0])
+        assertEquals(842 to 595, r.pageSizes[1])
+        val p0 = r.render(0, 1080)!!
+        assertEquals(1080, p0.width)
+        assertTrue("portrait ratio ${p0.width}x${p0.height}", abs(p0.width.toDouble() / p0.height - 595.0 / 842) < 0.01)
+        // The block is drawn where the page has it, the rest of the page stays white.
+        assertTrue("block drawn", dark(p0, 0.12f, 0.12f, 0.38f, 0.28f) > 0.95)
+        assertTrue("page white elsewhere", dark(p0, 0.55f, 0.65f, 0.95f, 0.95f) < 0.01)
+        val p1 = r.render(1, 1080)!!
+        assertTrue("landscape ratio", abs(p1.width.toDouble() / p1.height - 842.0 / 595) < 0.01)
+        assertTrue("landscape block", dark(p1, 0.62f, 0.72f, 0.88f, 0.88f) > 0.95)
+        assertTrue("landscape white elsewhere", dark(p1, 0.05f, 0.05f, 0.4f, 0.4f) < 0.01)
+        // Same page, same width: taken from the cache, not drawn again.
+        assertTrue(p0 === r.render(0, 1080))
+        // Every page drawn: the cache never holds more than its limit.
+        val start = System.nanoTime()
+        for (i in 0 until PAGES) { assertNotNull(r.render(i, 1080)); assertTrue("cache ${r.cachedBytes} > ${r.cacheLimitBytes}", r.cachedBytes <= r.cacheLimitBytes) }
+        android.util.Log.i("PdfViewerDeviceTest", "$PAGES pages drawn in ${(System.nanoTime() - start) / 1_000_000} ms, cache ${r.cachedBytes / 1024} KB of ${r.cacheLimitBytes / 1024} KB")
+        assertNull("bad index", r.render(PAGES, 1080))
+        assertEquals(1, viewerDir.listFiles()!!.size)
+        r.close()
+        assertNull("closed renderer draws nothing", r.render(2, 1080))
+        assertEquals(0, r.cachedBytes)
+        assertEquals("copy deleted", 0, viewerDir.listFiles()!!.size)
+        r.close() // twice: no error
+    }
+
+    @Test
+    fun renderer_damagedOrEmptyFile_isNull_leavesNoCopy() = runBlocking {
+        val bad = File(context.cacheDir, "damaged.pdf").apply { writeText("%PDF-1.4 not really a pdf") }
+        assertNull(PdfPageRenderer.open(context, Uri.fromFile(bad)))
+        val empty = File(context.cacheDir, "empty.pdf").apply { writeBytes(ByteArray(0)) }
+        assertNull(PdfPageRenderer.open(context, Uri.fromFile(empty)))
+        assertNull(PdfPageRenderer.open(context, Uri.fromFile(File(context.cacheDir, "missing.pdf"))))
+        assertEquals(0, viewerDir.listFiles()?.size ?: 0)
+    }
+
+    private fun exists(tag: String) = compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+    private fun await(tag: String) = compose.waitUntil(20_000) { exists(tag) }
+
+    @Test
+    fun viewer_showsPages_lazily_selectsTheTappedPage_extractsIt_releasesOnClose() {
+        val extracted = mutableListOf<Int>()
+        var open by mutableStateOf(true)
+        var marks by mutableStateOf<Map<Int, PdfPageMark>>(emptyMap())
+        compose.setContent {
+            MaterialTheme {
+                if (open) PdfPageViewer(Uri.fromFile(pdf), "PDF", marks, onExtract = { extracted += it }, onClose = { open = false })
+            }
+        }
+        await("pdf_page_image_0")
+        // Lazy: the last page is not drawn before it is scrolled to.
+        assertTrue(!exists("pdf_page_image_${PAGES - 1}"))
+        // Page 1 selected by default.
+        compose.onNodeWithTag("pdf_page_0").assertIsSelected()
+        assertTrue(exists("pdf_selected_badge_0"))
+        // A landscape page is shown wider than high, in its own proportions.
+        await("pdf_page_1")
+        val b = compose.onNodeWithTag("pdf_page_1").fetchSemanticsNode().boundsInRoot
+        assertTrue("landscape shown ${b.width}x${b.height}", abs(b.width / b.height - 842f / 595f) < 0.02f)
+        // Tap page 4: it is selected (outlined, badge), page 1 no longer is, and it is extracted.
+        compose.onNodeWithTag("pdf_pages").performScrollToIndex(3)
+        await("pdf_page_3")
+        compose.onNodeWithTag("pdf_page_3").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("pdf_page_3").assertIsSelected()
+        assertTrue(exists("pdf_selected_badge_3"))
+        assertTrue(!exists("pdf_selected_badge_0"))
+        await("pdf_page_image_3")
+        compose.onNodeWithTag("pdf_extract").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf(3), extracted)
+        // Another page then: exactly that one.
+        compose.onNodeWithTag("pdf_pages").performScrollToIndex(1)
+        await("pdf_page_1")
+        compose.onNodeWithTag("pdf_page_1").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("pdf_page_3").let { if (exists("pdf_page_3")) it.assertIsNotSelected() }
+        compose.onNodeWithTag("pdf_extract").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf(3, 1), extracted)
+        // The extraction state of a page is shown on it.
+        marks = mapOf(1 to PdfPageMark.CHECK, 3 to PdfPageMark.EXTRACTED)
+        await("pdf_mark_check_1")
+        // The last page can be reached and drawn.
+        compose.onNodeWithTag("pdf_pages").performScrollToIndex(PAGES - 1)
+        await("pdf_page_image_${PAGES - 1}")
+        // Closing releases the renderer and deletes the copy.
+        compose.onNodeWithTag("pdf_close").performClick()
+        compose.waitForIdle()
+        compose.waitUntil(10_000) { !exists("pdf_viewer") && (viewerDir.listFiles()?.size ?: 0) == 0 }
+    }
+
+    @Test
+    fun viewer_damagedPdf_showsTheError_noExtraction() {
+        val bad = File(context.cacheDir, "damaged-view.pdf").apply { writeText("not a pdf") }
+        val extracted = mutableListOf<Int>()
+        compose.setContent { MaterialTheme { PdfPageViewer(Uri.fromFile(bad), "PDF", emptyMap(), onExtract = { extracted += it }, onClose = {}) } }
+        await("pdf_viewer_error")
+        assertTrue(!exists("pdf_extract"))
+        assertTrue(extracted.isEmpty())
+    }
+
+    private companion object { const val PAGES = 25 }
+}
