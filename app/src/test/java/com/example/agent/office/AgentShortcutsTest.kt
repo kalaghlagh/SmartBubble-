@@ -63,7 +63,7 @@ class AgentShortcutsTest {
     }
 
     private fun shortcutTags() = compose.onAllNodes(SemanticsMatcher("shortcut") { n ->
-        n.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("agent_shortcut_") == true
+        n.config.contains(SemanticsProperties.TestTag) && n.config[SemanticsProperties.TestTag].startsWith("agent_shortcut_")
     }).fetchSemanticsNodes().map { it.config[SemanticsProperties.TestTag] }
 
     private fun inside(tag: String) {
