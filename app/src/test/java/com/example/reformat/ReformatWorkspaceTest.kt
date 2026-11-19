@@ -387,8 +387,10 @@ class ReformatWorkspaceTest {
     fun minimalReplacement_keepsCommonStartAndEnd_neverSplitsSurrogates() {
         val r = ReformatCore.minimalReplacement(3, "Le rapport est validé.", "Le rapport est approuvé.")!!
         assertEquals(3, r.index)
-        assertEquals("validé", r.oldText)
-        assertEquals("approuvé", r.newText)
+        // The common end ("é.") stays in its run: only the changed middle is replaced.
+        assertEquals("valid", r.oldText)
+        assertEquals("approuv", r.newText)
+        assertEquals("Le rapport est approuvé.", "Le rapport est validé.".replaceFirst(r.oldText, r.newText))
         val ins = ReformatCore.minimalReplacement(0, "AB", "AxB")!!
         assertEquals("A" to "Ax", ins.oldText to ins.newText)
         val again = ReformatCore.minimalReplacement(0, "x 15 y 15", "x 15 y 16")!!

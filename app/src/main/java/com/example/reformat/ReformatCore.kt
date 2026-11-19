@@ -51,10 +51,10 @@ data class ReformatState(
 }
 
 object ReformatCore {
-    private fun isArabic(c: Char) = c in '؀'..'ۿ' || c in 'ݐ'..'ݿ' || c in 'ࢠ'..'ࣿ'
+    private fun isArabic(c: Char) = c in '\u0600'..'\u06FF' || c in '\u0750'..'\u077F' || c in '\u08A0'..'\u08FF'
 
     /** Arabic presentation forms: glyph codes that look disconnected when written back as text. */
-    fun isPresentationForm(c: Char) = c in 'ﭐ'..'﷿' || c in 'ﹰ'..'﻿'
+    fun isPresentationForm(c: Char) = c in '\uFB50'..'\uFDFF' || c in '\uFE70'..'\uFEFF'
 
     fun arabicLetters(s: String) = s.filter { isArabic(it) }
 
