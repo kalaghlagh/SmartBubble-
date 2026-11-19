@@ -544,7 +544,9 @@ fun ChatScreen(
                 onReject = { viewModel.answerAgentApproval(false) },
                 onDismiss = viewModel::dismissAgentTask,
                 onPreviewFile = viewModel::openAgentFile,
-                onRevokeFile = viewModel::revokeAgentFile
+                onRevokeFile = viewModel::revokeAgentFile,
+                onOpenThesis = viewModel::openAgentThesisTarget,
+                onUndoThesis = viewModel::undoAgentThesisEdit
             )
             agentState.choice?.let { choice ->
                 FileChoiceCard(choice.candidates, onPick = viewModel::chooseAgentFile, onDismiss = viewModel::dismissAgentChoice)

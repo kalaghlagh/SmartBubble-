@@ -128,7 +128,11 @@ class AgentService(
     /** Registers an edited template copy in My Templates through the existing importer. */
     importTemplateCopy: suspend (File, String) -> com.example.data.model.TemplateEntity,
     /** Localized "<name> (edited)" / "<name> (copy)". */
-    copyLabel: (String, Boolean) -> String
+    copyLabel: (String, Boolean) -> String,
+    /** Thesis Builder projects (the active thesis), changed only through the thesis repository. */
+    val thesisAccess: com.example.agent.thesis.ThesisAccess,
+    /** Existing extraction engine, page by page and with structure (tables). */
+    extractSource: com.example.agent.thesis.SourceExtractor
 ) {
     val store: AgentTaskStore = RoomAgentTaskStore(database.agentTaskDao())
 
@@ -235,6 +239,14 @@ class AgentService(
         )
     }
 
+    /**
+     * A thesis document request (insert pages or a table of a source into the thesis, add or
+     * replace text in a section, extract pages or a table): a plan, a question to ask first, or
+     * null when [text] is not such a request (it then goes through [analyze]).
+     */
+    suspend fun analyzeThesis(text: String, selected: List<LibraryRef> = emptyList()): com.example.agent.thesis.ThesisDecision? =
+        com.example.agent.thesis.ThesisRequestRouter.decide(text, files.listAccessibleFiles(), selected)
+
     // ------------------------------------------------------------------ file selection and consent
 
     fun select(ref: LibraryRef) = _state.update { s -> if (s.selected.any { it.fileId == ref.fileId }) s else s.copy(selected = s.selected + ref) }
@@ -283,6 +295,12 @@ class AgentService(
         .register(com.example.agent.files.DocxProposeEditsTool(files, ::proposeEdits))
         .register(com.example.agent.files.DocxWriteCopyTool(files, database, importTemplateCopy, copyLabel))
         .register(com.example.agent.files.ReplaceOriginalTool(files, database))
+        // Thesis document workflows (local and deterministic: no AI request).
+        .register(com.example.agent.thesis.ThesisLocateTool(thesisAccess))
+        .register(com.example.agent.thesis.SourceExtractTool(files, extractSource))
+        .register(com.example.agent.thesis.ThesisPrepareTool(thesisAccess) { newElementId() })
+        .register(com.example.agent.thesis.ThesisApplyTool(thesisAccess))
+        .register(com.example.agent.thesis.ThesisValidateTool(thesisAccess, files))
 
     val engine = AgentEngine(registry, store, onUpdate = { t -> _state.update { s -> if (s.task == null || s.task.id == t.id) s.copy(task = t) else s } })
 
@@ -402,5 +420,8 @@ class AgentService(
         const val MAX_SOURCE_CHARS = 12_000
 
         fun newId(): String = UUID.randomUUID().toString()
+
+        /** Id of a thesis element added by the Agent (stable once planned). */
+        fun newElementId(): String = "el-" + UUID.randomUUID()
     }
 }

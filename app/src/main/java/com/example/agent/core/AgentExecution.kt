@@ -266,7 +266,9 @@ class AgentEngine(
     private fun finish(task: AgentTask): AgentTask {
         val blocked = task.steps.filter { it.status == StepStatus.PENDING || it.status == StepStatus.UNKNOWN }
         val rejected = task.steps.filter { it.status == StepStatus.REJECTED }
+        // The result check: the generic validation step, or a tool's own check (e.g. the thesis check).
         val validation = task.steps.firstOrNull { it.toolId == TaskPlanner.Tools.RESULT_VALIDATE }
+            ?: task.steps.lastOrNull { it.status == StepStatus.COMPLETED && it.output.containsKey("outcome") }
         val outcome = validation?.output?.get("outcome")?.let { runCatching { ValidationOutcome.valueOf(it) }.getOrNull() }
         val warnings = task.warnings + rejected.map { "rejected:${it.id}" } +
             validation?.output?.get("issues").orEmpty().split(',').filter { it.isNotBlank() }.map { "issue:$it" }

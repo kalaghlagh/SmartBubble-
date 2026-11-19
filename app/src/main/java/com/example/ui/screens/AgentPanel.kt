@@ -47,6 +47,7 @@ import com.example.agent.core.AgentTask
 import com.example.agent.core.StepStatus
 import com.example.agent.core.TaskPlanner
 import com.example.agent.core.TaskStatus
+import com.example.agent.thesis.ThesisTools
 import com.example.agent.routing.FailoverDecision
 import com.example.agent.routing.RoutingEvent
 import com.example.agent.routing.SkipReason
@@ -72,7 +73,10 @@ fun AgentPanel(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     onPreviewFile: (String) -> Unit = {},
-    onRevokeFile: (String) -> Unit = {}
+    onRevokeFile: (String) -> Unit = {},
+    /** Thesis tasks: open the changed section in Thesis Builder, undo the change. */
+    onOpenThesis: () -> Unit = {},
+    onUndoThesis: () -> Unit = {}
 ) {
     val routingWorthShowing = routing != null && (routing.events.isNotEmpty() || routing.waitingMs != null)
     if (task == null && !routingWorthShowing) return
@@ -90,7 +94,7 @@ fun AgentPanel(
         ) {
             if (routing != null) RoutingLine(routing)
             if (task != null) {
-                TaskCard(task, sourceTitles, onPause, onResume, onCancel, onApprove, onReject, onDismiss)
+                TaskCard(task, sourceTitles, onPause, onResume, onCancel, onApprove, onReject, onDismiss, onOpenThesis, onUndoThesis)
                 TaskFilesSection(task.files, onPreviewFile, onRevokeFile)
             }
         }
@@ -173,7 +177,50 @@ private fun stepTitle(step: AgentStep, sourceTitles: Map<String, String>): Strin
         ?: stringResource(R.string.agent_tool_generate)
     TaskPlanner.Tools.RESULT_VALIDATE -> stringResource(R.string.agent_tool_validate)
     TaskPlanner.Tools.DOCUMENT_SHARE -> stringResource(R.string.agent_tool_share)
+    ThesisTools.LOCATE -> stringResource(R.string.agent_tool_thesis_locate)
+    ThesisTools.SOURCE_EXTRACT -> stringResource(R.string.agent_tool_source_extract,
+        step.output["title"] ?: step.input["fileId"]?.let { id -> sourceTitles[id.substringAfter(':')] } ?: "…")
+    ThesisTools.PREPARE -> stringResource(R.string.agent_tool_thesis_prepare)
+    ThesisTools.APPLY -> stringResource(R.string.agent_tool_thesis_apply)
+    ThesisTools.VALIDATE -> stringResource(R.string.agent_tool_thesis_validate)
     else -> step.toolId
+}
+
+/** What the user approves for a thesis change: target, position, source, content preview and warnings. */
+@Composable
+private fun ThesisApprovalDetails(task: AgentTask) {
+    val located = task.step("locate")?.output.orEmpty()
+    val extract = task.step("extract")?.output.orEmpty()
+    val prepared = task.step("prepare")?.output.orEmpty()
+    val small = MaterialTheme.typography.bodySmall
+    Column(Modifier.testTag("agent_thesis_preview"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        val position = prepared["position"].orEmpty()
+        Text(
+            when {
+                position.startsWith("replace:") -> stringResource(R.string.agent_thesis_position_replace, position.substringAfter(':').toIntOrNull()?.let { if (it == -1) stringResource(R.string.agent_thesis_last) else it.toString() } ?: "?")
+                position == "start" -> stringResource(R.string.agent_thesis_position_start)
+                else -> stringResource(R.string.agent_thesis_position_end, position.substringAfter(':').toIntOrNull() ?: 0)
+            },
+            style = small, modifier = Modifier.testTag("agent_thesis_position")
+        )
+        if (extract["title"] != null) Text(stringResource(R.string.agent_thesis_source, extract["title"].orEmpty(), extract["pages"].orEmpty()), style = small)
+        prepared["rows"]?.let { r -> Text(stringResource(R.string.agent_thesis_table_shape, r.toIntOrNull() ?: 0, prepared["columns"]?.toIntOrNull() ?: 0), style = small) }
+        prepared["oldText"]?.let { old ->
+            Text(stringResource(R.string.agent_thesis_old_text), style = small, fontWeight = FontWeight.SemiBold)
+            Text(old, style = small, maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("agent_thesis_old"))
+            Text(stringResource(R.string.agent_thesis_new_text), style = small, fontWeight = FontWeight.SemiBold)
+        }
+        prepared["preview"]?.takeIf { it.isNotBlank() }?.let {
+            Text(it, style = small, maxLines = 12, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("agent_thesis_content"))
+        }
+        val warn = MaterialTheme.colorScheme.error
+        if (located["active"] == "false") Text(stringResource(R.string.agent_thesis_warn_not_active), style = small, color = warn, modifier = Modifier.testTag("agent_thesis_not_active"))
+        if (extract["uncertain"] == "true") Text(stringResource(R.string.agent_thesis_warn_uncertain), style = small, color = warn)
+        if (extract["tableUncertain"] == "true") Text(stringResource(R.string.agent_thesis_warn_table_uncertain), style = small, color = warn)
+        task.step("locate")?.input?.get("pageHint")?.toIntOrNull()?.let { page ->
+            Text(stringResource(R.string.agent_thesis_page_hint, located["sectionTitle"].orEmpty(), page), style = small)
+        }
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -186,7 +233,9 @@ private fun TaskCard(
     onCancel: () -> Unit,
     onApprove: () -> Unit,
     onReject: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onOpenThesis: () -> Unit,
+    onUndoThesis: () -> Unit
 ) {
     Column(Modifier.testTag("agent_task"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -249,9 +298,13 @@ private fun TaskCard(
                     proposal["changed"]?.toIntOrNull() ?: 0
                 )
                 step.toolId == TaskPlanner.Tools.FILE_REPLACE_ORIGINAL -> stringResource(R.string.agent_approval_replace, target?.name.orEmpty())
+                step.toolId == ThesisTools.APPLY -> task.step("locate")?.output.orEmpty().let {
+                    stringResource(R.string.agent_thesis_approval, it["thesisTitle"].orEmpty(), it["sectionTitle"].orEmpty())
+                }
                 else -> stringResource(R.string.agent_approval_share)
             }
             Text(text, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("agent_approval_prompt"))
+            if (step.toolId == ThesisTools.APPLY && step.error != "completion_unknown") ThesisApprovalDetails(task)
             if (step.toolId == TaskPlanner.Tools.DOCX_WRITE_COPY) {
                 proposal["examples"]?.takeIf { it.isNotBlank() }?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 12, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("agent_edit_examples"))
@@ -276,7 +329,16 @@ private fun TaskCard(
                     OutlinedButton(onClick = onReject, modifier = Modifier.testTag("agent_reject")) { Text(stringResource(R.string.agent_reject)) }
                     TextButton(onClick = onCancel, modifier = Modifier.testTag("agent_cancel")) { Text(stringResource(R.string.agent_cancel)) }
                 }
-                else -> TextButton(onClick = onDismiss, modifier = Modifier.testTag("agent_dismiss")) { Text(stringResource(R.string.agent_dismiss)) }
+                else -> {
+                    // A thesis change that was applied and checked: open it, or undo it (once).
+                    val applied = task.step("apply")?.status == StepStatus.COMPLETED && task.warnings.none { it.startsWith("undone:") } &&
+                        (task.status == TaskStatus.COMPLETED || task.status == TaskStatus.COMPLETED_WITH_WARNINGS)
+                    if (applied) {
+                        OutlinedButton(onClick = onOpenThesis, modifier = Modifier.testTag("agent_thesis_open")) { Text(stringResource(R.string.agent_thesis_open)) }
+                        OutlinedButton(onClick = onUndoThesis, modifier = Modifier.testTag("agent_thesis_undo")) { Text(stringResource(R.string.agent_thesis_undo)) }
+                    }
+                    TextButton(onClick = onDismiss, modifier = Modifier.testTag("agent_dismiss")) { Text(stringResource(R.string.agent_dismiss)) }
+                }
             }
         }
     }
