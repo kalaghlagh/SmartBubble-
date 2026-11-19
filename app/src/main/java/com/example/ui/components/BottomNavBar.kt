@@ -7,12 +7,12 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.LocalLibrary
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.LocalLibrary
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Settings
@@ -37,7 +37,7 @@ import com.example.R
 import com.example.ui.AppNavTab
 
 /**
- * Main navigation (Stitch design): Thesis, My Templates, Agent (centre), Library, Settings.
+ * Main navigation (Stitch design): Thesis, Reformatting, Agent (centre), Library, Settings.
  * Five equal columns, so Agent is always exactly in the middle (also in right-to-left layouts,
  * where the order is mirrored). The selected destination shows a tinted 48 x 28 dp pill behind
  * its icon and a bold primary label; Agent always has its filled pill (the app's main action).
@@ -67,8 +67,8 @@ fun SmartBubbleBottomNavBar(
         ) {
             BottomNavItem(Modifier.weight(1f), stringResource(R.string.nav_thesis), Icons.Filled.School, Icons.Outlined.School,
                 currentTab == AppNavTab.THESIS, { onTabSelected(AppNavTab.THESIS) }, "nav_thesis")
-            BottomNavItem(Modifier.weight(1f), stringResource(R.string.nav_templates), Icons.Filled.Description, Icons.Outlined.Description,
-                currentTab == AppNavTab.TEMPLATES, { onTabSelected(AppNavTab.TEMPLATES) }, "nav_templates")
+            BottomNavItem(Modifier.weight(1f), stringResource(R.string.nav_reformat), Icons.Filled.EditNote, Icons.Outlined.EditNote,
+                currentTab == AppNavTab.REFORMAT, { onTabSelected(AppNavTab.REFORMAT) }, "nav_reformat")
             BottomNavItem(Modifier.weight(1f), stringResource(R.string.nav_chat), Icons.Filled.AutoAwesome, Icons.Outlined.AutoAwesome,
                 currentTab == AppNavTab.CHAT, { onTabSelected(AppNavTab.CHAT) }, "nav_chat", center = true)
             BottomNavItem(Modifier.weight(1f), stringResource(R.string.nav_library), Icons.Filled.LocalLibrary, Icons.Outlined.LocalLibrary,

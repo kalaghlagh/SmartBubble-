@@ -62,6 +62,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Job
@@ -582,6 +583,47 @@ class ThesisAndroidTest {
         try { node.performScrollTo() } catch (e: AssertionError) { /* not in a scrolling container */ }
         node.performTextInput(text)
         compose.waitForIdle()
+    }
+
+    /**
+     * Templates now live in the Library (the former My Templates records): Thesis Builder reads
+     * them through the shared Library template repository, lists an uploaded Word template in
+     * its picker, and keeps the chosen template on the new thesis.
+     */
+    @Test
+    @Config(qualifiers = "en")
+    fun newThesis_listsAndUsesALibraryTemplate_throughTheSharedRepository() {
+        val file = java.io.File(context.cacheDir, "university_template.docx").apply { writeBytes(byteArrayOf(0x50, 0x4B, 3, 4)) }
+        val template = TemplateEntity(id = "lib-template-1", name = "University template", fileType = "DOCX", originalFilePath = file.path,
+            profileJson = com.example.template.domain.TemplateProfile.defaultProfile().toJson())
+        runBlocking { db.templateDao().insertTemplate(template) }
+        val repository = com.example.library.LibraryTemplateRepository(db.templateDao())
+        val host = TestHost()
+        val job = CoroutineScope(Dispatchers.IO).launch { repository.observe().collect { host.templateList.value = it } }
+        try {
+            await("library template read") { host.templateList.value.any { it.id == template.id } }
+            assertEquals(listOf(true), repository.refs(host.templateList.value).map { it.available })
+            controller.openWorkspace()
+            showWorkspace(host)
+            await("empty state") { tagExists("thesis_empty_state") }
+            tap("thesis_new")
+            typeInto("thesis_field_title", "Groundwater quality")
+            typeInto("thesis_field_student", "Amina")
+            tap("thesis_template_trigger")
+            await("template menu") { tagExists("thesis_template_menu") }
+            await("library template listed") { tagExists("select_option_${template.id}") }
+            tap("select_option_${template.id}")
+            await("template menu closed") { !tagExists("thesis_template_menu") }
+            tap("thesis_save_meta")
+            await("created") { controller.state.value.projectId != null && controller.state.value.busy == null }
+            val s = runBlocking { repo.snapshot(controller.state.value.projectId!!) }
+            assertEquals(template.id, s.meta.templateId)
+            // A deleted template file is reported as unavailable (never resolved for use).
+            file.delete()
+            assertNull(runBlocking { repository.resolve(template.id) })
+        } finally {
+            job.cancel()
+        }
     }
 
     /** Screen 2 -> screen 3: every field, Save Draft, validation, one project per request, automatic navigation. */

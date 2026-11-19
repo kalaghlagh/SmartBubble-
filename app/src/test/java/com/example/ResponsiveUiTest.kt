@@ -145,8 +145,8 @@ class ResponsiveUiTest {
     @Config(qualifiers = "fr-w320dp-h640dp")
     fun bottomNavigation_equalColumnsInFrench() {
         compose.setContent { SmartBubbleBottomNavBar(currentTab = AppNavTab.SETTINGS, onTabSelected = {}) }
-        // Five destinations in the Stitch order: Thesis, My Templates, Agent (centre), Library, Settings.
-        val tags = listOf("nav_thesis", "nav_templates", "nav_chat", "nav_library", "nav_settings")
+        // Five destinations in the Stitch order: Thesis, Reformatting, Agent (centre), Library, Settings.
+        val tags = listOf("nav_thesis", "nav_reformat", "nav_chat", "nav_library", "nav_settings")
         val items = tags.map { bounds(it) }
         items.forEach { assertEquals(items[0].width, it.width, 1f) }
         items.forEach { assertEquals(items[0].height, it.height, 1f) }

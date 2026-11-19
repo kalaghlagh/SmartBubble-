@@ -3,7 +3,7 @@
 
     <!-- Bottom Navigation -->
     <string name="nav_chat">Agent</string>
-    <string name="nav_templates">My Templates</string>
+    <string name="nav_templates">Templates</string>
     <string name="nav_library">Library</string>
     <string name="nav_thesis">Thesis</string>
     <string name="nav_settings">Settings</string>
@@ -40,7 +40,7 @@
     <string name="chat_copied_toast">Copied to clipboard</string>
 
     <!-- Templates Screen -->
-    <string name="templates_title">My Templates</string>
+    <string name="templates_title">Templates</string>
     <string name="templates_upload">Upload Template</string>
     <string name="filter_all">All</string>
     <string name="filter_docs">Docs</string>
@@ -377,7 +377,7 @@
     <string name="offline_note_pdf">PDF uses the template’s colors and margins only; its layout cannot be reproduced in PDF.</string>
     <string name="offline_note_style_only">“%1$s” is set to apply its colors and fonts only.</string>
     <string name="offline_note_layout_not_used">The layout of “%1$s” could not be used; only its colors and fonts were applied.</string>
-    <string name="offline_note_no_template">No %1$s template in My Templates; the built-in clean formatting is used.</string>
+    <string name="offline_note_no_template">No %1$s template in Library templates; the built-in clean formatting is used.</string>
     <string name="offline_hint_pptx">Each heading starts a slide; long text continues on further slides.</string>
     <string name="offline_hint_xlsx">Each table becomes a sheet; values are kept exactly as written.</string>
     <string name="offline_heading_inferred">Inferred heading · %1$d%%</string>
@@ -491,7 +491,7 @@
     <string name="thesis_field_extra">Other cover information (optional)</string>
     <string name="thesis_field_template">Template</string>
     <string name="thesis_template_default">Default template</string>
-    <string name="thesis_template_note">Word and PDF templates from My Templates can be used. The original template file is never modified.</string>
+    <string name="thesis_template_note">Word and PDF templates from Library templates can be used. The original template file is never modified.</string>
     <string name="thesis_template_label">Template: %1$s</string>
     <string name="thesis_ai_assist">AI suggestions</string>
     <string name="thesis_ai_assist_desc">When you do not name a destination, an excerpt is sent to your default AI provider to suggest one. Off: you choose it yourself.</string>
@@ -579,7 +579,7 @@
     <string name="thesis_change_logo">Change logo</string>
     <string name="thesis_delete_project">Delete project</string>
     <string name="thesis_delete_project_title">Delete this thesis project?</string>
-    <string name="thesis_delete_project_text">Deleted permanently: the thesis content, its images, all versions and pending proposals. Kept: documents already exported to the Library, your My Templates files and the Chat conversation.</string>
+    <string name="thesis_delete_project_text">Deleted permanently: the thesis content, its images, all versions and pending proposals. Kept: documents already exported to the Library, your Library templates files and the Chat conversation.</string>
     <string name="thesis_stop">Stop</string>
     <string name="thesis_busy_analyzing">Analyzing on this device…</string>
     <string name="thesis_busy_ai">Waiting for your default AI provider…</string>
@@ -1199,7 +1199,7 @@
     <string name="import_status_no_space">Not enough storage space on the phone</string>
     <string name="import_status_cancelled">Cancelled</string>
     <string name="agent_source_library">Library</string>
-    <string name="agent_source_template">My Templates</string>
+    <string name="agent_source_template">Library templates</string>
     <string name="agent_files_title">Files for the Agent</string>
     <string name="agent_files_from_phone">Import from phone</string>
     <string name="agent_files_empty">No files here yet.</string>
@@ -1232,7 +1232,7 @@
     <string name="agent_error_no_changes">No changes were needed, so no copy was saved.</string>
     <string name="agent_error_no_text">No text could be read from the file.</string>
     <string name="agent_reply_edited_copy">Saved an edited copy in the Library: %1$s (%2$d paragraph(s) changed). The original is unchanged.</string>
-    <string name="agent_reply_template_copy">Saved an edited copy of the template in My Templates: %1$s. The original template is unchanged.</string>
+    <string name="agent_reply_template_copy">Saved an edited copy of the template in Library templates: %1$s. The original template is unchanged.</string>
     <string name="agent_reply_replaced">The original “%1$s” was replaced with the edited copy.</string>
     <!-- Agent: shortcuts and Document Reformatting -->
     <string name="agent_source_device">Phone</string>
@@ -1243,7 +1243,7 @@
     <string name="agent_shortcut_thesis">Thesis Assistant</string>
     <string name="agent_shortcut_thesis_desc">Extract pages or tables from PDFs into your thesis, add or replace text.</string>
     <string name="agent_shortcut_template">Create Content from Template</string>
-    <string name="agent_shortcut_template_desc">Write a new document with the layout of one of My Templates.</string>
+    <string name="agent_shortcut_template_desc">Write a new document with the layout of one of Library templates.</string>
     <string name="agent_workflow_end">End this shortcut</string>
     <string name="agent_source_choose">Choose document</string>
     <string name="agent_source_change">Change</string>
@@ -1253,7 +1253,7 @@
     <string name="agent_source_from_library">From the Library</string>
     <string name="agent_source_library_empty">No PDF, Word or image document in the Library yet.</string>
     <string name="agent_reformat_intro">Document Reformatting: choose the document to update (PDF, Word or a photo of a document). I will show what I find in it, then tell me what to change.</string>
-    <string name="agent_template_intro">Create Content from Template: choose a template from My Templates, then describe the document you want (you can say “in PDF” or “in Word”).</string>
+    <string name="agent_template_intro">Create Content from Template: choose a template from Library templates, then describe the document you want (you can say “in PDF” or “in Word”).</string>
     <string name="agent_thesis_intro_active">Thesis Assistant: your active thesis is “%1$s”. For example: “Extract page 2 of Report.pdf into the Introduction of my thesis” or “Extract table 3 from Report.pdf into Chapter 2 of my thesis”.</string>
     <string name="agent_thesis_intro_none">Thesis Assistant: open your thesis in Thesis Builder first (it becomes the active thesis), then ask, for example: “Extract page 2 of Report.pdf into the Introduction of my thesis”.</string>
     <string name="agent_reformat_pick_first">Which document should I update? Tap “Choose document” above the message box.</string>
@@ -1308,11 +1308,73 @@
     <string name="agent_tool_library_copy">Copy the document</string>
     <string name="agent_tool_library_delete">Delete the document</string>
     <string name="agent_template_pick_first">Which template should I use? Tap “Choose template” above the message box, then send your request again.</string>
+    <!-- Reformatting workspace and Library templates -->
+    <string name="nav_reformat">Reformatting</string>
+    <string name="library_tab_documents">Documents</string>
+    <string name="library_tab_templates">Templates</string>
+    <string name="library_templates_title">Templates</string>
+    <string name="reformat_title">Reformatting</string>
+    <string name="reformat_intro">Open a Word or PDF document, or a photo of a document, then edit its content and create a new PDF or Word file with its own formatting or with a Library template. The original is never changed.</string>
+    <string name="reformat_insert_file">Insert File</string>
+    <string name="reformat_image">Image</string>
+    <string name="reformat_keep_source">Keep Source Formatting</string>
+    <string name="reformat_keep_source_desc">The document’s own layout and styles</string>
+    <string name="reformat_formatting">Formatting</string>
+    <string name="reformat_library_templates">Library templates</string>
+    <string name="reformat_no_templates">No Word or PDF template in the Library yet (Library › Templates).</string>
+    <string name="reformat_template_note">The content goes into a copy of the template: headings take its heading style, paragraphs its body style, tables its table style (headings/paragraphs/tables: %1$s).</string>
+    <string name="reformat_keep_docx_note">Word: a copy of the original file is made and only the text you change is replaced; styles, tables, images, headers, footers and page setup stay as they are.</string>
+    <string name="reformat_reconstruct_note">PDF and images: the new document is rebuilt from the text and layout found (page size, margins, fonts, headings, tables); exact positions, images and logos are not copied.</string>
+    <string name="reformat_unsaved_edits">Edited — not yet created</string>
+    <string name="reformat_no_edits">No changes yet</string>
+    <string name="reformat_create">Create</string>
+    <string name="reformat_choose_output">Create the document as PDF or as Word (.docx)?</string>
+    <string name="reformat_doc">DOC (.docx)</string>
+    <string name="reformat_source_info">%1$s • %2$d page(s) • original unchanged</string>
+    <string name="reformat_remove_source">Remove this document from the workspace</string>
+    <string name="reformat_scanned_note">Read by text recognition: check the text against the original before creating.</string>
+    <string name="reformat_uncertain">%1$d passage(s) read with low certainty are marked: check them.</string>
+    <string name="reformat_reset">Reset edits</string>
+    <string name="reformat_block_heading">Heading</string>
+    <string name="reformat_block_list">List item</string>
+    <string name="reformat_block_table">Table</string>
+    <string name="reformat_block_paragraph">Paragraph</string>
+    <string name="reformat_docx_table_note">Word tables keep their own formatting; to change their content, choose a Library template.</string>
+    <string name="reformat_check_reading">Read with low certainty: check it</string>
+    <string name="reformat_preview_title">Check the new document</string>
+    <string name="reformat_preview_problem">The new document has a problem</string>
+    <string name="reformat_preview_info">%1$s • Formatting: %2$s</string>
+    <string name="reformat_preview_no_text">No text could be read back from the file.</string>
+    <string name="reformat_saved">Saved to the Library.</string>
+    <string name="reformat_open">Open</string>
+    <string name="reformat_save_library">Save to Library</string>
+    <string name="reformat_back_to_edit">Back to editing</string>
+    <string name="reformat_note_reconstructed">Rebuilt document: it may look different from the original.</string>
+    <string name="reformat_note_template">Laid out with the chosen template (a copy; the template is unchanged).</string>
+    <string name="reformat_note_template_partial">Only the template’s colours and fonts could be applied, not its full layout.</string>
+    <string name="reformat_note_table_edits">Changes to Word tables are not applied with Keep Source Formatting.</string>
+    <string name="reformat_note_not_mapped">Some changes could not be placed in the original file.</string>
+    <string name="reformat_note_text_not_verifiable">The PDF’s text could not be read back to compare it word for word.</string>
+    <string name="reformat_note_content_missing">%1$d passage(s) were not found in the new document.</string>
+    <string name="reformat_note_arabic">Arabic text did not come back as written (letters or order). The file is not saved.</string>
+    <string name="reformat_note_arabic_direction">%1$d Arabic paragraph(s) are not right to left.</string>
+    <string name="reformat_note_parts_lost">Parts of the original Word file are missing from the new one.</string>
+    <string name="reformat_note_unreadable">The new file cannot be read: it is not saved.</string>
+    <string name="reformat_error_unavailable">The file cannot be opened (moved, deleted or access removed). Choose it again.</string>
+    <string name="reformat_error_unsupported">This file type is not supported here: use a Word (.docx) or PDF document, or an image.</string>
+    <string name="reformat_error_too_large">The document is too large for the workspace.</string>
+    <string name="reformat_error_empty">No text was found in this document.</string>
+    <string name="reformat_error_damaged">The document could not be read (damaged file).</string>
+    <string name="reformat_error_source_changed">The workspace copy of the document changed. Open the document again.</string>
+    <string name="reformat_error_template_missing">The selected template is no longer in the Library: Keep Source Formatting is used. Choose another template if needed.</string>
+    <string name="reformat_error_edit_not_applied">A change could not be placed in the original document. Nothing was created.</string>
+    <string name="reformat_error_generic">Something went wrong. Nothing was created; your edits are kept.</string>
+    <string name="reformat_result_name">%1$s (reformatted)</string>
     <!-- Agent: thesis document workflows -->
     <string name="agent_ask_section">Which section of your thesis should receive it? For example: Introduction, Chapter 2, Remerciements.</string>
     <string name="agent_ask_text">Which text should I add? Put it in quotes, or after a colon.</string>
     <string name="agent_ask_pages">Which page of the document? For example: “page 2” or “pages 3-5”.</string>
-    <string name="agent_ask_source">Which document should I extract from? Name it exactly as it appears in Library or My Templates, or attach it.</string>
+    <string name="agent_ask_source">Which document should I extract from? Name it exactly as it appears in Library or Library templates, or attach it.</string>
     <string name="agent_ask_source_format">I can extract pages and tables from PDF files and images only. Which PDF should I use?</string>
     <string name="agent_error_source_is_target">The source and the target are the same thesis. Which other document should I extract from?</string>
     <string name="agent_thesis_restored_after_check">The change to “%1$s” could not be confirmed in the saved thesis, so the previous version was restored. Nothing else was changed.</string>

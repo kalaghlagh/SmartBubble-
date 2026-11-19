@@ -108,6 +108,14 @@ class AppSmokeDeviceTest {
         compose.waitForIdle()
     }
 
+    /** The templates (formerly My Templates) are in the Library, Templates tab. */
+    private fun openLibraryTemplates() {
+        tap("nav_library")
+        await("library screen") { vm.currentTab.value == AppNavTab.LIBRARY }
+        tap("library_tab_templates")
+        await("library templates") { exists("upload_template_button") }
+    }
+
     /** My Templates scope (All, Built-in, My uploads, ...): chosen from the Filter menu at the top. */
     private fun chooseTemplateScope(tag: String) {
         tap("templates_scope_button")
@@ -151,13 +159,13 @@ class AppSmokeDeviceTest {
             for ((code, thesisLabel, _) in languages) {
                 language(code, thesisLabel)
                 // Five items in reading order (right to left in Arabic).
-                // Stitch order: Thesis, My Templates, Agent (centre), Library, Settings.
-                val tabs = listOf("nav_thesis", "nav_templates", "nav_chat", "nav_library", "nav_settings")
+                // Stitch order: Thesis, Reformatting, Agent (centre), Library, Settings.
+                val tabs = listOf("nav_thesis", "nav_reformat", "nav_chat", "nav_library", "nav_settings")
                 tabs.forEach { assertTrue("$it missing in $code", exists(it)) }
                 val xs = tabs.map { left(it) }
                 if (code == "ar") assertTrue("Arabic bar is not right-to-left: $xs", xs.zipWithNext().all { (a, b) -> a > b })
                 else assertTrue("$code bar is not left-to-right: $xs", xs.zipWithNext().all { (a, b) -> a < b })
-                for ((tag, tab) in tabs.zip(listOf(AppNavTab.THESIS, AppNavTab.TEMPLATES, AppNavTab.CHAT, AppNavTab.LIBRARY, AppNavTab.SETTINGS))) {
+                for ((tag, tab) in tabs.zip(listOf(AppNavTab.THESIS, AppNavTab.REFORMAT, AppNavTab.CHAT, AppNavTab.LIBRARY, AppNavTab.SETTINGS))) {
                     tap(tag)
                     await("$code $tab shown") { vm.currentTab.value == tab }
                     shot("$code-${tab.name.lowercase()}")
@@ -183,8 +191,7 @@ class AppSmokeDeviceTest {
         await("three templates imported", 30_000) { runBlocking { vm.allTemplates.first().size } >= before + 3 }
         val imported = runBlocking { vm.allTemplates.first() }.filter { it.name.startsWith("device-template") }
         assertEquals(setOf("DOCX", "PPTX", "XLSX"), imported.map { it.fileType.uppercase() }.toSet())
-        tap("nav_templates")
-        await("templates screen") { vm.currentTab.value == AppNavTab.TEMPLATES }
+        openLibraryTemplates()
         shot("templates-library")
         // The uploaded templates (the library also lists the built-in categories).
         chooseTemplateScope("st_filter_uploaded")
@@ -391,7 +398,7 @@ class AppSmokeDeviceTest {
         assertEquals("page", profile.pageBorderOffsetFrom)
         assertEquals(595 to 842, profile.pageWidthPt to profile.pageHeightPt)
         assertEquals("Times New Roman" to 12, profile.bodyFont to profile.baseFontSizePt)
-        tap("nav_templates")
+        openLibraryTemplates()
         chooseTemplateScope("st_filter_uploaded")
         await("only uploads listed") { !exists("st_category_reports") }
         // The details are a child of the clickable card, whose semantics merge its children.
@@ -508,7 +515,7 @@ class AppSmokeDeviceTest {
     fun smartTemplates_library_defaults_settings_andBuiltInOutputs() {
         language("en", "Thesis")
         runBlocking { vm.smartTemplates.clearDefault("letters.recommendation") }
-        tap("nav_templates")
+        openLibraryTemplates()
         await("library") { exists("templates_list") }
         // All six categories are listed (the list is lazy: scrolled to each).
         for (c in com.example.smarttemplates.TemplateCatalog.categories) {
@@ -536,7 +543,7 @@ class AppSmokeDeviceTest {
         await("favorite") { vm.templateLibrary.value.single { it.id == "builtin.letters.classic" }.favorite }
         // Kept after the activity is recreated (Room).
         compose.activityRule.scenario.recreate()
-        await("recreated") { exists("nav_templates") }
+        await("recreated") { exists("nav_reformat") }
         assertEquals("builtin.letters.modern", runBlocking { vm.smartTemplates.defaults() }["letters.recommendation"])
         assertEquals("SUBCATEGORY_DEFAULT", runBlocking { vm.smartTemplates.resolve("letters.recommendation", "DOCX") }.source.name)
         // Settings: Auto Format.

@@ -128,8 +128,8 @@ class MainActivity : ComponentActivity() {
                             when (currentTab) {
                                 AppNavTab.CHAT -> ChatScreen(viewModel = viewModel)
                                 AppNavTab.THESIS -> com.example.thesis.ui.ThesisBuilderDestination(viewModel, onExit = { viewModel.setNavTab(AppNavTab.CHAT) })
-                                AppNavTab.TEMPLATES -> TemplatesScreen(viewModel = viewModel)
-                                AppNavTab.LIBRARY -> LibraryScreen(viewModel = viewModel)
+                                AppNavTab.REFORMAT -> com.example.ui.screens.ReformatScreen(viewModel = viewModel)
+                                AppNavTab.LIBRARY -> com.example.ui.screens.LibraryHome(viewModel = viewModel)
                                 AppNavTab.SETTINGS -> SettingsScreen(viewModel = viewModel)
                             }
                         }

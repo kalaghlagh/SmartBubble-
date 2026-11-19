@@ -86,6 +86,7 @@ internal class PdfProfileRenderer(private val profile: TemplateProfile) {
         val multiplier = (layout.lineSpacing * paint.textSize / natural).coerceIn(0.8f, 3f)
         val builder = StaticLayout.Builder.obtain(text, 0, text.length, paint, width.coerceAtLeast(1))
             .setAlignment(alignment(align))
+            .setTextDirection(PdfTextDirection.of(text))
             .setLineSpacing(0f, multiplier)
             .setIncludePad(false)
         if (align == "justify" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
