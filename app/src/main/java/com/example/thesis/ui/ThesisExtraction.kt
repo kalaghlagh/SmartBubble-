@@ -31,6 +31,26 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material.icons.filled.AddCircle
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Cached
+import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.FormatTextdirectionRToL
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.TableRows
+import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Title
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -325,16 +345,34 @@ internal fun ExtractionReviewContent(host: ThesisHost, onBack: () -> Unit) {
                         }
                         item(key = "a${page.index}") {
                             // Read this page again in another language mode (other pages and corrections are kept).
-                            Column {
-                                Text(stringResource(R.string.dx_retry_page), style = MaterialTheme.typography.labelLarge)
-                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    listOf("auto" to R.string.dx_lang_auto, "ar" to R.string.dx_lang_ar, "fr" to R.string.dx_lang_fr, "en" to R.string.dx_lang_en).forEach { (code, label) ->
-                                        FilterChip(selected = false, enabled = x.retryingPage == null, onClick = {
-                                            if (page.index in x.editedPages) confirmRetry = page.index to code
-                                            else controller.retryExtractedPage(page.index, code, host.extractor())
-                                        }, label = { Text(stringResource(label)) }, modifier = Modifier.testTag("dx_retry_${code}_${page.index}"))
-                                    }
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                // "Read this page again" (Stitch): one language menu. Opening it reads nothing;
+                                // choosing a language re-reads this page (after a confirmation if it was edited).
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Cached, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(stringResource(R.string.dx_retry_page), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                                 }
+                                val languages = listOf(
+                                    com.example.ui.components.SelectOption("auto", stringResource(R.string.dx_lang_auto_detection), icon = Icons.Default.AutoFixHigh),
+                                    com.example.ui.components.SelectOption("ar", stringResource(R.string.dx_lang_ar), icon = Icons.Default.FormatTextdirectionRToL, trailing = stringResource(R.string.dx_lang_ar_native)),
+                                    com.example.ui.components.SelectOption("fr", stringResource(R.string.dx_lang_fr), icon = Icons.Default.Translate),
+                                    com.example.ui.components.SelectOption("en", stringResource(R.string.dx_lang_en), icon = Icons.Default.Translate)
+                                )
+                                val current = languages.firstOrNull { it.key == x.languageCode } ?: languages.first()
+                                com.example.ui.components.InlineSelect(
+                                    triggerLabel = stringResource(R.string.dx_language_current, current.label),
+                                    triggerIcon = Icons.Default.Language,
+                                    groups = listOf(com.example.ui.components.SelectGroup(null, languages)),
+                                    selectedKey = current.key,
+                                    enabled = x.retryingPage == null,
+                                    testTag = "dx_lang_${page.index}",
+                                    optionTag = { code -> "dx_retry_${code}_${page.index}" },
+                                    onSelect = { code ->
+                                        if (page.index in x.editedPages) confirmRetry = page.index to code
+                                        else controller.retryExtractedPage(page.index, code, host.extractor())
+                                    }
+                                )
                                 if (x.retryingPage == page.index) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("dx_retrying"))
                                 page.imageUri?.let {
                                     val shown = page.index in shownOriginals
@@ -373,14 +411,57 @@ internal fun ExtractionReviewContent(host: ThesisHost, onBack: () -> Unit) {
  * grid (as many equal-width cells per row as the width allows, labels wrapping).
  */
 @Composable
-private fun ExtractionActions(tables: Int, onInsert: (ExtractionInsertMode) -> Unit, onCopy: () -> Unit, onCancel: () -> Unit) {
-    com.example.ui.adaptive.AdaptiveActionGrid(listOf(
-        com.example.ui.adaptive.AdaptiveAction("dx_insert_cursor", stringResource(R.string.dx_insert_cursor), primary = true) { onInsert(ExtractionInsertMode.AT_CURSOR) },
-        com.example.ui.adaptive.AdaptiveAction("dx_insert_append", stringResource(R.string.dx_insert_append)) { onInsert(ExtractionInsertMode.APPEND) },
-        com.example.ui.adaptive.AdaptiveAction("dx_insert_paragraphs", stringResource(R.string.dx_insert_paragraphs)) { onInsert(ExtractionInsertMode.AS_PARAGRAPHS) },
-        com.example.ui.adaptive.AdaptiveAction("dx_insert_heading", stringResource(R.string.dx_insert_heading)) { onInsert(ExtractionInsertMode.HEADING_AND_CONTENT) },
-        com.example.ui.adaptive.AdaptiveAction("dx_insert_tables", stringResource(R.string.dx_insert_tables, tables), enabled = tables > 0) { onInsert(ExtractionInsertMode.TABLES_ONLY) },
-        com.example.ui.adaptive.AdaptiveAction("dx_copy", stringResource(R.string.scan_copy_text), onClick = onCopy),
-        com.example.ui.adaptive.AdaptiveAction("dx_cancel_review", stringResource(R.string.action_cancel), onClick = onCancel)
-    ))
+internal fun ExtractionActions(tables: Int, onInsert: (ExtractionInsertMode) -> Unit, onCopy: () -> Unit, onCancel: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    data class Action(val tag: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val kind: Int, val enabled: Boolean = true, val onClick: () -> Unit)
+    val actions = listOf(
+        Action("dx_insert_cursor", stringResource(R.string.dx_insert_cursor), Icons.Default.TextFields, 0) { onInsert(ExtractionInsertMode.AT_CURSOR) },
+        Action("dx_insert_append", stringResource(R.string.dx_insert_append), Icons.Default.AddCircle, 1) { onInsert(ExtractionInsertMode.APPEND) },
+        Action("dx_insert_paragraphs", stringResource(R.string.dx_insert_paragraphs), Icons.AutoMirrored.Filled.Notes, 2) { onInsert(ExtractionInsertMode.AS_PARAGRAPHS) },
+        Action("dx_insert_heading", stringResource(R.string.dx_insert_heading), Icons.Default.Title, 2) { onInsert(ExtractionInsertMode.HEADING_AND_CONTENT) },
+        Action("dx_insert_tables", stringResource(R.string.dx_insert_tables, tables), Icons.Default.TableRows, 2, enabled = tables > 0) { onInsert(ExtractionInsertMode.TABLES_ONLY) },
+        Action("dx_copy", stringResource(R.string.scan_copy_text), Icons.Default.ContentCopy, 2, onClick = onCopy)
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(com.example.ui.adaptive.AdaptiveRules.ACTION_GAP_DP.dp)) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // Two columns (Stitch); one when the text is too large for two readable cells.
+            val columns = com.example.ui.adaptive.AdaptiveRules.actionColumns(maxWidth.value, LocalDensity.current.fontScale, actions.size).coerceAtMost(2)
+            Column(verticalArrangement = Arrangement.spacedBy(com.example.ui.adaptive.AdaptiveRules.ACTION_GAP_DP.dp)) {
+                actions.chunked(columns).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(com.example.ui.adaptive.AdaptiveRules.ACTION_GAP_DP.dp)) {
+                        row.forEach { a ->
+                            val content: @Composable RowScope.() -> Unit = {
+                                Icon(a.icon, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(a.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 3, textAlign = TextAlign.Center)
+                            }
+                            val m = Modifier.weight(1f).heightIn(min = 48.dp).testTag(a.tag)
+                            val pad = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            when (a.kind) {
+                                0 -> Button(onClick = a.onClick, enabled = a.enabled, modifier = m, contentPadding = pad, shape = RoundedCornerShape(50), content = content)
+                                1 -> FilledTonalButton(onClick = a.onClick, enabled = a.enabled, modifier = m, contentPadding = pad, shape = RoundedCornerShape(50),
+                                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = colors.primaryContainer, contentColor = colors.onPrimaryContainer), content = content)
+                                else -> FilledTonalButton(onClick = a.onClick, enabled = a.enabled, modifier = m, contentPadding = pad, shape = RoundedCornerShape(50),
+                                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = colors.surfaceContainerLow, contentColor = colors.primary), content = content)
+                            }
+                        }
+                        repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+            }
+        }
+        // Cancel: on its own, centred under the grid.
+        Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
+            FilledTonalButton(
+                onClick = onCancel, shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.filledTonalButtonColors(containerColor = colors.surfaceContainerHigh, contentColor = colors.onSurfaceVariant),
+                contentPadding = PaddingValues(horizontal = 32.dp, vertical = 8.dp),
+                modifier = Modifier.heightIn(min = 44.dp).testTag("dx_cancel_review")
+            ) {
+                Icon(Icons.Default.Cancel, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.action_cancel), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
 }

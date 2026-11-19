@@ -627,6 +627,13 @@ class ThesisAndroidTest {
         tap("thesis_level_DOCTORATE")
         tap("thesis_language_picker")
         tap("thesis_lang_fr")
+        // Template: one dropdown (Stitch). Opening it selects nothing; choosing a built-in sets it.
+        val academic = com.example.smarttemplates.BuiltInTemplates.forCategory("academic").first()
+        tap("thesis_template_trigger")
+        await("template menu") { tagExists("thesis_template_menu") }
+        assertTrue(tagExists("select_option_default"))
+        tap("select_option_${academic.id}")
+        await("template menu closed") { !tagExists("thesis_template_menu") }
         // Repeated taps create one project only.
         compose.onNodeWithTag("thesis_save_meta").performTouchInput { click(); click() }
 
@@ -644,6 +651,7 @@ class ThesisAndroidTest {
         assertEquals("Geology", s.meta.department)
         assertEquals("Dr. B. Alaoui", s.meta.coSupervisor)
         assertEquals("2025-2026", s.meta.academicYear)
+        assertEquals(academic.id, s.meta.templateId)
         assertEquals("Introduction générale", s.sections.first { it.kind == SectionKind.INTRODUCTION }.title)
         assertEquals(2, s.sections.count { it.kind == SectionKind.ABSTRACT })
         assertNull(controller.state.value.formDraft) // the draft is used up

@@ -1,6 +1,18 @@
 package com.example.ui.screens
 
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.heading
@@ -104,6 +116,69 @@ fun TemplateLibraryFilterRow(selected: TemplateLibraryFilter, onSelect: (Templat
                 modifier = Modifier.testTag("st_filter_${f.name.lowercase()}"))
         }
     }
+}
+
+/**
+ * The library scope filter as a menu anchored to a filter (tune) button (Stitch): All, Built-in,
+ * My uploads, Favorites, Defaults. The button shows a dot while a scope other than All is active.
+ * The menu is a popup anchored to the button, so it stays on screen at either edge and in RTL.
+ */
+@Composable
+fun TemplateScopeMenu(selected: TemplateLibraryFilter, onSelect: (TemplateLibraryFilter) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val colors = MaterialTheme.colorScheme
+    Box {
+        val label = stringResource(R.string.templates_scope_filter)
+        IconButton(
+            onClick = { open = true },
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(if (selected != TemplateLibraryFilter.ALL || open) colors.surfaceContainerHigh else Color.Transparent)
+                .semantics { contentDescription = label }
+                .testTag("templates_scope_button")
+        ) {
+            Icon(Icons.Default.Tune, contentDescription = null, tint = colors.primary)
+        }
+        if (selected != TemplateLibraryFilter.ALL) {
+            Box(Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp).size(10.dp)
+                .background(colors.surface, CircleShape).padding(2.dp).background(colors.primary, CircleShape).testTag("templates_scope_active"))
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = colors.surfaceContainerLowest,
+            shadowElevation = 8.dp,
+            modifier = Modifier.widthIn(min = 192.dp).testTag("templates_scope_menu")
+        ) {
+            Text(label.uppercase(), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+            TemplateLibraryFilter.values().forEach { f ->
+                val isSelected = f == selected
+                DropdownMenuItem(
+                    text = { Text(stringResource(f.label), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                        color = if (isSelected) colors.primary else colors.onSurface) },
+                    leadingIcon = { Icon(scopeIcon(f), contentDescription = null, tint = if (isSelected) colors.primary else colors.onSurfaceVariant, modifier = Modifier.size(18.dp)) },
+                    trailingIcon = if (isSelected) { { Icon(Icons.Default.Check, contentDescription = null, tint = colors.primary, modifier = Modifier.size(16.dp)) } } else null,
+                    onClick = { open = false; onSelect(f) },
+                    modifier = Modifier
+                        .padding(horizontal = 6.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (isSelected) colors.primary.copy(alpha = 0.1f) else Color.Transparent)
+                        .semantics { this.selected = isSelected }
+                        .testTag("st_filter_${f.name.lowercase()}")
+                )
+            }
+        }
+    }
+}
+
+private fun scopeIcon(f: TemplateLibraryFilter) = when (f) {
+    TemplateLibraryFilter.ALL -> Icons.Default.Apps
+    TemplateLibraryFilter.BUILT_IN -> Icons.Default.AutoFixHigh
+    TemplateLibraryFilter.UPLOADED -> Icons.Default.CloudUpload
+    TemplateLibraryFilter.FAVORITES -> Icons.Default.Star
+    TemplateLibraryFilter.DEFAULTS -> Icons.Default.CheckCircle
 }
 
 /** A category tile: its name, kind of file and number of templates. */

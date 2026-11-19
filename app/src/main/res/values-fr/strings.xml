@@ -1176,7 +1176,7 @@
     <string name="agent_approve">Approuver</string>
     <string name="agent_reject">Refuser</string>
     <string name="agent_dismiss">Fermer</string>
-    <string name="agent_settings_title">Ordre des modèles de l’Agent</string>
+    <string name="agent_settings_title">Ordre de priorité des modèles de l’Agent</string>
     <string name="agent_settings_hint">L’Agent utilise le premier modèle de cette liste. S’il ne peut pas se connecter ou si le service échoue, il essaie le suivant, dans cet ordre.</string>
     <string name="agent_settings_empty">Ajoutez un fournisseur d’IA ci-dessus pour utiliser l’Agent.</string>
     <string name="agent_settings_no_key">Pas de clé API : non utilisé</string>
@@ -1234,4 +1234,33 @@
     <string name="agent_reply_edited_copy">Copie modifiée enregistrée dans la Bibliothèque : %1$s (%2$d paragraphe(s) modifié(s)). L’original n’a pas changé.</string>
     <string name="agent_reply_template_copy">Copie modifiée du modèle enregistrée dans Mes modèles : %1$s. Le modèle original n’a pas changé.</string>
     <string name="agent_reply_replaced">L’original « %1$s » a été remplacé par la copie modifiée.</string>
+
+    <!-- Stitch redesign: navigation, settings, My Templates, new thesis, review -->
+    <string name="select_expanded">développé</string>
+    <string name="select_collapsed">réduit</string>
+    <string name="select_selected">Sélectionné</string>
+    <string name="settings_ai_routing_title">Fournisseurs d’IA et routage de l’Agent</string>
+    <string name="settings_ai_routing_desc">Configurez les connexions API et l’ordre de secours de l’Agent</string>
+    <string name="settings_configured_providers">Fournisseurs configurés</string>
+    <string name="settings_providers_active">%1$d actif(s)</string>
+    <string name="settings_section_collapse">Réduire la section</string>
+    <string name="settings_section_expand">Développer la section</string>
+    <string name="provider_latency_ms">%1$d ms</string>
+    <string name="provider_status_error_short">Erreur</string>
+    <string name="templates_scope_filter">Filtre de portée</string>
+    <string name="templates_recent_files">Fichiers récents</string>
+    <string name="templates_sorted_recent">Triés par date récente</string>
+    <string name="thesis_choose_template">Choisir un modèle</string>
+    <string name="thesis_templates_builtin">Modèles intégrés</string>
+    <string name="thesis_templates_uploaded">Mes modèles importés</string>
+    <string name="thesis_template_default_desc">La mise en page standard de mémoire de l’application</string>
+    <string name="thesis_template_added">Ajouté le %1$s • %2$s</string>
+    <string name="thesis_template_search">Rechercher des modèles…</string>
+    <string name="dx_lang_auto_detection">Détection automatique</string>
+    <string name="dx_lang_ar_native">العربية (RTL)</string>
+    <string name="dx_language_current">Langue : %1$s</string>
+    <plurals name="templates_files_count">
+        <item quantity="one">%d fichier</item>
+        <item quantity="other">%d fichiers</item>
+    </plurals>
 </resources>

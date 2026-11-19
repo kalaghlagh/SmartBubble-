@@ -1180,7 +1180,7 @@
     <string name="agent_approve">موافقة</string>
     <string name="agent_reject">رفض</string>
     <string name="agent_dismiss">إغلاق</string>
-    <string name="agent_settings_title">ترتيب نماذج الوكيل</string>
+    <string name="agent_settings_title">ترتيب أولوية نماذج الوكيل</string>
     <string name="agent_settings_hint">يستخدم الوكيل أول نموذج في هذه القائمة. إذا تعذّر الاتصال أو فشلت الخدمة، يجرّب النموذج التالي بهذا الترتيب.</string>
     <string name="agent_settings_empty">أضف مزوّد ذكاء اصطناعي أعلاه لاستخدام الوكيل.</string>
     <string name="agent_settings_no_key">لا يوجد مفتاح API: غير مستخدم</string>
@@ -1238,4 +1238,37 @@
     <string name="agent_reply_edited_copy">حُفظت نسخة معدّلة في المكتبة: %1$s (عُدّلت %2$d فقرة). لم يتغير الأصل.</string>
     <string name="agent_reply_template_copy">حُفظت نسخة معدّلة من القالب في قوالبي: %1$s. لم يتغير القالب الأصلي.</string>
     <string name="agent_reply_replaced">تم استبدال الأصل «%1$s» بالنسخة المعدّلة.</string>
+
+    <!-- Stitch redesign: navigation, settings, My Templates, new thesis, review -->
+    <string name="select_expanded">مفتوحة</string>
+    <string name="select_collapsed">مغلقة</string>
+    <string name="select_selected">محدد</string>
+    <string name="settings_ai_routing_title">مزوّدو الذكاء الاصطناعي وتوجيه الوكيل</string>
+    <string name="settings_ai_routing_desc">إعداد اتصالات API وترتيب البدائل لدى الوكيل</string>
+    <string name="settings_configured_providers">المزوّدون المُعدّون</string>
+    <string name="settings_providers_active">%1$d نشط</string>
+    <string name="settings_section_collapse">طيّ القسم</string>
+    <string name="settings_section_expand">توسيع القسم</string>
+    <string name="provider_latency_ms">%1$d مللي ثانية</string>
+    <string name="provider_status_error_short">خطأ</string>
+    <string name="templates_scope_filter">تصفية النطاق</string>
+    <string name="templates_recent_files">الملفات الأخيرة</string>
+    <string name="templates_sorted_recent">مرتبة حسب الأحدث</string>
+    <string name="thesis_choose_template">اختيار القالب</string>
+    <string name="thesis_templates_builtin">القوالب المدمجة</string>
+    <string name="thesis_templates_uploaded">قوالبي المرفوعة</string>
+    <string name="thesis_template_default_desc">تنسيق المذكرة القياسي في التطبيق</string>
+    <string name="thesis_template_added">أُضيف %1$s • %2$s</string>
+    <string name="thesis_template_search">البحث في القوالب…</string>
+    <string name="dx_lang_auto_detection">اكتشاف تلقائي</string>
+    <string name="dx_lang_ar_native">العربية (RTL)</string>
+    <string name="dx_language_current">اللغة: %1$s</string>
+    <plurals name="templates_files_count">
+        <item quantity="zero">لا ملفات</item>
+        <item quantity="one">ملف واحد</item>
+        <item quantity="two">ملفان</item>
+        <item quantity="few">%d ملفات</item>
+        <item quantity="many">%d ملفًا</item>
+        <item quantity="other">%d ملف</item>
+    </plurals>
 </resources>
