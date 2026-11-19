@@ -158,80 +158,20 @@ fun SettingsScreen(
                 }
             }
 
-            // Section: AI Providers Card
+            // Section: AI Providers & Agent Routing (Stitch): providers, then the Agent's model
+            // priority order and retry passes, in one expandable card.
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        // Card Header
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.primaryContainer),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Psychology,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        text = stringResource(R.string.settings_ai_providers),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = stringResource(R.string.settings_ai_providers_desc),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Provider Cards
-                        if (providers.isEmpty()) {
-                            Text(
-                                text = stringResource(R.string.settings_no_providers),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(bottom = 12.dp)
-                            )
-                        } else if (providers.none { it.isDefault }) {
-                            Text(
-                                text = stringResource(R.string.settings_choose_default_provider),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.padding(bottom = 12.dp)
-                            )
-                        }
+                val entries by viewModel.agentPriority.collectAsState()
+                val cycles by viewModel.agentMaxCycles.collectAsState()
+                AiProvidersRoutingSection(
+                    providerCount = providers.size,
+                    activeCount = providers.count { it.id in providersWithKeys },
+                    notice = when {
+                        providers.isEmpty() -> stringResource(R.string.settings_no_providers) to false
+                        providers.none { it.isDefault } -> stringResource(R.string.settings_choose_default_provider) to true
+                        else -> null
+                    },
+                    providerCards = {
                         providers.forEach { provider ->
                             ProviderItemRow(
                                 provider = provider,
@@ -242,38 +182,9 @@ fun SettingsScreen(
                                 onEdit = { editingProvider = provider },
                                 onDelete = { viewModel.deleteProvider(provider) }
                             )
-                            Spacer(modifier = Modifier.height(12.dp))
                         }
-
-                        // "+ Add Provider" button matching mockup
-                        OutlinedButton(
-                            onClick = { showAddProviderDialog = true },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 46.dp)
-                                .testTag("add_provider_button"),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = stringResource(R.string.settings_add_provider),
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Section: Agent model priority order and retry passes
-            item {
-                val entries by viewModel.agentPriority.collectAsState()
-                val cycles by viewModel.agentMaxCycles.collectAsState()
-                AgentPriorityCard(
+                    },
+                    onAddProvider = { showAddProviderDialog = true },
                     entries = entries,
                     cycles = cycles,
                     onMove = viewModel::moveAgentModel,
@@ -543,6 +454,7 @@ fun SettingsScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ProviderItemRow(
     provider: ProviderEntity,
@@ -554,102 +466,72 @@ fun ProviderItemRow(
     onDelete: () -> Unit
 ) {
     val type = AiProviderType.fromStorageKey(provider.providerType)
+    val colors = MaterialTheme.colorScheme
     Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        modifier = Modifier.fillMaxWidth().testTag("provider_card_${provider.id}"),
+        shape = RoundedCornerShape(16.dp),
+        color = colors.surfaceContainerLow
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                // Provider icon: a rounded square in the provider's colour.
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            when (type) {
+                                AiProviderType.OPENAI -> Color(0xFF10A37F)
+                                AiProviderType.GEMINI -> Color(0xFF1D52D8)
+                                AiProviderType.ANTHROPIC -> Color(0xFFD97706)
+                                AiProviderType.DEEPSEEK -> Color(0xFF4D6BFE)
+                                AiProviderType.MISTRAL -> Color(0xFFE8590C)
+                                AiProviderType.GROQ -> Color(0xFFFA6938)
+                                AiProviderType.XAI -> Color(0xFF212529)
+                                AiProviderType.OPENROUTER -> Color(0xFF6566F1)
+                                AiProviderType.OPENAI_COMPATIBLE -> colors.primary
+                            }
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
-                    // Provider Logo Icon
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(
-                                when (type) {
-                                    AiProviderType.OPENAI -> Color(0xFF10A37F)
-                                    AiProviderType.GEMINI -> Color(0xFF1D52D8)
-                                    AiProviderType.ANTHROPIC -> Color(0xFFD97706)
-                                    AiProviderType.DEEPSEEK -> Color(0xFF4D6BFE)
-                                    AiProviderType.MISTRAL -> Color(0xFFE8590C)
-                                    AiProviderType.GROQ -> Color(0xFFD9480F)
-                                    AiProviderType.XAI -> Color(0xFF212529)
-                                    AiProviderType.OPENROUTER -> Color(0xFF6566F1)
-                                    AiProviderType.OPENAI_COMPATIBLE -> MaterialTheme.colorScheme.primary
-                                }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SmartToy,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
+                    Icon(Icons.Default.SmartToy, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(provider.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (provider.isDefault) {
+                            Text(
+                                text = stringResource(R.string.settings_default_badge),
+                                style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold,
+                                color = colors.onPrimaryContainer, maxLines = 1, softWrap = false,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(colors.primaryContainer)
+                                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                                    .testTag("provider_default_badge_${provider.id}")
+                            )
+                        }
                     }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = provider.name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "${providerTypeLabel(type)} • ${provider.modelName}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        val status = providerStatusText(provider, hasKey, isTesting)
-                        Text(
-                            text = status.first,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (status.second) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Text(
+                        text = "${providerTypeLabel(type)} • ${provider.modelName}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.secondary,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis
+                    )
+                    // A failed test: the full reason under the model (the pill only says "Error").
+                    if (!isTesting && hasKey && ProviderStatus.errorOf(provider.status) != null) {
+                        Text(providerStatusText(provider, hasKey, isTesting).first, style = MaterialTheme.typography.bodySmall,
+                            color = colors.error, modifier = Modifier.testTag("provider_error_${provider.id}"))
                     }
                 }
-
-                if (provider.isDefault) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF10A37F).copy(alpha = 0.2f))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.settings_default_badge),
-                            color = Color(0xFF10A37F),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                }
+                Spacer(modifier = Modifier.width(8.dp))
+                ProviderStatusPill(provider, hasKey, isTesting)
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Action Buttons: [Test Connection] [Set as Default] [Edit] [Delete]. The text buttons
-            // are as wide as their labels and wrap to a second line when a translation is long;
-            // edit / delete stay together at the end.
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            // Actions: Test Connection, Set as Default (other providers), then Edit / Delete at the end.
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 FlowRow(
                     modifier = Modifier.weight(1f),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -659,58 +541,65 @@ fun ProviderItemRow(
                         onClick = onTest,
                         enabled = !isTesting && hasKey,
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(50),
                         modifier = Modifier.heightIn(min = 40.dp).testTag("test_provider_${provider.id}")
                     ) {
                         if (isTesting) {
-                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(8.dp))
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = colors.onPrimary)
+                        } else {
+                            Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(16.dp))
                         }
-                        Text(
-                            text = stringResource(R.string.settings_test_connection),
-                            style = MaterialTheme.typography.labelLarge
-                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(stringResource(R.string.settings_test_connection), style = MaterialTheme.typography.labelLarge)
                     }
-
                     if (!provider.isDefault) {
-                        OutlinedButton(
+                        FilledTonalButton(
                             onClick = onSetDefault,
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = colors.surfaceContainerLowest, contentColor = colors.primary),
                             modifier = Modifier.heightIn(min = 40.dp).testTag("set_default_provider_${provider.id}")
                         ) {
-                            Text(
-                                text = stringResource(R.string.settings_set_default),
-                                style = MaterialTheme.typography.labelLarge
-                            )
+                            Text(stringResource(R.string.settings_set_default), style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
-
-                IconButton(
-                    onClick = onEdit,
-                    modifier = Modifier.testTag("edit_provider_${provider.id}")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Edit,
-                        contentDescription = stringResource(R.string.provider_edit),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
-                    )
+                IconButton(onClick = onEdit, modifier = Modifier.testTag("edit_provider_${provider.id}")) {
+                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.provider_edit), tint = colors.secondary, modifier = Modifier.size(20.dp))
                 }
-
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.testTag("delete_provider_${provider.id}")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.DeleteOutline,
-                        contentDescription = stringResource(R.string.provider_delete),
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(20.dp)
-                    )
+                IconButton(onClick = onDelete, modifier = Modifier.testTag("delete_provider_${provider.id}")) {
+                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.provider_delete), tint = colors.error, modifier = Modifier.size(20.dp))
                 }
             }
+        }
+    }
+}
+
+/** Status of a provider as a small pill: a dot (green connected, red problem, grey untested) and the real result. */
+@Composable
+private fun ProviderStatusPill(provider: ProviderEntity, hasKey: Boolean, isTesting: Boolean) {
+    val colors = MaterialTheme.colorScheme
+    val latency = ProviderStatus.latencyOf(provider.status)
+    val failed = ProviderStatus.errorOf(provider.status) != null
+    val (text, isError) = when {
+        isTesting -> stringResource(R.string.provider_status_testing) to false
+        !hasKey -> stringResource(R.string.provider_status_needs_key) to true
+        latency != null -> stringResource(R.string.provider_latency_ms, latency) to false
+        failed -> stringResource(R.string.provider_status_error_short) to true
+        else -> stringResource(R.string.provider_status_not_tested) to false
+    }
+    val dot = when {
+        isError -> colors.error
+        latency != null && hasKey -> Color(0xFF10B981)
+        else -> colors.outline
+    }
+    Surface(shape = RoundedCornerShape(50), color = colors.surfaceContainerLowest, shadowElevation = 1.dp,
+        modifier = Modifier.widthIn(max = 140.dp).testTag("provider_status_${provider.id}")) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+            Spacer(Modifier.width(6.dp))
+            Text(text, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Medium,
+                color = if (isError) colors.error else colors.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }

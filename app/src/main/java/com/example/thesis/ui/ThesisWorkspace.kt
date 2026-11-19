@@ -36,6 +36,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
+import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.HistoryEdu
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -212,24 +217,46 @@ fun BusyBar(controller: ThesisController, busy: ThesisBusy) {
 @Composable
 internal fun ThesisTemplatePicker(host: ThesisHost, selected: String?, onSelect: (String?) -> Unit) {
     val templates by host.templateList.collectAsState()
+    // Only formats the thesis exporter can use (Word and PDF templates); others are never offered.
     val usable = templates.filter { it.fileType.equals("DOCX", true) || it.fileType.equals("PDF", true) }
-    Text(stringResource(R.string.thesis_field_template), style = MaterialTheme.typography.labelLarge)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(selected = selected == null, onClick = { onSelect(null) }, label = { Text(stringResource(R.string.thesis_template_default)) },
-            modifier = Modifier.testTag("thesis_template_default"))
-        // Built-in academic templates of the Smart Templates library.
-        com.example.smarttemplates.BuiltInTemplates.forCategory("academic").forEach { b ->
-            FilterChip(selected = selected == b.id, onClick = { onSelect(b.id) },
-                label = { Text(stringResource(com.example.ui.SmartTemplateStrings.builtInName(b.id)), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                modifier = Modifier.testTag("thesis_template_${b.id}"))
+    val builtIns = com.example.smarttemplates.BuiltInTemplates.forCategory("academic")
+    val dateFormat = remember { java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM) }
+    fun size(bytes: Long) = if (bytes >= 1024 * 1024) String.format(java.util.Locale.getDefault(), "%.1f MB", bytes / 1048576.0) else "${(bytes + 1023) / 1024} KB"
+    val defaultLabel = stringResource(R.string.thesis_template_default)
+    val builtInGroup = com.example.ui.components.SelectGroup(
+        title = stringResource(R.string.thesis_templates_builtin),
+        options = listOf(com.example.ui.components.SelectOption(DEFAULT_KEY, defaultLabel, stringResource(R.string.thesis_template_default_desc), Icons.Default.Verified)) +
+            builtIns.map { b ->
+                com.example.ui.components.SelectOption(b.id, stringResource(com.example.ui.SmartTemplateStrings.builtInName(b.id)),
+                    stringResource(com.example.ui.SmartTemplateStrings.builtInDescription(b.id)), Icons.Default.HistoryEdu)
+            }
+    )
+    val uploadedGroup = com.example.ui.components.SelectGroup(
+        title = stringResource(R.string.thesis_templates_uploaded),
+        options = usable.map { t: TemplateEntity ->
+            com.example.ui.components.SelectOption(t.id, "${t.name} (${t.fileType})",
+                stringResource(R.string.thesis_template_added, dateFormat.format(java.util.Date(t.createdAt)), size(t.fileSize)),
+                if (t.fileType.equals("PDF", true)) Icons.Default.PictureAsPdf else Icons.Default.Description)
         }
-        usable.forEach { t: TemplateEntity ->
-            FilterChip(selected = selected == t.id, onClick = { onSelect(t.id) },
-                label = { Text("${t.name} (${t.fileType})", maxLines = 1, overflow = TextOverflow.Ellipsis) }, modifier = Modifier.testTag("thesis_template_${t.id}"))
-        }
-    }
+    )
+    val key = selected ?: DEFAULT_KEY
+    val selectedLabel = (builtInGroup.options + uploadedGroup.options).firstOrNull { it.key == key }?.label ?: defaultLabel
+    Text(stringResource(R.string.thesis_choose_template), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+    com.example.ui.components.InlineSelect(
+        triggerLabel = selectedLabel,
+        triggerIcon = Icons.AutoMirrored.Filled.LibraryBooks,
+        groups = if (usable.isEmpty()) listOf(builtInGroup) else listOf(builtInGroup, uploadedGroup),
+        selectedKey = key,
+        onSelect = { onSelect(it.takeIf { k -> k != DEFAULT_KEY }) },
+        testTag = "thesis_template",
+        selectedBadge = stringResource(R.string.select_selected),
+        searchPlaceholder = stringResource(R.string.thesis_template_search)
+    )
     Text(stringResource(R.string.thesis_template_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
+
+/** Key of the app's default thesis template in the picker (stored as no template id). */
+private const val DEFAULT_KEY = "default"
 
 /**
  * University logo: a thumbnail of the chosen image with Change and Remove, or an Add button.

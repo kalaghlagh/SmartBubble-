@@ -120,13 +120,14 @@ class AppSmokeDeviceTest {
         try {
             for ((code, thesisLabel, _) in languages) {
                 language(code, thesisLabel)
-                // Five items, in reading order: Agent (formerly Chat) first (right edge in Arabic, left edge otherwise).
-                val tabs = listOf("nav_chat", "nav_thesis", "nav_templates", "nav_library", "nav_settings")
+                // Five items in reading order (right to left in Arabic).
+                // Stitch order: Thesis, My Templates, Agent (centre), Library, Settings.
+                val tabs = listOf("nav_thesis", "nav_templates", "nav_chat", "nav_library", "nav_settings")
                 tabs.forEach { assertTrue("$it missing in $code", exists(it)) }
                 val xs = tabs.map { left(it) }
                 if (code == "ar") assertTrue("Arabic bar is not right-to-left: $xs", xs.zipWithNext().all { (a, b) -> a > b })
                 else assertTrue("$code bar is not left-to-right: $xs", xs.zipWithNext().all { (a, b) -> a < b })
-                for ((tag, tab) in tabs.zip(listOf(AppNavTab.CHAT, AppNavTab.THESIS, AppNavTab.TEMPLATES, AppNavTab.LIBRARY, AppNavTab.SETTINGS))) {
+                for ((tag, tab) in tabs.zip(listOf(AppNavTab.THESIS, AppNavTab.TEMPLATES, AppNavTab.CHAT, AppNavTab.LIBRARY, AppNavTab.SETTINGS))) {
                     tap(tag)
                     await("$code $tab shown") { vm.currentTab.value == tab }
                     shot("$code-${tab.name.lowercase()}")

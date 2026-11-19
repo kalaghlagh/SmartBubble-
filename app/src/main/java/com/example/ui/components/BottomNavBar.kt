@@ -1,19 +1,19 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChatBubble
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.LocalLibrary
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.LocalLibrary
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
@@ -36,6 +36,13 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.ui.AppNavTab
 
+/**
+ * Main navigation (Stitch design): Thesis, My Templates, Agent (centre), Library, Settings.
+ * Five equal columns, so Agent is always exactly in the middle (also in right-to-left layouts,
+ * where the order is mirrored). The selected destination shows a tinted 48 x 28 dp pill behind
+ * its icon and a bold primary label; Agent always has its filled pill (the app's main action).
+ * Destinations, back stack and state restoration are unchanged: only [onTabSelected] is called.
+ */
 @Composable
 fun SmartBubbleBottomNavBar(
     currentTab: AppNavTab,
@@ -45,73 +52,27 @@ fun SmartBubbleBottomNavBar(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(12.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
-        tonalElevation = 6.dp
+            .shadow(16.dp, ambientColor = Color(0x0A0F172A), spotColor = Color(0x140F172A)),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.navigationBars)
-                .heightIn(min = 64.dp)
-                .padding(horizontal = 4.dp),
-            // Equal columns: every label gets the same width in every language.
+                .heightIn(min = 72.dp)
+                .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Chat
-            BottomNavItem(
-                modifier = Modifier.weight(1f),
-                label = stringResource(R.string.nav_chat),
-                selectedIcon = Icons.Filled.ChatBubble,
-                unselectedIcon = Icons.Outlined.ChatBubbleOutline,
-                isSelected = currentTab == AppNavTab.CHAT,
-                onClick = { onTabSelected(AppNavTab.CHAT) },
-                testTag = "nav_chat"
-            )
-
-            // Thesis Builder (its own destination)
-            BottomNavItem(
-                modifier = Modifier.weight(1f),
-                label = stringResource(R.string.nav_thesis),
-                selectedIcon = Icons.Filled.School,
-                unselectedIcon = Icons.Outlined.School,
-                isSelected = currentTab == AppNavTab.THESIS,
-                onClick = { onTabSelected(AppNavTab.THESIS) },
-                testTag = "nav_thesis"
-            )
-
-            // My Templates
-            BottomNavItem(
-                modifier = Modifier.weight(1f),
-                label = stringResource(R.string.nav_templates),
-                selectedIcon = Icons.Filled.Description,
-                unselectedIcon = Icons.Outlined.Description,
-                isSelected = currentTab == AppNavTab.TEMPLATES,
-                onClick = { onTabSelected(AppNavTab.TEMPLATES) },
-                testTag = "nav_templates"
-            )
-
-            // Library
-            BottomNavItem(
-                modifier = Modifier.weight(1f),
-                label = stringResource(R.string.nav_library),
-                selectedIcon = Icons.Filled.Folder,
-                unselectedIcon = Icons.Outlined.Folder,
-                isSelected = currentTab == AppNavTab.LIBRARY,
-                onClick = { onTabSelected(AppNavTab.LIBRARY) },
-                testTag = "nav_library"
-            )
-
-            // Settings
-            BottomNavItem(
-                modifier = Modifier.weight(1f),
-                label = stringResource(R.string.nav_settings),
-                selectedIcon = Icons.Filled.Settings,
-                unselectedIcon = Icons.Outlined.Settings,
-                isSelected = currentTab == AppNavTab.SETTINGS,
-                onClick = { onTabSelected(AppNavTab.SETTINGS) },
-                testTag = "nav_settings"
-            )
+            BottomNavItem(Modifier.weight(1f), stringResource(R.string.nav_thesis), Icons.Filled.School, Icons.Outlined.School,
+                currentTab == AppNavTab.THESIS, { onTabSelected(AppNavTab.THESIS) }, "nav_thesis")
+            BottomNavItem(Modifier.weight(1f), stringResource(R.string.nav_templates), Icons.Filled.Description, Icons.Outlined.Description,
+                currentTab == AppNavTab.TEMPLATES, { onTabSelected(AppNavTab.TEMPLATES) }, "nav_templates")
+            BottomNavItem(Modifier.weight(1f), stringResource(R.string.nav_chat), Icons.Filled.AutoAwesome, Icons.Outlined.AutoAwesome,
+                currentTab == AppNavTab.CHAT, { onTabSelected(AppNavTab.CHAT) }, "nav_chat", center = true)
+            BottomNavItem(Modifier.weight(1f), stringResource(R.string.nav_library), Icons.Filled.LocalLibrary, Icons.Outlined.LocalLibrary,
+                currentTab == AppNavTab.LIBRARY, { onTabSelected(AppNavTab.LIBRARY) }, "nav_library")
+            BottomNavItem(Modifier.weight(1f), stringResource(R.string.nav_settings), Icons.Filled.Settings, Icons.Outlined.Settings,
+                currentTab == AppNavTab.SETTINGS, { onTabSelected(AppNavTab.SETTINGS) }, "nav_settings")
         }
     }
 }
@@ -124,14 +85,16 @@ private fun BottomNavItem(
     unselectedIcon: ImageVector,
     isSelected: Boolean,
     onClick: () -> Unit,
-    testTag: String
+    testTag: String,
+    center: Boolean = false
 ) {
-    val activeColor = MaterialTheme.colorScheme.primary
-    val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-
+    val colors = MaterialTheme.colorScheme
+    val activeColor = colors.primary
+    val inactiveColor = colors.onSurfaceVariant
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(16.dp))
             .selectable(
                 selected = isSelected,
                 interactionSource = remember { MutableInteractionSource() },
@@ -139,36 +102,51 @@ private fun BottomNavItem(
                 role = Role.Tab,
                 onClick = onClick
             )
-            .padding(horizontal = 2.dp, vertical = 6.dp)
+            .padding(horizontal = 2.dp, vertical = 4.dp)
             .testTag(testTag),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(width = 48.dp, height = 28.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(if (isSelected) activeColor.copy(alpha = 0.16f) else Color.Transparent),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = if (isSelected) selectedIcon else unselectedIcon,
+        if (center) {
+            // Agent: always a filled pill (56 x 32 dp) with a soft primary shadow.
+            Box(
+                modifier = Modifier
+                    .size(width = 56.dp, height = 32.dp)
+                    .shadow(if (isSelected) 6.dp else 3.dp, RoundedCornerShape(50), spotColor = activeColor.copy(alpha = 0.3f))
+                    .clip(RoundedCornerShape(50))
+                    .background(if (isSelected) activeColor else colors.primary.copy(alpha = 0.85f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(selectedIcon, contentDescription = null, tint = colors.onPrimary, modifier = Modifier.size(22.dp))
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(width = 48.dp, height = 28.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(if (isSelected) colors.primaryContainer else Color.Transparent),
+                contentAlignment = Alignment.Center
+            ) {
                 // The label below is read by accessibility services; no duplicate description.
-                contentDescription = null,
-                tint = if (isSelected) activeColor else inactiveColor,
-                modifier = Modifier.size(20.dp)
-            )
+                Icon(
+                    imageVector = if (isSelected) selectedIcon else unselectedIcon,
+                    contentDescription = null,
+                    tint = if (isSelected) activeColor else inactiveColor,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
         }
-        Spacer(modifier = Modifier.height(2.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = label,
-            fontSize = 11.sp,
-            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (isSelected) activeColor else inactiveColor,
+            fontSize = 10.sp,
+            lineHeight = 12.sp,
+            letterSpacing = 0.2.sp,
+            fontWeight = if (isSelected || center) FontWeight.Bold else FontWeight.SemiBold,
+            color = if (isSelected || center) activeColor else inactiveColor,
             style = MaterialTheme.typography.labelSmall,
-            // One line, never broken inside a word; the columns are equally wide.
-            maxLines = 1,
-            softWrap = false,
+            // Up to two lines (e.g. "My Templates" on a narrow phone) instead of cutting the label.
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center
         )

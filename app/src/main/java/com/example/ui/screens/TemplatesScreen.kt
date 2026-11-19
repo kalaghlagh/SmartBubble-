@@ -23,6 +23,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -109,6 +112,14 @@ fun TemplatesScreen(
         val matchesSearch = tmpl.name.contains(searchQuery, ignoreCase = true)
         matchesType && matchesSearch
     }
+    /** The file-type chips also narrow the library results (built-in and uploaded). */
+    fun typeMatches(fileType: String) = when (selectedFilter) {
+        "Docs" -> fileType.equals("DOCX", ignoreCase = true)
+        "PPTX" -> fileType.equals("PPTX", ignoreCase = true)
+        "XLSX" -> fileType.equals("XLSX", ignoreCase = true)
+        "PDF" -> fileType.equals("PDF", ignoreCase = true)
+        else -> true
+    }
 
     Column(
         modifier = modifier
@@ -176,9 +187,26 @@ fun TemplatesScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        // Library row (Stitch): title, number of files and the scope filter menu.
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(stringResource(R.string.st_library_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).semantics { heading() })
+            Spacer(Modifier.width(8.dp))
+            Text(
+                pluralStringResource(R.plurals.templates_files_count, templates.size, templates.size),
+                style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSecondaryContainer, maxLines = 1,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.secondaryContainer)
+                    .padding(horizontal = 8.dp, vertical = 2.dp).testTag("templates_count")
+            )
+            Spacer(Modifier.weight(1f))
+            TemplateScopeMenu(libraryFilter) { libraryFilter = it }
+        }
 
-        // Large prominent Upload Template Button matching mockup
+        // Upload Template: full-width pill (Stitch).
         Button(
             onClick = {
                 try {
@@ -197,27 +225,33 @@ fun TemplatesScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .heightIn(min = 52.dp)
+                .heightIn(min = 48.dp)
                 .testTag("upload_template_button"),
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary
-            )
+            shape = RoundedCornerShape(50),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
         ) {
-            Icon(
-                imageVector = Icons.Default.CloudUpload,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = stringResource(R.string.templates_upload),
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 15.sp
-            )
+            Icon(imageVector = Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(22.dp))
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(text = stringResource(R.string.templates_upload), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // File-type chips [All] [Docs] [PPTX] [XLSX] [PDF]: one horizontally scrollable, non-wrapping row.
+        FilterChipRow(
+            options = listOf(
+                FilterOption("All", stringResource(R.string.filter_all)),
+                FilterOption("Docs", stringResource(R.string.filter_docs)),
+                FilterOption("PPTX", stringResource(R.string.filter_pptx)),
+                FilterOption("XLSX", stringResource(R.string.filter_xlsx)),
+                FilterOption("PDF", stringResource(R.string.filter_pdf))
+            ),
+            selectedKey = selectedFilter,
+            onSelect = { selectedFilter = it },
+            testTagPrefix = "filter_"
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         val openCategoryEntity = openCategory?.let { TemplateCatalog.category(it) }
         if (openCategoryEntity != null) {
@@ -235,11 +269,6 @@ fun TemplatesScreen(
             contentPadding = PaddingValues(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            item(key = "library_header") {
-                Text(stringResource(R.string.st_library_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 16.dp))
-            }
-            item(key = "library_filters") { TemplateLibraryFilterRow(libraryFilter) { libraryFilter = it } }
             pendingClassification?.let { pending -> item(key = "classify") { ClassificationCard(viewModel, pending) } }
             val query = searchQuery.trim()
             if ((libraryFilter != TemplateLibraryFilter.ALL && libraryFilter != TemplateLibraryFilter.UPLOADED) ||
@@ -251,7 +280,7 @@ fun TemplatesScreen(
                         TemplateLibraryFilter.DEFAULTS -> t.defaultFor.isNotEmpty()
                         else -> true
                     }
-                    byFilter && (query.isEmpty() || libraryNames[t.id].orEmpty().contains(query, ignoreCase = true))
+                    byFilter && typeMatches(t.fileType) && (query.isEmpty() || libraryNames[t.id].orEmpty().contains(query, ignoreCase = true))
                 }
                 items(matches, key = { "lib_" + it.id }) { t ->
                     Box(Modifier.padding(horizontal = 16.dp)) {
@@ -267,23 +296,13 @@ fun TemplatesScreen(
             }
             if (libraryFilter == TemplateLibraryFilter.ALL || libraryFilter == TemplateLibraryFilter.UPLOADED) {
                 item(key = "uploaded_header") {
-                    Text(stringResource(R.string.st_filter_uploaded), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp))
-                }
-                // Filter chips [All] [Docs] [PPTX] [XLSX]: one horizontally scrollable row (see FilterChipRow).
-                item(key = "uploaded_filters") {
-                    FilterChipRow(
-                        options = listOf(
-                            FilterOption("All", stringResource(R.string.filter_all)),
-                            FilterOption("Docs", stringResource(R.string.filter_docs)),
-                            FilterOption("PPTX", stringResource(R.string.filter_pptx)),
-                            FilterOption("XLSX", stringResource(R.string.filter_xlsx)),
-                            FilterOption("PDF", stringResource(R.string.filter_pdf))
-                        ),
-                        selectedKey = selectedFilter,
-                        onSelect = { selectedFilter = it },
-                        testTagPrefix = "filter_"
-                    )
+                    // "Recent files" (your uploaded templates), newest first.
+                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp), verticalAlignment = Alignment.Bottom) {
+                        Text(stringResource(R.string.templates_recent_files), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f).semantics { heading() })
+                        Text(stringResource(R.string.templates_sorted_recent), style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
                 if (filteredTemplates.isEmpty()) item(key = "uploaded_empty") {
                     Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -554,7 +573,7 @@ fun TemplateItemCard(
             .fillMaxWidth()
             .clickable(onClick = onPreview)
             .testTag("template_card_${template.id}"),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 2.dp
     ) {
@@ -567,7 +586,7 @@ fun TemplateItemCard(
             // Square Badge Icon matching mockup
             Box(
                 modifier = Modifier
-                    .size(46.dp)
+                    .size(width = 48.dp, height = 56.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(if (thumbnail != null) Color.White else badgeColor)
                     .testTag("template_badge_${template.id}"),
