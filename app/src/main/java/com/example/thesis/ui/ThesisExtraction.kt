@@ -437,13 +437,19 @@ internal fun ExtractionActions(tables: Int, onInsert: (ExtractionInsertMode) -> 
                 grid.chunked(columns).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(com.example.ui.adaptive.AdaptiveRules.ACTION_GAP_DP.dp)) {
                         row.forEach { a ->
+                            // Short window: narrow cells (three or more per row), so no icon and
+                            // less padding: the whole cell width goes to the label, which then
+                            // keeps to one or two lines and the grid stays on screen.
                             val content: @Composable RowScope.() -> Unit = {
-                                Icon(a.icon, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(a.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 3, textAlign = TextAlign.Center)
+                                if (!shortWindow) {
+                                    Icon(a.icon, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                }
+                                Text(a.label, style = if (shortWindow) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold, maxLines = 3, textAlign = TextAlign.Center)
                             }
                             val m = Modifier.weight(1f).heightIn(min = 48.dp).testTag(a.tag)
-                            val pad = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            val pad = PaddingValues(horizontal = if (shortWindow) 8.dp else 12.dp, vertical = 6.dp)
                             when (a.kind) {
                                 0 -> Button(onClick = a.onClick, enabled = a.enabled, modifier = m, contentPadding = pad, shape = RoundedCornerShape(50), content = content)
                                 1 -> FilledTonalButton(onClick = a.onClick, enabled = a.enabled, modifier = m, contentPadding = pad, shape = RoundedCornerShape(50),
