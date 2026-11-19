@@ -11,6 +11,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
@@ -258,7 +260,7 @@ class StitchScreensTest {
             LazyColumn(Modifier.fillMaxSize().padding(16.dp)) {
                 item {
                     InlineSelect(
-                        triggerLabel = "اللغة: العربية", triggerIcon = androidx.compose.material.icons.Icons.Default.Language,
+                        triggerLabel = "اللغة: العربية", triggerIcon = Icons.Default.Language,
                         groups = listOf(SelectGroup(null, listOf(SelectOption("auto", "اكتشاف تلقائي"), SelectOption("ar", "العربية"), SelectOption("en", "English")))),
                         selectedKey = "ar", onSelect = { chosen += it }, testTag = "lang", optionTag = { "opt_$it" }
                     )
