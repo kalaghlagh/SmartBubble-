@@ -46,6 +46,15 @@ class PreferencesManager(private val context: Context) {
         val KEY_AGENT_PROVIDER_ORDER = stringPreferencesKey("agent_provider_order")
         val KEY_AGENT_DISABLED_PROVIDERS = stringPreferencesKey("agent_disabled_providers")
         val KEY_AGENT_MAX_CYCLES = intPreferencesKey("agent_max_cycles")
+        // Agent: the thesis the user works on (Thesis Builder project id), the default target of thesis edits.
+        val KEY_ACTIVE_THESIS_ID = stringPreferencesKey("agent_active_thesis_id")
+    }
+
+    /** The active thesis: the Thesis Builder project last opened (kept across restarts). */
+    val activeThesisId: Flow<String?> = context.dataStore.data.map { it[KEY_ACTIVE_THESIS_ID]?.ifBlank { null } }
+
+    suspend fun setActiveThesisId(id: String?) {
+        context.dataStore.edit { if (id == null) it.remove(KEY_ACTIVE_THESIS_ID) else it[KEY_ACTIVE_THESIS_ID] = id }
     }
 
     /** Agent: the user's model priority order (provider ids). Empty until the user arranges it. */

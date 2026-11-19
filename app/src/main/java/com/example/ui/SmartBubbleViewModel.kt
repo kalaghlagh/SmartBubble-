@@ -197,7 +197,35 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         },
         share = { doc -> shareDocument(doc) },
         importTemplateCopy = { file, name -> templateImporter.import(open = { file.inputStream() }, userName = name, sourceFileName = name) },
-        copyLabel = { name, template -> str(if (template) R.string.agent_copy_template else R.string.agent_copy_edited, name) }
+        copyLabel = { name, template -> str(if (template) R.string.agent_copy_template else R.string.agent_copy_edited, name) },
+        thesisAccess = object : com.example.agent.thesis.ThesisAccess {
+            // The thesis repository and controller are declared later; these run only once a task does.
+            override suspend fun activeThesisId(): String? {
+                val id = preferences.activeThesisId.first() ?: return null
+                return id.takeIf { withContext(Dispatchers.IO) { thesisRepository.project(it) } != null }
+            }
+            override suspend fun projects() = withContext(Dispatchers.IO) { thesisRepository.projects().map { it.id to it.title } }
+            override suspend fun snapshot(projectId: String) = withContext(Dispatchers.IO) { thesisRepository.snapshot(projectId) }
+            override suspend fun currentRevision(projectId: String) = withContext(Dispatchers.IO) {
+                thesisRepository.project(projectId)?.let { it.currentRevisionId to it.currentRevisionNumber } ?: (null to 0)
+            }
+            override suspend fun apply(projectId: String, ops: List<com.example.thesis.core.ThesisOp>, summary: String) = withContext(Dispatchers.IO) {
+                thesisRepository.applyDirect(projectId, ops, com.example.thesis.model.ChangeSource.USER, summary).let { it.id to it.number }
+            }
+            override suspend fun revisionTagged(projectId: String, tag: String) = withContext(Dispatchers.IO) {
+                thesisRepository.revisions(projectId).firstOrNull { it.summary.startsWith(tag) }?.let { it.id to it.number }
+            }
+            override suspend fun restore(projectId: String, revisionId: String) = withContext(Dispatchers.IO) { thesisRepository.restore(projectId, revisionId).number }
+            override fun hasUnsavedDraft(projectId: String, sectionId: String) = thesis.hasUnsavedDraft(projectId, sectionId)
+            override fun changed(projectId: String) = thesis.reloadAfterExternalChange(projectId)
+        },
+        // The same engine, keeping the structure (headings, tables with rows and columns).
+        extractSource = { file, isPdf, pages ->
+            extractionEngine.extract(
+                listOf(com.example.extraction.ExtractionSource(Uri.fromFile(file), isPdf = isPdf, pages = pages)),
+                OcrLanguage.fromCode(ocrLanguage.value), appLanguage.value
+            ) { _, _ -> }
+        }
     )
 
     /** Smart Templates: the template library shared by Chat, My Templates and Thesis Builder. */
@@ -739,6 +767,25 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     // Files the user attached are used for this request only (and granted to its task only).
                     val selected = agent.state.value.selected
                     agent.clearSelection()
+                    // Thesis document requests (insert pages or a table into the active thesis, add
+                    // or replace text, extract pages or a table): local tools only, no AI request.
+                    when (val decision = agent.analyzeThesis(text, selected)) {
+                        is com.example.agent.thesis.ThesisDecision.Plan -> {
+                            val task = com.example.agent.thesis.ThesisTaskPlanner.plan(
+                                taskId = com.example.agent.AgentService.newId(), sessionId = sessionId, request = text,
+                                req = decision.request, source = decision.source, language = appLanguage.value,
+                                now = System.currentTimeMillis(), newId = com.example.agent.AgentService::newId
+                            )
+                            runAgentTask(task, history, listener, fromVoice)
+                            return@launchChatOperation
+                        }
+                        is com.example.agent.thesis.ThesisDecision.Ask -> {
+                            if (decision.candidates.isNotEmpty()) agent.askChoice(com.example.agent.FileChoice(text, decision.candidates))
+                            else insertAgentQuestion(sessionId, thesisQuestion(decision.what))
+                            return@launchChatOperation
+                        }
+                        null -> Unit
+                    }
                     val intent = agent.analyze(text, selected)
                     if (intent.ambiguous.isNotEmpty()) {
                         // Never guess a file: the user picks which one is meant.
@@ -878,6 +925,10 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         // The stored file grants win (a revocation made meanwhile is kept).
         val task = agent.store.update(withAttempts.id, withAttempts) { stored -> withAttempts.copy(files = stored.files) } ?: withAttempts
         agent.show(task)
+        if (com.example.agent.thesis.ThesisTaskPlanner.isThesisTask(task)) {
+            publishThesisResult(task, fromVoice)
+            return
+        }
         val generate = task.step("generate")
         val validate = task.step("validate")
         val outcome = validate?.output?.get("outcome")
@@ -954,8 +1005,93 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    /** One Agent question in the conversation (a thesis request missing one piece of information). */
+    private suspend fun insertAgentQuestion(sessionId: String, question: String) {
+        database.chatDao().insertMessage(
+            ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = sessionId, isUser = false, content = question, orchestratorNote = "Agent")
+        )
+        database.conversationDao().updateLastMessage(sessionId, question.take(60))
+    }
+
+    private fun thesisQuestion(what: String): String = str(
+        when (what) {
+            "section" -> R.string.agent_ask_section
+            "text" -> R.string.agent_ask_text
+            "pages" -> R.string.agent_ask_pages
+            "source_format" -> R.string.agent_ask_source_format
+            "source_is_target" -> R.string.agent_error_source_is_target
+            else -> R.string.agent_ask_source
+        }
+    )
+
+    /** Result of a thesis document task, stored once in the conversation (also its failures: they are questions to answer). */
+    private suspend fun publishThesisResult(task: com.example.agent.core.AgentTask, fromVoice: Boolean) {
+        val done = com.example.agent.core.StepStatus.COMPLETED
+        val located = task.step("locate")?.output.orEmpty()
+        val extract = task.step("extract")
+        val apply = task.step("apply")
+        val check = task.step("check")
+        when {
+            task.status == com.example.agent.core.TaskStatus.FAILED -> {
+                if (fromVoice) endVoiceConversation()
+                val restored = check?.output?.get("restored")?.takeIf { it.isNotBlank() }
+                val text = if (restored != null) str(R.string.agent_thesis_restored_after_check, located["thesisTitle"].orEmpty())
+                else agentFailureText(task)
+                insertAgentNote(task, "agent-thesis-${task.id}", text, null)
+            }
+            apply == null && extract?.status == done -> {
+                val out = extract.output
+                val body = out["content"]?.let { com.example.agent.thesis.tableAsText(it) ?: com.example.agent.thesis.paragraphsAsText(it) }.orEmpty()
+                val head = str(R.string.agent_reply_extracted, out["title"].orEmpty(), out["pages"].orEmpty())
+                val warn = if (out["uncertain"] == "true" || out["tableUncertain"] == "true") "\n\n" + str(R.string.agent_thesis_warn_uncertain) else ""
+                insertAgentNote(task, "agent-thesis-${task.id}", (head + "\n\n" + body.take(12_000) + warn).trim(), null)
+            }
+            apply?.status == done && check?.status == done -> {
+                val text = str(R.string.agent_reply_thesis_done, located["thesisTitle"].orEmpty(), located["sectionTitle"].orEmpty(),
+                    apply.output["revisionNumber"]?.toIntOrNull() ?: 0) +
+                    if (check.output["issues"].orEmpty().contains("source_changed")) "\n" + str(R.string.agent_thesis_source_changed) else ""
+                insertAgentNote(task, "agent-thesis-${task.id}", text, null)
+            }
+            task.steps.any { it.status == com.example.agent.core.StepStatus.REJECTED } ->
+                insertAgentNote(task, "agent-thesis-${task.id}", str(R.string.agent_reply_thesis_rejected), null)
+        }
+    }
+
+    /** Undo of the shown thesis task: restores the revision before its change, only when nothing was changed after it. */
+    fun undoAgentThesisEdit() {
+        val shown = agent.state.value.task ?: return
+        launchSafely("undoAgentThesisEdit") {
+            val task = agent.store.load(shown.id) ?: return@launchSafely
+            val applied = task.step("apply")?.takeIf { it.status == com.example.agent.core.StepStatus.COMPLETED }?.output ?: return@launchSafely
+            if (task.warnings.any { it.startsWith("undone:") }) return@launchSafely
+            val projectId = applied["projectId"] ?: return@launchSafely
+            val previous = applied["previousRevisionId"].orEmpty()
+            val current = agent.thesisAccess.currentRevision(projectId).first
+            if (previous.isEmpty() || current != applied["revisionId"]) {
+                _snackBarMessage.value = str(R.string.agent_thesis_undo_blocked)
+                return@launchSafely
+            }
+            val number = agent.thesisAccess.restore(projectId, previous)
+            agent.thesisAccess.changed(projectId)
+            val updated = agent.store.update(task.id) { it.copy(warnings = it.warnings + "undone:$number") }
+            updated?.let { agent.show(it) }
+            insertAgentNote(task, "agent-thesis-undo-${task.id}",
+                str(R.string.agent_reply_thesis_undone, task.step("locate")?.output?.get("thesisTitle").orEmpty(), applied["previousRevisionNumber"]?.toIntOrNull() ?: 0), null)
+        }
+    }
+
+    /** Opens the thesis a task changed, on the changed section. */
+    fun openAgentThesisTarget() {
+        val located = agent.state.value.task?.step("locate")?.output ?: return
+        val projectId = located["projectId"] ?: return
+        thesis.openProject(projectId)
+        located["sectionId"]?.let { thesis.selectSection(it) }
+        setNavTab(AppNavTab.THESIS)
+    }
+
     private fun agentFailureText(task: com.example.agent.core.AgentTask): String {
         val code = task.error.orEmpty()
+        thesisFailureText(code)?.let { return it }
         val kind = code.removePrefix("ai:").takeIf { code.startsWith("ai:") }
             ?.let { runCatching { AiErrorKind.valueOf(it) }.getOrNull() }
         if (kind != null) {
@@ -977,6 +1113,37 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             else -> null
         }
         return known?.let { str(it) } ?: str(R.string.agent_failed, code.ifBlank { "?" })
+    }
+
+    /** Text for a thesis tool failure code ("code" or "code:detail"), or null for other codes. */
+    private fun thesisFailureText(code: String): String? {
+        // "code:detail" (the detail may hold ':'), or "code:a:b" for the two table codes.
+        val head = code.substringBefore(':')
+        val rest = code.substringAfter(':', "")
+        val a = rest.substringBefore(':')
+        val b = rest.substringAfter(':', "")
+        return when (head) {
+            "no_active_thesis" -> str(R.string.agent_error_no_active_thesis)
+            "thesis_not_found" -> str(R.string.agent_error_thesis_not_found, rest)
+            "thesis_ambiguous" -> str(R.string.agent_error_thesis_ambiguous, rest)
+            "thesis_missing" -> str(R.string.agent_error_no_active_thesis)
+            "active_thesis_changed" -> str(R.string.agent_error_active_thesis_changed)
+            "section_not_found" -> str(R.string.agent_error_section_not_found, rest)
+            "section_ambiguous" -> str(R.string.agent_error_section_ambiguous, rest)
+            "section_not_writable" -> str(R.string.agent_error_section_not_writable, rest)
+            "paragraph_not_found" -> str(R.string.agent_error_paragraph_not_found, rest.toIntOrNull() ?: 0)
+            "page_not_found" -> str(R.string.agent_error_page_not_found)
+            "pages_missing" -> str(R.string.agent_ask_pages)
+            "table_not_found" -> str(R.string.agent_error_table_not_found, rest)
+            "table_ambiguous" -> str(R.string.agent_error_table_ambiguous, a, b)
+            "table_no_structure" -> str(R.string.agent_error_table_no_structure, a, b.toIntOrNull() ?: 0)
+            "thesis_changed" -> str(R.string.agent_error_thesis_changed)
+            "thesis_section_being_edited" -> str(R.string.agent_error_thesis_being_edited)
+            "extract_unsupported_format" -> str(R.string.agent_ask_source_format)
+            "content_too_large" -> str(R.string.agent_error_too_large_to_edit)
+            "text_missing" -> str(R.string.agent_ask_text)
+            else -> null
+        }
     }
 
     /** Pause: the running step finishes, then the task waits (its state is saved). */
@@ -1190,6 +1357,12 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     )
 
     init {
+        // The active thesis (default target of the Agent's thesis edits): the project last opened, kept across restarts.
+        viewModelScope.launch {
+            thesis.state.map { it.projectId }.distinctUntilChanged().filterNotNull().collect {
+                try { preferences.setActiveThesisId(it) } catch (e: CancellationException) { throw e } catch (e: Exception) { Log.e(TAG, "Active thesis not saved", e) }
+            }
+        }
         // Declared after the thesis properties: they are initialized when this runs.
         viewModelScope.launch {
             try {

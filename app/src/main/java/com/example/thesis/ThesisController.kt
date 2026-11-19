@@ -391,6 +391,30 @@ class ThesisController(
     }
 
     /**
+     * The thesis was changed outside the workspace (an approved Agent change): the open project is
+     * reloaded, and an editor draft without unsaved edits is reloaded too (so a later save never
+     * writes back the text from before the change). A draft with unsaved edits is kept as is.
+     */
+    fun reloadAfterExternalChange(projectId: String) {
+        if (_state.value.projectId != projectId) return
+        scope.launch {
+            val snapshot = repository.snapshot(projectId)
+            val assets = repository.assets(projectId)
+            update { st ->
+                if (st.projectId != projectId) st
+                else st.copy(snapshot = snapshot, assets = assets, previewFile = null,
+                    draft = st.draft?.let { d -> if (d.dirty) d else SectionText.load(snapshot, d.sectionId) })
+            }
+        }
+    }
+
+    /** True when the editor holds unsaved edits of [sectionId] of [projectId]. */
+    fun hasUnsavedDraft(projectId: String, sectionId: String): Boolean {
+        val st = _state.value
+        return st.projectId == projectId && st.draft?.sectionId == sectionId && st.draft.dirty
+    }
+
+    /**
      * Chat sends messages to this project until [exitChatMode]. [sectionId] is the target section:
      * content whose message names no destination goes there (still as a proposal to review).
      */

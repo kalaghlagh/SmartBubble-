@@ -98,6 +98,12 @@ class AppSmokeDeviceTest {
         repeat(containers.fetchSemanticsNodes().size) { i -> try { containers[i].performScrollToNode(hasTestTag(tag)) } catch (e: Throwable) { } }
         val node = compose.onNodeWithTag(tag)
         try { node.performScrollTo() } catch (e: AssertionError) { }
+        // A message (Snackbar) above the bottom bar takes the touches under it, as for a user:
+        // wait until no message covers the centre of the target before tapping it.
+        await("no message over $tag") {
+            val c = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot.center
+            compose.onAllNodes(hasTestTag("app_snackbar")).fetchSemanticsNodes().none { it.boundsInRoot.contains(c) }
+        }
         node.performClick()
         compose.waitForIdle()
     }
