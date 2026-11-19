@@ -67,7 +67,9 @@ class AgentShortcutsTest {
     }).fetchSemanticsNodes().map { it.config[SemanticsProperties.TestTag] }
 
     private fun inside(tag: String) {
-        compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
+        // Inside a scrolling column, scroll to it first (the bar has no scroll container).
+        try { compose.onNodeWithTag(tag).performScrollTo() } catch (e: AssertionError) { }
+        compose.onNodeWithTag(tag).assertIsDisplayed()
         val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
         val b = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
         assertTrue("$tag outside the window: $b in $root", b.left >= root.left - 1 && b.right <= root.right + 1)
