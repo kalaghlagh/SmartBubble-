@@ -67,7 +67,7 @@ object ThesisRequestParser {
     /** "the Methodology section" (name before the keyword). */
     private val titledBefore = Regex("""(?i)((?:[\p{L}][\p{L}'\-]*\s+){0,3}[\p{L}][\p{L}'\-]*)["”»]?\s+(?:section|chapter|part)\b""")
     /** "la section Méthodologie", "قسم المنهجية" (name after the keyword). */
-    private val titledAfter = Regex("""(?i)\b(?:section|partie|chapitre)\s+["“«]?((?:[\p{L}][\p{L}'\-]*\s+){0,3}[\p{L}][\p{L}'\-]*)|(?:قسم|فصل|جزء)\s+["“«]?((?:[\p{L}][\p{L}\-]*\s+){0,2}[\p{L}][\p{L}\-]*)""")
+    private val titledAfter = Regex("""(?i)\b(?:section|partie|chapitre)\s+["“«]?((?:[\p{L}][\p{L}'\-]*\s+){0,3}[\p{L}][\p{L}'\-]*)|(?<!\p{L})(?:قسم|فصل|جزء)\s+["“«]?((?:[\p{L}][\p{L}\-]*\s+){0,2}[\p{L}][\p{L}\-]*)""")
     private val stopWords = setOf(
         "the", "this", "that", "a", "an", "my", "of", "in", "into", "to", "at", "end", "on", "same", "next", "previous", "and", "with", "from",
         "la", "le", "les", "l", "de", "du", "des", "dans", "à", "a", "au", "cette", "ce", "même", "fin", "et", "avec", "ma", "mon",
@@ -184,7 +184,8 @@ object ThesisRequestParser {
             val t = tail.joinToString(" ")
             val first = tail.firstOrNull()?.lowercase()
             val instructionWord = first != null && (insertVerb.matches(first) || replaceVerb.matches(first) || extractVerb.matches(first) || first == "paragraph" || first == "paragraphe")
-            if (t.length >= 3 && !instructionWord && kindWords.none { it.second.containsMatchIn(t) } && !chapterRef.containsMatchIn(t) && !thesisWord.containsMatchIn(t))
+            // "الفصل الثاني" is chapter 2, never a section titled "الثاني".
+            if (t.length >= 3 && !instructionWord && t !in arabicOrdinals && kindWords.none { it.second.containsMatchIn(t) } && !chapterRef.containsMatchIn(t) && !thesisWord.containsMatchIn(t))
                 found += (if (before) m.range.last - t.length else m.range.first) to SectionRef(title = t)
         }
         return found.maxByOrNull { it.first }?.second
