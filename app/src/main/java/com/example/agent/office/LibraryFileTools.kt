@@ -178,7 +178,8 @@ class LibraryCopyTool(private val access: AgentFileAccess, private val database:
         val base = label(DocumentFileNames.stripDocumentExtension(doc.title))
         val target = DocumentFileNames.createUniqueFile(access.libraryDir, base, src.extension.ifBlank { "bin" })
         try {
-            src.copyTo(target, overwrite = false)
+            // createUniqueFile made this new, empty file for the copy.
+            src.copyTo(target, overwrite = true)
             val copy = doc.copy(id = java.util.UUID.randomUUID().toString(), title = "$base.${src.extension}", filePath = target.absolutePath,
                 createdAt = System.currentTimeMillis(), sourceRequest = "agent-copy:${call.step.executionId}", isFavorite = false)
             withContext(NonCancellable) { database.documentDao().insertDocument(copy) }
