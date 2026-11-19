@@ -90,6 +90,15 @@ class AppSmokeDeviceTest {
         compose.waitForIdle()
     }
 
+    /** My Templates scope (All, Built-in, My uploads, ...): chosen from the Filter menu at the top. */
+    private fun chooseTemplateScope(tag: String) {
+        tap("templates_scope_button")
+        await("scope menu") { exists("templates_scope_menu") }
+        compose.onNodeWithTag(tag).performClick()
+        compose.waitForIdle()
+        await("scope menu closed") { !exists("templates_scope_menu") }
+    }
+
     private fun shot(name: String) {
         compose.waitForIdle()
         val dir = File(context.getExternalFilesDir(null), "app-device").apply { mkdirs() }
@@ -157,7 +166,7 @@ class AppSmokeDeviceTest {
         await("templates screen") { vm.currentTab.value == AppNavTab.TEMPLATES }
         shot("templates-library")
         // The uploaded templates (the library also lists the built-in categories).
-        tap("st_filter_uploaded")
+        chooseTemplateScope("st_filter_uploaded")
         await("only uploads listed") { !exists("st_category_reports") && !exists("categories_header") }
         shot("templates-list")
         for (t in imported) {
@@ -362,7 +371,7 @@ class AppSmokeDeviceTest {
         assertEquals(595 to 842, profile.pageWidthPt to profile.pageHeightPt)
         assertEquals("Times New Roman" to 12, profile.bodyFont to profile.baseFontSizePt)
         tap("nav_templates")
-        tap("st_filter_uploaded")
+        chooseTemplateScope("st_filter_uploaded")
         await("only uploads listed") { !exists("st_category_reports") }
         // The details are a child of the clickable card, whose semantics merge its children.
         await("template card") { compose.onAllNodes(hasTestTag("template_format_${entity.id}"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
