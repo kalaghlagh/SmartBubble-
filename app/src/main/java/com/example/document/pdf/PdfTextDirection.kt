@@ -16,7 +16,7 @@ object PdfTextDirection {
         var latin = 0
         for (c in text) {
             when {
-                c in '֐'..'ࣿ' || c in 'יִ'..'﷿' || c in 'ﹰ'..'﻿' -> arabic++
+                c in '\u0590'..'\u08FF' || c in '\uFB1D'..'\uFDFF' || c in '\uFE70'..'\uFEFF' -> arabic++
                 c.isLetter() -> latin++
             }
         }
