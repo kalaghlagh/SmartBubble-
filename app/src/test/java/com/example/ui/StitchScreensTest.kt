@@ -132,10 +132,13 @@ class StitchScreensTest {
         order.forEach { compose.onNodeWithTag(it).performClick() }
         assertEquals(listOf(AppNavTab.THESIS, AppNavTab.TEMPLATES, AppNavTab.CHAT, AppNavTab.LIBRARY, AppNavTab.SETTINGS), picked)
         compose.onNodeWithTag("nav_settings").assertIsSelected()
-        // Every label fits on its line at the default font size.
+        // Every label is shown whole at the default font size: all characters laid out, nothing
+        // ellipsized (the sub-pixel overflow flag is not a cut; see PdfSelectionBarLayoutTest).
         order.forEach { tag ->
             val layout = textLayout(tag)
-            assertFalse("$tag label cut: ${layout.layoutInput.text}", layout.hasVisualOverflow)
+            val last = layout.lineCount - 1
+            assertEquals("$tag label cut: ${layout.layoutInput.text}", layout.layoutInput.text.length, layout.getLineEnd(last, visibleEnd = true))
+            assertFalse("$tag label ellipsized", layout.isLineEllipsized(last))
         }
     }
 
@@ -213,11 +216,11 @@ class StitchScreensTest {
         assertFalse(compose.onAllNodes(hasTestTag("set_default_provider_p1")).fetchSemanticsNodes().isNotEmpty())
         compose.onNodeWithTag("provider_error_p2", useUnmergedTree = true).assertExists()
         compose.onNodeWithTag("agent_cycles_2").assertIsSelected()
-        // Collapsing hides both parts; expanding brings them back.
-        compose.onNodeWithTag("ai_routing_header").performClick()
+        // Collapsing hides both parts; expanding brings them back (the header is scrolled into view first).
+        compose.onNodeWithTag("ai_routing_header").performScrollTo().performClick()
         compose.waitForIdle()
         assertFalse(compose.onAllNodes(hasTestTag("agent_settings")).fetchSemanticsNodes().isNotEmpty())
-        compose.onNodeWithTag("ai_routing_header").performClick()
+        compose.onNodeWithTag("ai_routing_header").performScrollTo().performClick()
         compose.waitForIdle()
         compose.onNodeWithTag("agent_settings").assertExists()
     }

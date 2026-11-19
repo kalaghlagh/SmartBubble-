@@ -424,8 +424,12 @@ internal fun ExtractionActions(tables: Int, onInsert: (ExtractionInsertMode) -> 
     )
     Column(verticalArrangement = Arrangement.spacedBy(com.example.ui.adaptive.AdaptiveRules.ACTION_GAP_DP.dp)) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
-            // Two columns (Stitch); one when the text is too large for two readable cells.
-            val columns = com.example.ui.adaptive.AdaptiveRules.actionColumns(maxWidth.value, LocalDensity.current.fontScale, actions.size).coerceAtMost(2)
+            // Two columns (Stitch); one when the text is too large for two readable cells. On a
+            // short window (under 600 dp: small phones, landscape) up to three, so that all seven
+            // actions still fit on screen at once without scrolling the action area.
+            val shortWindow = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp < 600
+            val columns = com.example.ui.adaptive.AdaptiveRules.actionColumns(maxWidth.value, LocalDensity.current.fontScale, actions.size)
+                .coerceAtMost(if (shortWindow) 3 else 2)
             Column(verticalArrangement = Arrangement.spacedBy(com.example.ui.adaptive.AdaptiveRules.ACTION_GAP_DP.dp)) {
                 actions.chunked(columns).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(com.example.ui.adaptive.AdaptiveRules.ACTION_GAP_DP.dp)) {

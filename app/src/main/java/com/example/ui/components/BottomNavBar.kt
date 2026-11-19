@@ -60,6 +60,8 @@ fun SmartBubbleBottomNavBar(
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.navigationBars)
                 .heightIn(min = 72.dp)
+                // Every item as tall as the tallest (a label on two lines): equal touch targets.
+                .height(IntrinsicSize.Min)
                 .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -93,6 +95,7 @@ private fun BottomNavItem(
     val inactiveColor = colors.onSurfaceVariant
     Column(
         modifier = modifier
+            .fillMaxHeight()
             .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(16.dp))
             .selectable(
