@@ -422,27 +422,42 @@ internal fun ExtractionActions(tables: Int, onInsert: (ExtractionInsertMode) -> 
         Action("dx_insert_tables", stringResource(R.string.dx_insert_tables, tables), Icons.Default.TableRows, 2, enabled = tables > 0) { onInsert(ExtractionInsertMode.TABLES_ONLY) },
         Action("dx_copy", stringResource(R.string.scan_copy_text), Icons.Default.ContentCopy, 2, onClick = onCopy)
     )
+    // Short window (under 600 dp: small phones, landscape): Cancel joins the grid and the grid
+    // takes as many columns as the width allows, so that all seven actions fit on screen at once.
+    // Taller windows: the Stitch layout, two columns with Cancel alone and centred below.
+    val shortWindow = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp < 600
+    val cancel = Action("dx_cancel_review", stringResource(R.string.action_cancel), Icons.Default.Cancel, 3, onClick = onCancel)
+    val grid = if (shortWindow) actions + cancel else actions
     Column(verticalArrangement = Arrangement.spacedBy(com.example.ui.adaptive.AdaptiveRules.ACTION_GAP_DP.dp)) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             // Two columns (Stitch); one when the text is too large for two readable cells.
-            val columns = com.example.ui.adaptive.AdaptiveRules.actionColumns(maxWidth.value, LocalDensity.current.fontScale, actions.size).coerceAtMost(2)
+            val columns = com.example.ui.adaptive.AdaptiveRules.actionColumns(maxWidth.value, LocalDensity.current.fontScale, grid.size)
+                .let { if (shortWindow) it else it.coerceAtMost(2) }
             Column(verticalArrangement = Arrangement.spacedBy(com.example.ui.adaptive.AdaptiveRules.ACTION_GAP_DP.dp)) {
-                actions.chunked(columns).forEach { row ->
+                grid.chunked(columns).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(com.example.ui.adaptive.AdaptiveRules.ACTION_GAP_DP.dp)) {
                         row.forEach { a ->
+                            // Short window: narrow cells (three or more per row), so no icon and
+                            // less padding: the whole cell width goes to the label, which then
+                            // keeps to one or two lines and the grid stays on screen.
                             val content: @Composable RowScope.() -> Unit = {
-                                Icon(a.icon, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(a.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 3, textAlign = TextAlign.Center)
+                                if (!shortWindow) {
+                                    Icon(a.icon, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                }
+                                Text(a.label, style = if (shortWindow) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold, maxLines = 3, textAlign = TextAlign.Center)
                             }
                             val m = Modifier.weight(1f).heightIn(min = 48.dp).testTag(a.tag)
-                            val pad = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            val pad = PaddingValues(horizontal = if (shortWindow) 8.dp else 12.dp, vertical = 6.dp)
                             when (a.kind) {
                                 0 -> Button(onClick = a.onClick, enabled = a.enabled, modifier = m, contentPadding = pad, shape = RoundedCornerShape(50), content = content)
                                 1 -> FilledTonalButton(onClick = a.onClick, enabled = a.enabled, modifier = m, contentPadding = pad, shape = RoundedCornerShape(50),
                                     colors = ButtonDefaults.filledTonalButtonColors(containerColor = colors.primaryContainer, contentColor = colors.onPrimaryContainer), content = content)
-                                else -> FilledTonalButton(onClick = a.onClick, enabled = a.enabled, modifier = m, contentPadding = pad, shape = RoundedCornerShape(50),
+                                2 -> FilledTonalButton(onClick = a.onClick, enabled = a.enabled, modifier = m, contentPadding = pad, shape = RoundedCornerShape(50),
                                     colors = ButtonDefaults.filledTonalButtonColors(containerColor = colors.surfaceContainerLow, contentColor = colors.primary), content = content)
+                                else -> FilledTonalButton(onClick = a.onClick, enabled = a.enabled, modifier = m, contentPadding = pad, shape = RoundedCornerShape(50),
+                                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = colors.surfaceContainerHigh, contentColor = colors.onSurfaceVariant), content = content)
                             }
                         }
                         repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
@@ -451,7 +466,7 @@ internal fun ExtractionActions(tables: Int, onInsert: (ExtractionInsertMode) -> 
             }
         }
         // Cancel: on its own, centred under the grid.
-        Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
+        if (!shortWindow) Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
             FilledTonalButton(
                 onClick = onCancel, shape = RoundedCornerShape(50),
                 colors = ButtonDefaults.filledTonalButtonColors(containerColor = colors.surfaceContainerHigh, contentColor = colors.onSurfaceVariant),

@@ -73,6 +73,18 @@ class AppSmokeDeviceTest {
 
     private fun diagnostics(): String = buildString {
         append("tab=${vm.currentTab.value} thesis=${vm.thesis.state.value.screen} busy=${vm.thesis.state.value.busy}\n")
+        // One line (the CI log keeps only the first lines of a failure): number of windows and
+        // every tagged node with its bounds, so that what was on screen is always visible.
+        try {
+            val roots = compose.onAllNodes(isRoot()).fetchSemanticsNodes().size
+            val tagged = compose.onAllNodes(androidx.compose.ui.test.SemanticsMatcher("tagged") {
+                it.config.contains(androidx.compose.ui.semantics.SemanticsProperties.TestTag)
+            }, useUnmergedTree = true).fetchSemanticsNodes().joinToString("; ") { n ->
+                val b = n.boundsInRoot
+                "${n.config[androidx.compose.ui.semantics.SemanticsProperties.TestTag]}@${b.left.toInt()},${b.top.toInt()},${b.right.toInt()},${b.bottom.toInt()}"
+            }
+            append("roots=$roots tags: $tagged\n")
+        } catch (e: Throwable) { append("tags unavailable: $e\n") }
         try { append(compose.onAllNodes(isRoot()).printToString(maxDepth = 25)) } catch (e: Throwable) { append("tree unavailable: $e") }
     }
 
@@ -88,6 +100,18 @@ class AppSmokeDeviceTest {
         try { node.performScrollTo() } catch (e: AssertionError) { }
         node.performClick()
         compose.waitForIdle()
+    }
+
+    /** My Templates scope (All, Built-in, My uploads, ...): chosen from the Filter menu at the top. */
+    private fun chooseTemplateScope(tag: String) {
+        tap("templates_scope_button")
+        await("scope menu") { exists("templates_scope_menu") }
+        compose.onNodeWithTag(tag).performClick()
+        compose.waitForIdle()
+        await("scope menu closed") { !exists("templates_scope_menu") }
+        // The menu is a popup window: until it is detached it still takes the next touch (as an
+        // outside touch that only dismisses it). Wait until the app's own window is the only root.
+        await("scope menu window gone") { compose.onAllNodes(isRoot()).fetchSemanticsNodes().size == 1 }
     }
 
     private fun shot(name: String) {
@@ -157,7 +181,7 @@ class AppSmokeDeviceTest {
         await("templates screen") { vm.currentTab.value == AppNavTab.TEMPLATES }
         shot("templates-library")
         // The uploaded templates (the library also lists the built-in categories).
-        tap("st_filter_uploaded")
+        chooseTemplateScope("st_filter_uploaded")
         await("only uploads listed") { !exists("st_category_reports") && !exists("categories_header") }
         shot("templates-list")
         for (t in imported) {
@@ -362,7 +386,7 @@ class AppSmokeDeviceTest {
         assertEquals(595 to 842, profile.pageWidthPt to profile.pageHeightPt)
         assertEquals("Times New Roman" to 12, profile.bodyFont to profile.baseFontSizePt)
         tap("nav_templates")
-        tap("st_filter_uploaded")
+        chooseTemplateScope("st_filter_uploaded")
         await("only uploads listed") { !exists("st_category_reports") }
         // The details are a child of the clickable card, whose semantics merge its children.
         await("template card") { compose.onAllNodes(hasTestTag("template_format_${entity.id}"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
