@@ -37,10 +37,13 @@ object DocxCopyEditor {
         name.isNotEmpty() && !name.startsWith("/") && '\\' !in name && name.split('/').none { it == ".." } && ':' !in name
 
     /** Which edited paragraphs mix run formatting (shown to the user before approval). */
-    fun mixedFormatting(source: File, indexes: Collection<Int>): List<Int> = ZipFile(source).use { zip ->
-        val doc = OoxmlReader.parse(zip.getInputStream(zip.getEntry("word/document.xml") ?: return emptyList()).use { it.readBytes() })
-        val paragraphs = OoxmlReader.bodyParagraphs(doc)
-        indexes.filter { i -> paragraphs.getOrNull(i)?.let { p -> runProperties(p).distinct().size > 1 } == true }
+    fun mixedFormatting(source: File, indexes: Collection<Int>): List<Int> {
+        ZipFile(source).use { zip ->
+            val entry = zip.getEntry("word/document.xml") ?: return emptyList()
+            val doc = OoxmlReader.parse(zip.getInputStream(entry).use { it.readBytes() })
+            val paragraphs = OoxmlReader.bodyParagraphs(doc)
+            return indexes.filter { i -> paragraphs.getOrNull(i)?.let { p -> runProperties(p).distinct().size > 1 } == true }
+        }
     }
 
     private fun runProperties(p: Element): List<String> {

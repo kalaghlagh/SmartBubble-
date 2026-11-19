@@ -243,11 +243,14 @@ class DocxProposeEditsTool(
     }
 }
 
-fun decodeEdits(json: String?): List<ParagraphEdit> = Json.arr(Json.parse(json ?: return emptyList())).orEmpty().mapNotNull { item ->
-    val m = Json.obj(item) ?: return@mapNotNull null
-    val index = (m["index"] as? Number)?.toInt() ?: return@mapNotNull null
-    val text = m["text"] as? String ?: return@mapNotNull null
-    ParagraphEdit(index, text)
+fun decodeEdits(json: String?): List<ParagraphEdit> {
+    if (json == null) return emptyList()
+    return Json.arr(Json.parse(json)).orEmpty().mapNotNull { item ->
+        val m = Json.obj(item) ?: return@mapNotNull null
+        val index = (m["index"] as? Number)?.toInt() ?: return@mapNotNull null
+        val text = m["text"] as? String ?: return@mapNotNull null
+        ParagraphEdit(index, text)
+    }
 }
 
 /**
