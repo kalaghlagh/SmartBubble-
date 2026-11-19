@@ -107,7 +107,7 @@ class StitchScreensTest {
 
     // ------------------------------------------------------------------ bottom navigation
 
-    private val order = listOf("nav_thesis", "nav_templates", "nav_chat", "nav_library", "nav_settings")
+    private val order = listOf("nav_thesis", "nav_reformat", "nav_chat", "nav_library", "nav_settings")
 
     private fun nav(rtl: Boolean, fontScale: Float = 1f): MutableList<AppNavTab> {
         val picked = mutableListOf<AppNavTab>()
@@ -130,7 +130,7 @@ class StitchScreensTest {
         compose.onNodeWithTag("nav_chat").assertIsSelected()
         shot("nav-en")
         order.forEach { compose.onNodeWithTag(it).performClick() }
-        assertEquals(listOf(AppNavTab.THESIS, AppNavTab.TEMPLATES, AppNavTab.CHAT, AppNavTab.LIBRARY, AppNavTab.SETTINGS), picked)
+        assertEquals(listOf(AppNavTab.THESIS, AppNavTab.REFORMAT, AppNavTab.CHAT, AppNavTab.LIBRARY, AppNavTab.SETTINGS), picked)
         compose.onNodeWithTag("nav_settings").assertIsSelected()
         // Every label is shown whole at the default font size: all characters laid out, nothing
         // ellipsized (the sub-pixel overflow flag is not a cut; see PdfSelectionBarLayoutTest).

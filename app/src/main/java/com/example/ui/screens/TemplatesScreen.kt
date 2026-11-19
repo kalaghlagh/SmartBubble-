@@ -55,7 +55,9 @@ import java.util.*
 @Composable
 fun TemplatesScreen(
     viewModel: SmartBubbleViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Shown inside the Library (Templates tab): the header names the section, not a separate destination. */
+    inLibrary: Boolean = false
 ) {
     val context = LocalContext.current
     val templates by viewModel.allTemplates.collectAsState()
@@ -141,7 +143,7 @@ fun TemplatesScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = stringResource(R.string.templates_title),
+                        text = stringResource(if (inLibrary) R.string.library_templates_title else R.string.templates_title),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,

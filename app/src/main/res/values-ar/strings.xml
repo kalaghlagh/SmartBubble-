@@ -3,7 +3,7 @@
 
     <!-- Bottom Navigation -->
     <string name="nav_chat">الوكيل</string>
-    <string name="nav_templates">قوالبي</string>
+    <string name="nav_templates">القوالب</string>
     <string name="nav_library">المكتبة</string>
     <string name="nav_thesis">المذكرة</string>
     <string name="nav_settings">الإعدادات</string>
@@ -40,7 +40,7 @@
     <string name="chat_copied_toast">تم النسخ إلى الحافظة</string>
 
     <!-- Templates Screen -->
-    <string name="templates_title">قوالبي</string>
+    <string name="templates_title">القوالب</string>
     <string name="templates_upload">رفع قالب جديد</string>
     <string name="filter_all">الكل</string>
     <string name="filter_docs">مستندات</string>
@@ -377,7 +377,7 @@
     <string name="offline_note_pdf">يستخدم PDF ألوان القالب وهوامشه فقط؛ ولا يمكن إعادة إنتاج تخطيطه في PDF.</string>
     <string name="offline_note_style_only">«%1$s» مضبوط لتطبيق ألوانه وخطوطه فقط.</string>
     <string name="offline_note_layout_not_used">تعذّر استخدام تخطيط «%1$s»؛ طُبّقت ألوانه وخطوطه فقط.</string>
-    <string name="offline_note_no_template">لا يوجد قالب %1$s في قوالبي؛ يُستخدم التنسيق المدمج البسيط.</string>
+    <string name="offline_note_no_template">لا يوجد قالب %1$s في قوالب المكتبة؛ يُستخدم التنسيق المدمج البسيط.</string>
     <string name="offline_hint_pptx">يبدأ كل عنوان شريحة جديدة، ويستمر النص الطويل في الشرائح التالية.</string>
     <string name="offline_hint_xlsx">يصبح كل جدول ورقة، وتُحفظ القيم كما كُتبت تمامًا.</string>
     <string name="offline_heading_inferred">عنوان مستنتج · %1$d%%</string>
@@ -491,7 +491,7 @@
     <string name="thesis_field_extra">معلومات أخرى للغلاف (اختياري)</string>
     <string name="thesis_field_template">القالب</string>
     <string name="thesis_template_default">القالب الافتراضي</string>
-    <string name="thesis_template_note">يمكن استخدام قوالب Word وPDF من قوالبي. لا يُعدَّل ملف القالب الأصلي أبدًا.</string>
+    <string name="thesis_template_note">يمكن استخدام قوالب Word وPDF من قوالب المكتبة. لا يُعدَّل ملف القالب الأصلي أبدًا.</string>
     <string name="thesis_template_label">القالب: %1$s</string>
     <string name="thesis_ai_assist">اقتراحات الذكاء الاصطناعي</string>
     <string name="thesis_ai_assist_desc">إذا لم تحدد الوجهة، يُرسل مقتطف إلى مزوّد الذكاء الاصطناعي الافتراضي لاقتراحها. عند الإيقاف: تختارها بنفسك.</string>
@@ -579,7 +579,7 @@
     <string name="thesis_change_logo">تغيير الشعار</string>
     <string name="thesis_delete_project">حذف المشروع</string>
     <string name="thesis_delete_project_title">حذف مشروع المذكرة هذا؟</string>
-    <string name="thesis_delete_project_text">يُحذف نهائيًا: محتوى المذكرة وصورها وجميع الإصدارات والاقتراحات المعلّقة. يُحتفظ بـ: المستندات المصدّرة إلى المكتبة، وملفات قوالبي، ومحادثة الدردشة.</string>
+    <string name="thesis_delete_project_text">يُحذف نهائيًا: محتوى المذكرة وصورها وجميع الإصدارات والاقتراحات المعلّقة. يُحتفظ بـ: المستندات المصدّرة إلى المكتبة، وملفات قوالب المكتبة، ومحادثة الدردشة.</string>
     <string name="thesis_stop">إيقاف</string>
     <string name="thesis_busy_analyzing">جارٍ التحليل على هذا الجهاز…</string>
     <string name="thesis_busy_ai">بانتظار مزوّد الذكاء الاصطناعي الافتراضي…</string>
@@ -934,7 +934,7 @@
     <string name="st_uploaded">مرفوع</string>
     <string name="st_filter_all">الكل</string>
     <string name="st_filter_builtin">المدمجة</string>
-    <string name="st_filter_uploaded">قوالبي المرفوعة</string>
+    <string name="st_filter_uploaded">قوالب المكتبة المرفوعة</string>
     <string name="st_filter_favorites">المفضلة</string>
     <string name="st_filter_defaults">الافتراضية</string>
     <string name="st_search_hint">ابحث عن قالب</string>
@@ -1203,7 +1203,7 @@
     <string name="import_status_no_space">لا توجد مساحة تخزين كافية على الهاتف</string>
     <string name="import_status_cancelled">أُلغي</string>
     <string name="agent_source_library">المكتبة</string>
-    <string name="agent_source_template">قوالبي</string>
+    <string name="agent_source_template">قوالب المكتبة</string>
     <string name="agent_files_title">ملفات للوكيل</string>
     <string name="agent_files_from_phone">استيراد من الهاتف</string>
     <string name="agent_files_empty">لا توجد ملفات هنا بعد.</string>
@@ -1236,7 +1236,7 @@
     <string name="agent_error_no_changes">لم تكن هناك حاجة لأي تعديل، لذلك لم تُحفظ نسخة.</string>
     <string name="agent_error_no_text">تعذّرت قراءة أي نص من الملف.</string>
     <string name="agent_reply_edited_copy">حُفظت نسخة معدّلة في المكتبة: %1$s (عُدّلت %2$d فقرة). لم يتغير الأصل.</string>
-    <string name="agent_reply_template_copy">حُفظت نسخة معدّلة من القالب في قوالبي: %1$s. لم يتغير القالب الأصلي.</string>
+    <string name="agent_reply_template_copy">حُفظت نسخة معدّلة من القالب في قوالب المكتبة: %1$s. لم يتغير القالب الأصلي.</string>
     <string name="agent_reply_replaced">تم استبدال الأصل «%1$s» بالنسخة المعدّلة.</string>
     <!-- Agent: shortcuts and Document Reformatting -->
     <string name="agent_source_device">الهاتف</string>
@@ -1247,7 +1247,7 @@
     <string name="agent_shortcut_thesis">مساعد الأطروحة</string>
     <string name="agent_shortcut_thesis_desc">استخراج صفحات أو جداول من ملفات PDF إلى مذكرتك، وإضافة نص أو استبداله.</string>
     <string name="agent_shortcut_template">إنشاء محتوى حسب قالب</string>
-    <string name="agent_shortcut_template_desc">كتابة مستند جديد بتنسيق أحد قوالبي.</string>
+    <string name="agent_shortcut_template_desc">كتابة مستند جديد بتنسيق أحد قوالب المكتبة.</string>
     <string name="agent_workflow_end">إنهاء هذا الاختصار</string>
     <string name="agent_source_choose">اختيار المستند</string>
     <string name="agent_source_change">تغيير</string>
@@ -1257,7 +1257,7 @@
     <string name="agent_source_from_library">من المكتبة</string>
     <string name="agent_source_library_empty">لا يوجد بعد مستند PDF أو وورد أو صورة في المكتبة.</string>
     <string name="agent_reformat_intro">إعادة إعداد وثيقة: اختر المستند المراد تحديثه (PDF أو وورد أو صورة لمستند). سأعرض ما وجدته فيه، ثم أخبرني بما يجب تغييره.</string>
-    <string name="agent_template_intro">إنشاء محتوى حسب قالب: اختر قالبًا من قوالبي، ثم صف المستند الذي تريده (يمكنك قول «بصيغة PDF» أو «بصيغة وورد»).</string>
+    <string name="agent_template_intro">إنشاء محتوى حسب قالب: اختر قالبًا من قوالب المكتبة، ثم صف المستند الذي تريده (يمكنك قول «بصيغة PDF» أو «بصيغة وورد»).</string>
     <string name="agent_thesis_intro_active">مساعد الأطروحة: مذكرتك النشطة هي «%1$s». مثلًا: «استخرج الصفحة 2 من Report.pdf إلى المقدمة في مذكرتي» أو «استخرج الجدول 3 من Report.pdf إلى الفصل الثاني من مذكرتي».</string>
     <string name="agent_thesis_intro_none">مساعد الأطروحة: افتح مذكرتك أولًا في منشئ المذكرات (تصبح المذكرة النشطة)، ثم اطلب مثلًا: «استخرج الصفحة 2 من Report.pdf إلى المقدمة في مذكرتي».</string>
     <string name="agent_reformat_pick_first">أي مستند أحدّث؟ المس «اختيار المستند» فوق مربع الرسالة.</string>
@@ -1312,11 +1312,73 @@
     <string name="agent_tool_library_copy">نسخ المستند</string>
     <string name="agent_tool_library_delete">حذف المستند</string>
     <string name="agent_template_pick_first">أي قالب أستخدم؟ المس زر اختيار القالب فوق مربع الرسالة، ثم أعد إرسال طلبك.</string>
+    <!-- Reformatting workspace and Library templates -->
+    <string name="nav_reformat">إعادة الإعداد</string>
+    <string name="library_tab_documents">المستندات</string>
+    <string name="library_tab_templates">القوالب</string>
+    <string name="library_templates_title">القوالب</string>
+    <string name="reformat_title">إعادة الإعداد</string>
+    <string name="reformat_intro">افتح مستند وورد أو PDF أو صورة لمستند، ثم عدّل محتواه وأنشئ ملف PDF أو وورد جديدًا بتنسيقه الأصلي أو بقالب من المكتبة. لا يُعدَّل الأصل أبدًا.</string>
+    <string name="reformat_insert_file">إدراج ملف</string>
+    <string name="reformat_image">صورة</string>
+    <string name="reformat_keep_source">الاحتفاظ بتنسيق المصدر</string>
+    <string name="reformat_keep_source_desc">تخطيط المستند وأنماطه الأصلية</string>
+    <string name="reformat_formatting">التنسيق</string>
+    <string name="reformat_library_templates">قوالب المكتبة</string>
+    <string name="reformat_no_templates">لا يوجد بعد قالب وورد أو PDF في المكتبة (المكتبة › القوالب).</string>
+    <string name="reformat_template_note">يوضع المحتوى في نسخة من القالب: العناوين بنمط عناوينه، والفقرات بنمط نصه، والجداول بنمط جداوله (عناوين/فقرات/جداول: %1$s).</string>
+    <string name="reformat_keep_docx_note">وورد: تُنشأ نسخة من الملف الأصلي ويُستبدل النص الذي تغيّره فقط؛ تبقى الأنماط والجداول والصور والرؤوس والتذييلات وإعدادات الصفحة كما هي.</string>
+    <string name="reformat_reconstruct_note">PDF والصور: يُعاد بناء المستند الجديد من النص والتنسيق المكتشفين (مقاس الصفحة، الهوامش، الخطوط، العناوين، الجداول)؛ لا تُنسخ المواضع الدقيقة ولا الصور والشعارات.</string>
+    <string name="reformat_unsaved_edits">معدَّل — لم يُنشأ بعد</string>
+    <string name="reformat_no_edits">لا تغييرات بعد</string>
+    <string name="reformat_create">إنشاء</string>
+    <string name="reformat_choose_output">إنشاء المستند بصيغة PDF أم وورد (.docx)؟</string>
+    <string name="reformat_doc">DOC (.docx)</string>
+    <string name="reformat_source_info">%1$s • %2$d صفحة • الأصل دون تغيير</string>
+    <string name="reformat_remove_source">إزالة هذا المستند من مساحة العمل</string>
+    <string name="reformat_scanned_note">قُرئ بالتعرف على النص: راجع النص مع الأصل قبل الإنشاء.</string>
+    <string name="reformat_uncertain">علِّم %1$d مقطع قُرئ بثقة منخفضة: راجعه.</string>
+    <string name="reformat_reset">التراجع عن التعديلات</string>
+    <string name="reformat_block_heading">عنوان</string>
+    <string name="reformat_block_list">عنصر قائمة</string>
+    <string name="reformat_block_table">جدول</string>
+    <string name="reformat_block_paragraph">فقرة</string>
+    <string name="reformat_docx_table_note">تحتفظ جداول وورد بتنسيقها؛ لتغيير محتواها اختر قالبًا من المكتبة.</string>
+    <string name="reformat_check_reading">قُرئ بثقة منخفضة: راجعه</string>
+    <string name="reformat_preview_title">مراجعة المستند الجديد</string>
+    <string name="reformat_preview_problem">في المستند الجديد مشكلة</string>
+    <string name="reformat_preview_info">%1$s • التنسيق: %2$s</string>
+    <string name="reformat_preview_no_text">تعذّرت قراءة أي نص من الملف.</string>
+    <string name="reformat_saved">حُفظ في المكتبة.</string>
+    <string name="reformat_open">فتح</string>
+    <string name="reformat_save_library">حفظ في المكتبة</string>
+    <string name="reformat_back_to_edit">العودة إلى التعديل</string>
+    <string name="reformat_note_reconstructed">مستند مُعاد بناؤه: قد يختلف عن الأصل.</string>
+    <string name="reformat_note_template">مُنسَّق بالقالب المختار (نسخة؛ القالب دون تغيير).</string>
+    <string name="reformat_note_template_partial">طُبقت ألوان القالب وخطوطه فقط، لا تخطيطه الكامل.</string>
+    <string name="reformat_note_table_edits">لا تُطبَّق تعديلات جداول وورد مع الاحتفاظ بتنسيق المصدر.</string>
+    <string name="reformat_note_not_mapped">تعذّر وضع بعض التعديلات في الملف الأصلي.</string>
+    <string name="reformat_note_text_not_verifiable">تعذّرت قراءة نص ملف PDF لمقارنته حرفيًا.</string>
+    <string name="reformat_note_content_missing">لم يُعثر على %1$d مقطع في المستند الجديد.</string>
+    <string name="reformat_note_arabic">لم يُسترجَع النص العربي كما كُتب (الحروف أو الترتيب). لم يُحفظ الملف.</string>
+    <string name="reformat_note_arabic_direction">%1$d فقرة عربية ليست من اليمين إلى اليسار.</string>
+    <string name="reformat_note_parts_lost">أجزاء من ملف وورد الأصلي مفقودة في الملف الجديد.</string>
+    <string name="reformat_note_unreadable">لا يمكن قراءة الملف الجديد: لم يُحفظ.</string>
+    <string name="reformat_error_unavailable">لا يمكن فتح الملف (نُقل أو حُذف أو سُحب الإذن). اختره من جديد.</string>
+    <string name="reformat_error_unsupported">هذا النوع من الملفات غير مدعوم هنا: استخدم مستند وورد (.docx) أو PDF أو صورة.</string>
+    <string name="reformat_error_too_large">المستند كبير جدًا لمساحة العمل.</string>
+    <string name="reformat_error_empty">لم يُعثر على نص في هذا المستند.</string>
+    <string name="reformat_error_damaged">تعذّرت قراءة المستند (ملف تالف).</string>
+    <string name="reformat_error_source_changed">تغيّرت نسخة العمل من المستند. افتح المستند من جديد.</string>
+    <string name="reformat_error_template_missing">القالب المختار لم يعد في المكتبة: يُستخدم تنسيق المصدر. اختر قالبًا آخر عند الحاجة.</string>
+    <string name="reformat_error_edit_not_applied">تعذّر وضع تعديل في المستند الأصلي. لم يُنشأ شيء.</string>
+    <string name="reformat_error_generic">حدث خطأ. لم يُنشأ شيء؛ وتعديلاتك محفوظة.</string>
+    <string name="reformat_result_name">%1$s (معاد إعداده)</string>
     <!-- Agent: thesis document workflows -->
     <string name="agent_ask_section">في أي قسم من مذكرتك أضعه؟ مثلًا: المقدمة، الفصل 2، الشكر والتقدير.</string>
     <string name="agent_ask_text">ما النص الذي أضيفه؟ ضعه بين علامتي تنصيص أو بعد نقطتين.</string>
     <string name="agent_ask_pages">أي صفحة من المستند؟ مثلًا: «الصفحة 2» أو «الصفحات 3-5».</string>
-    <string name="agent_ask_source">من أي مستند أستخرج؟ اذكر اسمه كما يظهر في المكتبة أو قوالبي، أو أرفقه.</string>
+    <string name="agent_ask_source">من أي مستند أستخرج؟ اذكر اسمه كما يظهر في المكتبة أو قوالب المكتبة، أو أرفقه.</string>
     <string name="agent_ask_source_format">أستطيع استخراج الصفحات والجداول من ملفات PDF والصور فقط. أي ملف PDF أستخدم؟</string>
     <string name="agent_error_source_is_target">المصدر والهدف هما المذكرة نفسها. من أي مستند آخر أستخرج؟</string>
     <string name="agent_thesis_restored_after_check">تعذّر تأكيد التعديل على «%1$s» في المذكرة المحفوظة، فاستُعيدت النسخة السابقة. لم يتغير شيء آخر.</string>
@@ -1378,7 +1440,7 @@
     <string name="templates_sorted_recent">مرتبة حسب الأحدث</string>
     <string name="thesis_choose_template">اختيار القالب</string>
     <string name="thesis_templates_builtin">القوالب المدمجة</string>
-    <string name="thesis_templates_uploaded">قوالبي المرفوعة</string>
+    <string name="thesis_templates_uploaded">قوالب المكتبة المرفوعة</string>
     <string name="thesis_template_default_desc">تنسيق المذكرة القياسي في التطبيق</string>
     <string name="thesis_template_added">أُضيف %1$s • %2$s</string>
     <string name="thesis_template_search">البحث في القوالب…</string>

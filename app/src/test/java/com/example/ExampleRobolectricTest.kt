@@ -110,8 +110,11 @@ class ExampleRobolectricTest {
     @Test
     fun testMainActivityLaunchAndNavigateToTemplates() {
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("nav_templates").assertExists()
-        composeTestRule.onNodeWithTag("nav_templates").performClick()
+        // Templates are in the Library (Templates tab); Reformatting took the former My Templates place.
+        composeTestRule.onNodeWithTag("nav_reformat").assertExists()
+        composeTestRule.onNodeWithTag("nav_library").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("library_tab_templates").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("upload_template_button").assertExists()
     }
@@ -123,8 +126,16 @@ class ExampleRobolectricTest {
         // Tab 1: Chat (initial)
         composeTestRule.onNodeWithTag("nav_chat").assertExists()
 
-        // Tab 2: My Templates
-        composeTestRule.onNodeWithTag("nav_templates").performClick()
+        // Tab 2: Reformatting
+        composeTestRule.onNodeWithTag("nav_reformat").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reformat_insert_file").assertExists()
+        composeTestRule.onNodeWithTag("reformat_image").assertExists()
+
+        // Library templates
+        composeTestRule.onNodeWithTag("nav_library").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("library_tab_templates").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("upload_template_button").assertExists()
 
@@ -137,7 +148,9 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
 
         // Back to Templates
-        composeTestRule.onNodeWithTag("nav_templates").performClick()
+        composeTestRule.onNodeWithTag("nav_library").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("library_tab_templates").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("upload_template_button").assertExists()
 
@@ -159,7 +172,9 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
 
         // Open Templates in current language
-        composeTestRule.onNodeWithTag("nav_templates").performClick()
+        composeTestRule.onNodeWithTag("nav_library").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("library_tab_templates").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("upload_template_button").assertExists()
 
@@ -168,7 +183,9 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
 
         // Return to Templates
-        composeTestRule.onNodeWithTag("nav_templates").performClick()
+        composeTestRule.onNodeWithTag("nav_library").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("library_tab_templates").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("upload_template_button").assertExists()
     }

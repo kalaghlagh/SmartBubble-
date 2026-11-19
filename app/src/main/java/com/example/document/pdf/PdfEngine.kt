@@ -149,6 +149,8 @@ class PdfEngine {
         fun buildLayout(text: String, paint: TextPaint, width: Int): StaticLayout =
             StaticLayout.Builder.obtain(text, 0, text.length, paint, width.coerceAtLeast(1))
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                // The paragraph's own direction (an Arabic paragraph that starts with a date or a Latin word is still right to left).
+                .setTextDirection(PdfTextDirection.of(text))
                 .build()
 
         try {

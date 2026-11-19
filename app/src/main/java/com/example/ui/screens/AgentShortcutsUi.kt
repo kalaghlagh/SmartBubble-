@@ -161,7 +161,7 @@ fun AgentWorkflowBar(
                 }
                 AgentWorkflow.THESIS -> Unit
             }
-            IconButton(onClick = onClose, modifier = Modifier.testTag("agent_workflow_close")) {
+            IconButton(onClick = onClose, modifier = Modifier.size(48.dp).testTag("agent_workflow_close")) {
                 Icon(Icons.Default.Close, contentDescription = stringResource(R.string.agent_workflow_end))
             }
         }

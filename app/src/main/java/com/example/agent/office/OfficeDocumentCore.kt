@@ -115,17 +115,18 @@ object FieldDetector {
     // "Label : value" at the start of a line (the label as written is kept).
     private val labels = listOf(
         Label(FieldKey.SUBJECT, Regex("""(?i)^\s*(objet|subject|re|الموضوع)\s*[:：\-–]\s*""")),
-        Label(FieldKey.REFERENCE, Regex("""(?i)^\s*(n°\s*r[ée]f(?:[ée]rence)?|r[ée]f[ée]rence|r[ée]f\.?|ref(?:erence)?\.?|رقم المرجع|المرجع|الرقم)\s*[:：\-–]?\s*""")),
+        Label(FieldKey.REFERENCE, Regex("""(?i)^\s*(n°\s*r[ée]f(?:[ée]rence)?|r[éÉe][fF](?:[éÉe]rence)?\.?|r[ée]f[ée]rence|r[ée]f\.?|ref(?:erence)?\.?|رقم المرجع|المرجع|الرقم)\s*[:：\-–]?\s*""")),
         Label(FieldKey.DATE, Regex("""(?i)^\s*(date|le|fait le|التاريخ|بتاريخ)\s*[:：\-–]\s*""")),
-        Label(FieldKey.SENDER, Regex("""(?i)^\s*(from|de la part de|exp[ée]diteur|[ée]metteur|de|المرسل|من طرف)\s*[:：]\s*""")),
-        Label(FieldKey.RECIPIENT, Regex("""(?i)^\s*(to|destinataire|[àa]|إلى|الى|المرسل إليه)\s*[:：]\s*""")),
-        Label(FieldKey.PHONE, Regex("""(?i)^\s*(t[ée]l[ée]phone|t[ée]l\.?|phone|mobile|portable|رقم الهاتف|الهاتف|الجوال)\s*[:：\-–]?\s*""")),
+        Label(FieldKey.SENDER, Regex("""(?i)^\s*(from|de la part de|exp[ée]diteur|[ée]metteur|[ÉE]METTEUR|EXP[ÉE]DITEUR|de|المرسل|من طرف)\s*[:：]\s*""")),
+        Label(FieldKey.RECIPIENT, Regex("""(?i)^\s*(to|destinataire|[àaÀ]|إلى|الى|المرسل إليه)\s*[:：]\s*""")),
+        Label(FieldKey.PHONE, Regex("""(?i)^\s*(t[éÉe]l[éÉe]phone|t[éÉe]l\.?|phone|mobile|portable|رقم الهاتف|الهاتف|الجوال)\s*[:：\-–]?\s*""")),
         Label(FieldKey.EMAIL, Regex("""(?i)^\s*(e-?mail|courriel|البريد الإلكتروني|البريد)\s*[:：\-–]?\s*""")),
         Label(FieldKey.ADDRESS, Regex("""(?i)^\s*(adresse|address|العنوان)\s*[:：\-–]\s*""")),
         Label(FieldKey.NAME, Regex("""(?i)^\s*(nom(?: et pr[ée]nom)?|name|full name|الاسم(?: واللقب)?|اللقب والاسم)\s*[:：\-–]\s*"""))
     )
     private val genericLabel = Regex("""^\s*([\p{L}][\p{L}0-9 '’°.\-]{1,30}?)\s*[:：]\s*(\S.*)$""")
-    private val recipientLine = Regex("""(?i)^\s*(?:[àa]\s+(?:monsieur|madame|mesdames|messieurs|m\.|mme)|to\s+(?:mr|mrs|ms|dr|the)\b|إلى\s+(?:السيد|السيدة|حضرة|السادة)|الى\s+(?:السيد|السيدة|حضرة|السادة))""")
+    // The JVM's (?i) folds ASCII letters only: "À" is listed with "à".
+    private val recipientLine = Regex("""(?i)^\s*(?:[àaÀ]\s+(?:monsieur|madame|mesdames|messieurs|m\.|mme)|to\s+(?:mr|mrs|ms|dr|the)\b|إلى\s+(?:السيد|السيدة|حضرة|السادة)|الى\s+(?:السيد|السيدة|حضرة|السادة))""")
     private val date = Regex("""\b\d{1,2}[/.\-]\d{1,2}[/.\-](?:\d{4}|\d{2})\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}(?:er)?\s+(?:janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre|january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}\b|\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{4}\b|\b\d{1,2}\s+(?:جانفي|يناير|فيفري|فبراير|مارس|أفريل|أبريل|ماي|مايو|جوان|يونيو|جويلية|يوليو|أوت|أغسطس|سبتمبر|أكتوبر|نوفمبر|ديسمبر)\s+\d{4}""", RegexOption.IGNORE_CASE)
     private val email = Regex("""[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}""")
     private val phone = Regex("""(?<![\w])(?:\+|00)?\d[\d .\-]{7,16}\d(?![\w])""")

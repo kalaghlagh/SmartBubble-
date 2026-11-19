@@ -493,7 +493,7 @@ fun SmartTemplatesSettingsCard(viewModel: SmartBubbleViewModel) {
                             TextButton(onClick = { viewModel.clearDefaultTemplateFor(scope) }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.st_remove_default)) }
                         }
                     }
-                    OutlinedButton(onClick = { viewModel.setNavTab(com.example.ui.AppNavTab.TEMPLATES) }, shape = RoundedCornerShape(12.dp),
+                    OutlinedButton(onClick = { viewModel.openLibraryTemplates() }, shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("st_manage_templates")) {
                         Text(stringResource(R.string.st_manage_templates))
                     }

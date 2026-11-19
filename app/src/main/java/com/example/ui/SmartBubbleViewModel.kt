@@ -106,7 +106,8 @@ enum class AppNavTab {
     CHAT,
     /** Thesis Builder: an independent destination with its own screens and back stack. */
     THESIS,
-    TEMPLATES,
+    /** Reformatting workspace (replaces the former My Templates destination; templates are in the Library). */
+    REFORMAT,
     LIBRARY,
     SETTINGS
 }
@@ -282,8 +283,56 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     val allDocuments = database.documentDao().getAllDocuments()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val allTemplates = database.templateDao().getAllTemplates()
+    /** The single template source (Library > Templates), shared by Reformatting, Thesis Builder and Agent Chat. */
+    val libraryTemplates = com.example.library.LibraryTemplateRepository(database.templateDao())
+    val allTemplates = libraryTemplates.observe()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** The Reformatting workspace (local engines only; the source is never written). */
+    val reformat: com.example.reformat.ReformatController by lazy {
+        com.example.reformat.ReformatController(
+            scope = viewModelScope, database = database, templates = libraryTemplates,
+            workDir = File(context.filesDir, "reformat"), libraryDir = File(context.filesDir, "generated_docs"),
+            extract = { file, isPdf, pages ->
+                extractionEngine.extract(
+                    listOf(com.example.extraction.ExtractionSource(Uri.fromFile(file), isPdf = isPdf, pages = pages)),
+                    OcrLanguage.fromCode(ocrLanguage.value), appLanguage.value
+                ) { _, _ -> }
+            },
+            resultLabel = { name -> str(R.string.reformat_result_name, name) }
+        ).also { c -> viewModelScope.launch { try { c.restore() } catch (e: CancellationException) { throw e } catch (e: Exception) { Log.e(TAG, "Workspace not restored", e) } } }
+    }
+
+    /** Insert File: a Word or PDF document from the phone (read into the workspace, not added to the Library). */
+    fun reformatImportFile(uri: Uri) {
+        viewModelScope.launch {
+            val name = withContext(Dispatchers.IO) { displayNameOf(uri) }
+            reformat.importFile(name) { context.contentResolver.openInputStream(uri) }
+        }
+    }
+
+    /** Image: a photo or scanned page, read by the existing OCR engine. */
+    fun reformatImportImage(uri: Uri) {
+        viewModelScope.launch {
+            val name = withContext(Dispatchers.IO) { displayNameOf(uri) }
+            reformat.importImage(name) { context.contentResolver.openInputStream(uri) }
+        }
+    }
+
+    fun openDocumentById(id: String) = launchSafely("openDocumentById") {
+        withContext(Dispatchers.IO) { database.documentDao().getDocumentById(id) }?.let { openDocument(it) }
+    }
+
+    /** Library: which section is shown (documents, or the templates formerly in My Templates). */
+    private val _libraryShowsTemplates = MutableStateFlow(false)
+    val libraryShowsTemplates: StateFlow<Boolean> = _libraryShowsTemplates.asStateFlow()
+    fun showLibraryTemplates(show: Boolean) { _libraryShowsTemplates.value = show }
+
+    /** Opens the Library on its templates (where templates are added, previewed and managed). */
+    fun openLibraryTemplates() {
+        _libraryShowsTemplates.value = true
+        setNavTab(AppNavTab.LIBRARY)
+    }
 
     val allProviders = database.providerDao().getAllProviders()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

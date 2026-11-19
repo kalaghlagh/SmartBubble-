@@ -32,6 +32,32 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The Library destination: documents, and the reusable templates (formerly My Templates, same
+ * records and files). The templates shown here are the ones Reformatting, Thesis Builder and Agent
+ * Chat use; they are added, previewed and managed here.
+ */
+@Composable
+fun LibraryHome(viewModel: SmartBubbleViewModel, modifier: Modifier = Modifier) {
+    val templatesTab by viewModel.libraryShowsTemplates.collectAsState()
+    Column(modifier.fillMaxSize()) {
+        androidx.compose.material3.TabRow(selectedTabIndex = if (templatesTab) 1 else 0, modifier = Modifier.testTag("library_tabs")) {
+            androidx.compose.material3.Tab(
+                selected = !templatesTab, onClick = { viewModel.showLibraryTemplates(false) },
+                text = { Text(stringResource(R.string.library_tab_documents), maxLines = 2) },
+                modifier = Modifier.heightIn(min = 48.dp).testTag("library_tab_documents")
+            )
+            androidx.compose.material3.Tab(
+                selected = templatesTab, onClick = { viewModel.showLibraryTemplates(true) },
+                text = { Text(stringResource(R.string.library_tab_templates), maxLines = 2) },
+                modifier = Modifier.heightIn(min = 48.dp).testTag("library_tab_templates")
+            )
+        }
+        if (templatesTab) TemplatesScreen(viewModel = viewModel, modifier = Modifier.weight(1f), inLibrary = true)
+        else LibraryScreen(viewModel = viewModel, modifier = Modifier.weight(1f))
+    }
+}
+
 @Composable
 fun LibraryScreen(
     viewModel: SmartBubbleViewModel,

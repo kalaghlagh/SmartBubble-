@@ -107,10 +107,18 @@ object DocxCopyEditor {
                 if (nodeEnd <= at || nodeStart >= end) continue
                 val from = (at - nodeStart).coerceAtLeast(0)
                 val to = (end - nodeStart).coerceAtMost(t.length)
+                val first = !placed
                 val replacement = if (!placed) r.newText.also { placed = true } else ""
                 node.textContent = t.substring(0, from) + replacement + t.substring(to)
                 node.setAttributeNS("http://www.w3.org/XML/1998/namespace", "xml:space", "preserve")
+                // Arabic placed in a run that was not right to left: the run becomes right to left
+                // (w:rtl), so Word orders and shapes it as Arabic; its other formatting is kept.
+                if (first && hasArabic(r.newText) && !hasArabic(t)) (node.parentNode as? Element)?.let { run -> markRtl(run) }
             }
+            // A paragraph that becomes mostly Arabic gets a right-to-left direction (w:bidi);
+            // a paragraph that already was keeps its own properties.
+            val after = nodes.joinToString("") { it.textContent }
+            if (p != null && !mostlyArabic(full) && mostlyArabic(after)) markBidi(p)
             changed++
         }
         val out = ByteArrayOutputStream()
@@ -119,6 +127,42 @@ object DocxCopyEditor {
             setOutputProperty(OutputKeys.STANDALONE, "yes")
         }.transform(DOMSource(doc), StreamResult(out))
         return out.toByteArray() to DocxEditResult(changed, skipped.distinct(), emptyList())
+    }
+
+    private fun hasArabic(s: String) = s.any { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }
+    private fun mostlyArabic(s: String) = s.count { it in '\u0600'..'\u06FF' } > s.count { it in 'A'..'Z' || it in 'a'..'z' }
+
+    /** Adds w:rtl (and w:cs for complex-script formatting) to a run's properties, creating them first when needed. */
+    private fun markRtl(run: Element) {
+        if (run.localName != "r") return
+        val doc = run.ownerDocument
+        var rPr = (0 until run.childNodes.length).map { run.childNodes.item(it) }.firstOrNull { it is Element && it.localName == "rPr" } as? Element
+        if (rPr == null) {
+            rPr = doc.createElementNS(W, "w:rPr")
+            run.insertBefore(rPr, run.firstChild)
+        }
+        if (rPr.getElementsByTagNameNS(W, "rtl").length == 0) insertInOrder(rPr, doc.createElementNS(W, "w:rtl"), AFTER_RTL)
+    }
+
+    // OOXML schema order: an element is inserted before the first sibling that must follow it.
+    private val AFTER_RTL = setOf("cs", "em", "lang", "eastAsianLayout", "specVanish", "oMath")
+    private val AFTER_BIDI = setOf("adjustRightInd", "snapToGrid", "spacing", "ind", "contextualSpacing", "mirrorIndents", "suppressOverlap",
+        "jc", "textDirection", "textAlignment", "textboxTightWrap", "outlineLvl", "divId", "cnfStyle", "rPr", "sectPr", "pPrChange")
+
+    private fun insertInOrder(parent: Element, child: Element, after: Set<String>) {
+        val next = (0 until parent.childNodes.length).map { parent.childNodes.item(it) }.firstOrNull { it is Element && it.localName in after }
+        if (next != null) parent.insertBefore(child, next) else parent.appendChild(child)
+    }
+
+    /** Adds w:bidi to a paragraph's properties (created first when needed). */
+    private fun markBidi(p: Element) {
+        val doc = p.ownerDocument
+        var pPr = (0 until p.childNodes.length).map { p.childNodes.item(it) }.firstOrNull { it is Element && it.localName == "pPr" } as? Element
+        if (pPr == null) {
+            pPr = doc.createElementNS(W, "w:pPr")
+            p.insertBefore(pPr, p.firstChild)
+        }
+        if (pPr.getElementsByTagNameNS(W, "bidi").length == 0) insertInOrder(pPr, doc.createElementNS(W, "w:bidi"), AFTER_BIDI)
     }
 
     private fun writeWith(source: File, target: File, transform: (ByteArray) -> Pair<ByteArray, DocxEditResult>): DocxEditResult {

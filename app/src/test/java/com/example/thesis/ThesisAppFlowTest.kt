@@ -216,8 +216,9 @@ class ThesisAppFlowTest {
         await("save to device offered") { exists("thesis_export_save_device") }
 
         // The other destinations still work.
-        tap("nav_templates"); await("templates") { exists("upload_template_button") }
+        tap("nav_reformat"); await("reformatting") { exists("reformat_insert_file") }
         tap("nav_library"); compose.waitForIdle()
+        tap("library_tab_templates"); await("templates") { exists("upload_template_button") }
         tap("nav_settings"); compose.waitForIdle()
         tap("nav_chat"); await("chat") { exists("chat_input_field") }
     }

@@ -3,7 +3,7 @@
 
     <!-- Bottom Navigation -->
     <string name="nav_chat">Agent</string>
-    <string name="nav_templates">Mes Modèles</string>
+    <string name="nav_templates">Modèles</string>
     <string name="nav_library">Bibliothèque</string>
     <string name="nav_thesis">Mémoire</string>
     <string name="nav_settings">Paramètres</string>
@@ -40,7 +40,7 @@
     <string name="chat_copied_toast">Copié dans le presse-papiers</string>
 
     <!-- Templates Screen -->
-    <string name="templates_title">Mes Modèles</string>
+    <string name="templates_title">Modèles</string>
     <string name="templates_upload">Téléverser un modèle</string>
     <string name="filter_all">Tous</string>
     <string name="filter_docs">Docs</string>
@@ -377,7 +377,7 @@
     <string name="offline_note_pdf">Le PDF n’utilise que les couleurs et les marges du modèle ; sa mise en page ne peut pas être reproduite.</string>
     <string name="offline_note_style_only">« %1$s » est réglé pour n’appliquer que ses couleurs et polices.</string>
     <string name="offline_note_layout_not_used">La mise en page de « %1$s » n’a pas pu être utilisée ; seules ses couleurs et polices ont été appliquées.</string>
-    <string name="offline_note_no_template">Aucun modèle %1$s dans Mes Modèles ; la mise en forme intégrée est utilisée.</string>
+    <string name="offline_note_no_template">Aucun modèle %1$s dans les modèles de la Bibliothèque ; la mise en forme intégrée est utilisée.</string>
     <string name="offline_hint_pptx">Chaque titre commence une diapositive ; un texte long continue sur les suivantes.</string>
     <string name="offline_hint_xlsx">Chaque tableau devient une feuille ; les valeurs sont conservées telles quelles.</string>
     <string name="offline_heading_inferred">Titre déduit · %1$d %%</string>
@@ -491,7 +491,7 @@
     <string name="thesis_field_extra">Autres informations de couverture (facultatif)</string>
     <string name="thesis_field_template">Modèle</string>
     <string name="thesis_template_default">Modèle par défaut</string>
-    <string name="thesis_template_note">Les modèles Word et PDF de Mes Modèles peuvent être utilisés. Le fichier du modèle n’est jamais modifié.</string>
+    <string name="thesis_template_note">Les modèles Word et PDF des modèles de la Bibliothèque peuvent être utilisés. Le fichier du modèle n’est jamais modifié.</string>
     <string name="thesis_template_label">Modèle : %1$s</string>
     <string name="thesis_ai_assist">Suggestions de l’IA</string>
     <string name="thesis_ai_assist_desc">Si vous ne nommez pas la destination, un extrait est envoyé à votre fournisseur IA par défaut pour en suggérer une. Désactivé : vous la choisissez vous-même.</string>
@@ -579,7 +579,7 @@
     <string name="thesis_change_logo">Changer le logo</string>
     <string name="thesis_delete_project">Supprimer le projet</string>
     <string name="thesis_delete_project_title">Supprimer ce projet de mémoire ?</string>
-    <string name="thesis_delete_project_text">Supprimés définitivement : le contenu du mémoire, ses images, toutes les versions et les propositions en attente. Conservés : les documents déjà exportés dans la Bibliothèque, vos fichiers de Mes Modèles et la conversation du Chat.</string>
+    <string name="thesis_delete_project_text">Supprimés définitivement : le contenu du mémoire, ses images, toutes les versions et les propositions en attente. Conservés : les documents déjà exportés dans la Bibliothèque, vos fichiers des modèles de la Bibliothèque et la conversation du Chat.</string>
     <string name="thesis_stop">Arrêter</string>
     <string name="thesis_busy_analyzing">Analyse sur cet appareil…</string>
     <string name="thesis_busy_ai">En attente de votre fournisseur IA par défaut…</string>
@@ -1199,7 +1199,7 @@
     <string name="import_status_no_space">Espace de stockage insuffisant sur le téléphone</string>
     <string name="import_status_cancelled">Annulé</string>
     <string name="agent_source_library">Bibliothèque</string>
-    <string name="agent_source_template">Mes modèles</string>
+    <string name="agent_source_template">Modèles de la Bibliothèque</string>
     <string name="agent_files_title">Fichiers pour l’Agent</string>
     <string name="agent_files_from_phone">Importer depuis le téléphone</string>
     <string name="agent_files_empty">Aucun fichier ici pour l’instant.</string>
@@ -1232,7 +1232,7 @@
     <string name="agent_error_no_changes">Aucune modification n’était nécessaire : aucune copie n’a été enregistrée.</string>
     <string name="agent_error_no_text">Aucun texte n’a pu être lu dans le fichier.</string>
     <string name="agent_reply_edited_copy">Copie modifiée enregistrée dans la Bibliothèque : %1$s (%2$d paragraphe(s) modifié(s)). L’original n’a pas changé.</string>
-    <string name="agent_reply_template_copy">Copie modifiée du modèle enregistrée dans Mes modèles : %1$s. Le modèle original n’a pas changé.</string>
+    <string name="agent_reply_template_copy">Copie modifiée du modèle enregistrée dans les modèles de la Bibliothèque : %1$s. Le modèle original n’a pas changé.</string>
     <string name="agent_reply_replaced">L’original « %1$s » a été remplacé par la copie modifiée.</string>
     <!-- Agent: shortcuts and Document Reformatting -->
     <string name="agent_source_device">Téléphone</string>
@@ -1243,7 +1243,7 @@
     <string name="agent_shortcut_thesis">Assistant de thèse</string>
     <string name="agent_shortcut_thesis_desc">Extraire des pages ou des tableaux de PDF vers votre mémoire, ajouter ou remplacer du texte.</string>
     <string name="agent_shortcut_template">Créer un contenu à partir d’un modèle</string>
-    <string name="agent_shortcut_template_desc">Rédiger un nouveau document avec la mise en page d’un de Mes modèles.</string>
+    <string name="agent_shortcut_template_desc">Rédiger un nouveau document avec la mise en page d’un des modèles de la Bibliothèque.</string>
     <string name="agent_workflow_end">Quitter ce raccourci</string>
     <string name="agent_source_choose">Choisir le document</string>
     <string name="agent_source_change">Changer</string>
@@ -1253,7 +1253,7 @@
     <string name="agent_source_from_library">Depuis la Bibliothèque</string>
     <string name="agent_source_library_empty">Aucun document PDF, Word ou image dans la Bibliothèque pour l’instant.</string>
     <string name="agent_reformat_intro">Reconfigurer un document : choisissez le document à mettre à jour (PDF, Word ou photo d’un document). Je vous montre ce que j’y trouve, puis dites-moi quoi changer.</string>
-    <string name="agent_template_intro">Créer un contenu à partir d’un modèle : choisissez un modèle dans Mes modèles, puis décrivez le document voulu (vous pouvez préciser « en PDF » ou « en Word »).</string>
+    <string name="agent_template_intro">Créer un contenu à partir d’un modèle : choisissez un modèle dans les modèles de la Bibliothèque, puis décrivez le document voulu (vous pouvez préciser « en PDF » ou « en Word »).</string>
     <string name="agent_thesis_intro_active">Assistant de thèse : votre mémoire actif est « %1$s ». Par exemple : « Extrais la page 2 de Rapport.pdf dans l’introduction de mon mémoire » ou « Extrais le tableau 3 de Rapport.pdf dans le chapitre 2 de mon mémoire ».</string>
     <string name="agent_thesis_intro_none">Assistant de thèse : ouvrez d’abord votre mémoire dans Thesis Builder (il devient le mémoire actif), puis demandez par exemple : « Extrais la page 2 de Rapport.pdf dans l’introduction de mon mémoire ».</string>
     <string name="agent_reformat_pick_first">Quel document dois-je mettre à jour ? Touchez « Choisir le document » au-dessus de la zone de saisie.</string>
@@ -1308,11 +1308,73 @@
     <string name="agent_tool_library_copy">Copier le document</string>
     <string name="agent_tool_library_delete">Supprimer le document</string>
     <string name="agent_template_pick_first">Quel modèle dois-je utiliser ? Touchez « Choisir un modèle » au-dessus de la zone de saisie, puis renvoyez votre demande.</string>
+    <!-- Reformatting workspace and Library templates -->
+    <string name="nav_reformat">Reformatage</string>
+    <string name="library_tab_documents">Documents</string>
+    <string name="library_tab_templates">Modèles</string>
+    <string name="library_templates_title">Modèles</string>
+    <string name="reformat_title">Reformatage</string>
+    <string name="reformat_intro">Ouvrez un document Word ou PDF, ou la photo d’un document, modifiez son contenu puis créez un nouveau PDF ou Word avec sa propre mise en forme ou un modèle de la Bibliothèque. L’original n’est jamais modifié.</string>
+    <string name="reformat_insert_file">Insérer un fichier</string>
+    <string name="reformat_image">Image</string>
+    <string name="reformat_keep_source">Conserver la mise en forme source</string>
+    <string name="reformat_keep_source_desc">La mise en page et les styles du document</string>
+    <string name="reformat_formatting">Mise en forme</string>
+    <string name="reformat_library_templates">Modèles de la Bibliothèque</string>
+    <string name="reformat_no_templates">Aucun modèle Word ou PDF dans la Bibliothèque pour l’instant (Bibliothèque › Modèles).</string>
+    <string name="reformat_template_note">Le contenu est placé dans une copie du modèle : titres avec son style de titre, paragraphes avec son style de texte, tableaux avec son style de tableau (titres/paragraphes/tableaux : %1$s).</string>
+    <string name="reformat_keep_docx_note">Word : une copie du fichier original est créée et seul le texte modifié est remplacé ; styles, tableaux, images, en-têtes, pieds de page et mise en page restent identiques.</string>
+    <string name="reformat_reconstruct_note">PDF et images : le nouveau document est reconstruit à partir du texte et de la mise en page trouvés (format, marges, polices, titres, tableaux) ; positions exactes, images et logos ne sont pas copiés.</string>
+    <string name="reformat_unsaved_edits">Modifié — pas encore créé</string>
+    <string name="reformat_no_edits">Aucune modification</string>
+    <string name="reformat_create">Créer</string>
+    <string name="reformat_choose_output">Créer le document en PDF ou en Word (.docx) ?</string>
+    <string name="reformat_doc">DOC (.docx)</string>
+    <string name="reformat_source_info">%1$s • %2$d page(s) • original inchangé</string>
+    <string name="reformat_remove_source">Retirer ce document de l’espace de travail</string>
+    <string name="reformat_scanned_note">Lu par reconnaissance de texte : vérifiez le texte avec l’original avant de créer.</string>
+    <string name="reformat_uncertain">%1$d passage(s) lus avec peu de certitude sont signalés : vérifiez-les.</string>
+    <string name="reformat_reset">Annuler les modifications</string>
+    <string name="reformat_block_heading">Titre</string>
+    <string name="reformat_block_list">Élément de liste</string>
+    <string name="reformat_block_table">Tableau</string>
+    <string name="reformat_block_paragraph">Paragraphe</string>
+    <string name="reformat_docx_table_note">Les tableaux Word gardent leur mise en forme ; pour modifier leur contenu, choisissez un modèle de la Bibliothèque.</string>
+    <string name="reformat_check_reading">Lu avec peu de certitude : vérifiez</string>
+    <string name="reformat_preview_title">Vérifier le nouveau document</string>
+    <string name="reformat_preview_problem">Le nouveau document présente un problème</string>
+    <string name="reformat_preview_info">%1$s • Mise en forme : %2$s</string>
+    <string name="reformat_preview_no_text">Aucun texte n’a pu être relu dans le fichier.</string>
+    <string name="reformat_saved">Enregistré dans la Bibliothèque.</string>
+    <string name="reformat_open">Ouvrir</string>
+    <string name="reformat_save_library">Enregistrer dans la Bibliothèque</string>
+    <string name="reformat_back_to_edit">Retour à la modification</string>
+    <string name="reformat_note_reconstructed">Document reconstruit : il peut différer de l’original.</string>
+    <string name="reformat_note_template">Mis en page avec le modèle choisi (une copie ; le modèle est inchangé).</string>
+    <string name="reformat_note_template_partial">Seules les couleurs et polices du modèle ont pu être appliquées, pas sa mise en page complète.</string>
+    <string name="reformat_note_table_edits">Les modifications des tableaux Word ne sont pas appliquées avec Conserver la mise en forme source.</string>
+    <string name="reformat_note_not_mapped">Certaines modifications n’ont pas pu être placées dans le fichier original.</string>
+    <string name="reformat_note_text_not_verifiable">Le texte du PDF n’a pas pu être relu pour le comparer mot à mot.</string>
+    <string name="reformat_note_content_missing">%1$d passage(s) introuvables dans le nouveau document.</string>
+    <string name="reformat_note_arabic">Le texte arabe n’a pas été restitué tel quel (lettres ou ordre). Le fichier n’est pas enregistré.</string>
+    <string name="reformat_note_arabic_direction">%1$d paragraphe(s) arabe(s) ne sont pas de droite à gauche.</string>
+    <string name="reformat_note_parts_lost">Des parties du fichier Word original manquent dans le nouveau.</string>
+    <string name="reformat_note_unreadable">Le nouveau fichier est illisible : il n’est pas enregistré.</string>
+    <string name="reformat_error_unavailable">Le fichier ne peut pas être ouvert (déplacé, supprimé ou accès retiré). Choisissez-le à nouveau.</string>
+    <string name="reformat_error_unsupported">Ce type de fichier n’est pas pris en charge ici : utilisez un document Word (.docx) ou PDF, ou une image.</string>
+    <string name="reformat_error_too_large">Le document est trop volumineux pour l’espace de travail.</string>
+    <string name="reformat_error_empty">Aucun texte trouvé dans ce document.</string>
+    <string name="reformat_error_damaged">Le document n’a pas pu être lu (fichier endommagé).</string>
+    <string name="reformat_error_source_changed">La copie de travail du document a changé. Ouvrez à nouveau le document.</string>
+    <string name="reformat_error_template_missing">Le modèle choisi n’est plus dans la Bibliothèque : la mise en forme source est utilisée. Choisissez un autre modèle si besoin.</string>
+    <string name="reformat_error_edit_not_applied">Une modification n’a pas pu être placée dans le document original. Rien n’a été créé.</string>
+    <string name="reformat_error_generic">Une erreur est survenue. Rien n’a été créé ; vos modifications sont conservées.</string>
+    <string name="reformat_result_name">%1$s (reformaté)</string>
     <!-- Agent: thesis document workflows -->
     <string name="agent_ask_section">Dans quelle section de votre mémoire faut-il l’insérer ? Par exemple : Introduction, Chapitre 2, Remerciements.</string>
     <string name="agent_ask_text">Quel texte dois-je ajouter ? Mettez-le entre guillemets, ou après deux-points.</string>
     <string name="agent_ask_pages">Quelle page du document ? Par exemple : « page 2 » ou « pages 3-5 ».</string>
-    <string name="agent_ask_source">De quel document dois-je extraire ? Nommez-le exactement comme dans la Bibliothèque ou Mes modèles, ou joignez-le.</string>
+    <string name="agent_ask_source">De quel document dois-je extraire ? Nommez-le exactement comme dans la Bibliothèque ou Modèles de la Bibliothèque, ou joignez-le.</string>
     <string name="agent_ask_source_format">Je peux extraire des pages et des tableaux uniquement depuis des PDF et des images. Quel PDF dois-je utiliser ?</string>
     <string name="agent_error_source_is_target">La source et la cible sont le même mémoire. De quel autre document dois-je extraire ?</string>
     <string name="agent_thesis_restored_after_check">La modification de « %1$s » n’a pas pu être confirmée dans le mémoire enregistré : la version précédente a été restaurée. Rien d’autre n’a changé.</string>
@@ -1374,7 +1436,7 @@
     <string name="templates_sorted_recent">Triés par date récente</string>
     <string name="thesis_choose_template">Choisir un modèle</string>
     <string name="thesis_templates_builtin">Modèles intégrés</string>
-    <string name="thesis_templates_uploaded">Mes modèles importés</string>
+    <string name="thesis_templates_uploaded">Modèles importés de la Bibliothèque</string>
     <string name="thesis_template_default_desc">La mise en page standard de mémoire de l’application</string>
     <string name="thesis_template_added">Ajouté le %1$s • %2$s</string>
     <string name="thesis_template_search">Rechercher des modèles…</string>
