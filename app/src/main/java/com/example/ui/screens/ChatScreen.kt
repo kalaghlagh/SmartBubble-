@@ -137,6 +137,14 @@ fun ChatScreen(
 
     // Agent files: phone files are imported into the Library and attached to the next request.
     var showAgentFiles by remember { mutableStateOf(false) }
+    // Document Reformatting: the source document picker (phone or Library; templates have their own picker).
+    var showSourcePicker by remember { mutableStateOf(false) }
+    val sourceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            showSourcePicker = false
+            viewModel.pickReformatSourceFromDevice(uri)
+        }
+    }
     val importResults by viewModel.importResults.collectAsState()
     val agentPhoneLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         viewModel.importFilesToLibrary(uris, forAgent = true)
@@ -470,6 +478,19 @@ fun ChatScreen(
                 contentPadding = PaddingValues(vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                // A new conversation: the Agent's three shortcuts (the message box stays below).
+                if (messages.isEmpty() && !generatingHere) {
+                    item(key = "agent_welcome") {
+                        AgentWelcome(onShortcut = { w ->
+                            viewModel.startAgentShortcut(w)
+                            when (w) {
+                                com.example.agent.AgentWorkflow.REFORMAT -> showSourcePicker = true
+                                com.example.agent.AgentWorkflow.TEMPLATE -> showTemplatePicker = true
+                                com.example.agent.AgentWorkflow.THESIS -> Unit
+                            }
+                        })
+                    }
+                }
                 items(messages, key = { it.id }) { msg ->
                     val isThesisProposal = msg.attachedDocType == com.example.thesis.THESIS_PROPOSAL_CARD
                     val attachedDoc = if (isThesisProposal) null else msg.attachedDocId?.let { docsById[it] }
@@ -532,6 +553,15 @@ fun ChatScreen(
                 }
             }
 
+            // The shortcut in use (compact, above the Agent panel and the message box).
+            agentState.workflow?.let { w ->
+                AgentWorkflowBar(
+                    workflow = w, source = agentState.reformatSource,
+                    onChooseSource = { showSourcePicker = true },
+                    onChooseTemplate = { showTemplatePicker = true },
+                    onClose = viewModel::endAgentWorkflow
+                )
+            }
             // Agent: model in use, provider switches, and the plan / controls of an Agent Mode task.
             AgentPanel(
                 task = agentState.task,
@@ -787,6 +817,17 @@ fun ChatScreen(
         )
     }
     importResults?.let { ImportResultsDialog(it, onDismiss = viewModel::dismissImportResults) }
+    if (showSourcePicker) {
+        val sources by androidx.compose.runtime.produceState<List<com.example.agent.core.LibraryRef>>(emptyList()) {
+            publishOnMain(viewModel.reformatLibrarySources())
+        }
+        SourceDocumentPicker(
+            files = sources,
+            onFromDevice = { sourceLauncher.launch(SOURCE_MIME_TYPES) },
+            onPick = { ref -> showSourcePicker = false; viewModel.pickReformatSourceFromLibrary(ref) },
+            onDismiss = { showSourcePicker = false }
+        )
+    }
 
     // Attachment Options Bottom Sheet (Attach File, Select Image, Scan Document)
     if (showAttachmentMenu) {

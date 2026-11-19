@@ -64,6 +64,12 @@ data class RoutingStatus(
     }
 }
 
+/**
+ * The three Agent shortcuts. A shortcut only sets the conversation's context: requests are still
+ * written in natural language and planned by the same Agent core.
+ */
+enum class AgentWorkflow { REFORMAT, THESIS, TEMPLATE }
+
 /** Several files could be meant: the user picks one before anything is read. */
 data class FileChoice(val request: String, val candidates: List<LibraryRef>)
 
@@ -74,7 +80,13 @@ data class AgentUiState(
     /** Files the user attached for the next request (Library or My Templates). */
     val selected: List<LibraryRef> = emptyList(),
     /** Waiting for the user to pick which file a request means. */
-    val choice: FileChoice? = null
+    val choice: FileChoice? = null,
+    /** The shortcut the user started (null: a plain conversation). */
+    val workflow: AgentWorkflow? = null,
+    /** Document Reformatting: the source document (Library or a phone document, never a template). */
+    val reformatSource: LibraryRef? = null,
+    /** Document Reformatting: the source was analyzed (its fields were shown). */
+    val reformatAnalyzed: Boolean = false
 )
 
 /** Result of the content step, produced by the existing orchestrator pipeline. */
@@ -128,7 +140,7 @@ class AgentService(
     /** Registers an edited template copy in My Templates through the existing importer. */
     importTemplateCopy: suspend (File, String) -> com.example.data.model.TemplateEntity,
     /** Localized "<name> (edited)" / "<name> (copy)". */
-    copyLabel: (String, Boolean) -> String,
+    private val copyLabel: (String, Boolean) -> String,
     /** Thesis Builder projects (the active thesis), changed only through the thesis repository. */
     val thesisAccess: com.example.agent.thesis.ThesisAccess,
     /** Existing extraction engine, page by page and with structure (tables). */
@@ -254,6 +266,14 @@ class AgentService(
     fun clearSelection() = _state.update { it.copy(selected = emptyList()) }
     fun askChoice(choice: FileChoice?) = _state.update { it.copy(choice = choice) }
 
+    /** Starts (or ends, with null) a shortcut's context; a new workflow forgets the previous source. */
+    fun setWorkflow(workflow: AgentWorkflow?) = _state.update {
+        if (it.workflow == workflow) it else it.copy(workflow = workflow, reformatSource = null, reformatAnalyzed = false)
+    }
+
+    fun setReformatSource(ref: LibraryRef?, analyzed: Boolean = false) =
+        _state.update { it.copy(workflow = AgentWorkflow.REFORMAT, reformatSource = ref, reformatAnalyzed = analyzed && ref != null) }
+
     /** Revokes task [taskId]'s access to [fileId]: every later tool run of the task refuses the file. */
     suspend fun revoke(taskId: String, fileId: String) {
         store.update(taskId) { t -> t.copy(files = t.files.map { if (it.id == fileId) it.copy(granted = false) else it }) }
@@ -301,6 +321,16 @@ class AgentService(
         .register(com.example.agent.thesis.ThesisPrepareTool(thesisAccess) { newElementId() })
         .register(com.example.agent.thesis.ThesisApplyTool(thesisAccess))
         .register(com.example.agent.thesis.ThesisValidateTool(thesisAccess, files))
+        // Document Reformatting (local engines; no AI request; the source is never written).
+        .register(com.example.agent.office.OfficeAnalyzeTool(files, extractSource))
+        .register(com.example.agent.office.OfficePrepareTool())
+        .register(com.example.agent.office.OfficeWriteTool(files, database, { name -> copyLabel(name, false) }))
+        .register(com.example.agent.office.OfficeValidateTool(files, database))
+        // Library files asked in the chat (rename and delete are approved first).
+        .register(com.example.agent.office.LibraryListTool(database))
+        .register(com.example.agent.office.LibraryRenameTool(database))
+        .register(com.example.agent.office.LibraryCopyTool(files, database) { name -> copyLabel(name, true) })
+        .register(com.example.agent.office.LibraryDeleteTool(database))
 
     val engine = AgentEngine(registry, store, onUpdate = { t -> _state.update { s -> if (s.task == null || s.task.id == t.id) s.copy(task = t) else s } })
 

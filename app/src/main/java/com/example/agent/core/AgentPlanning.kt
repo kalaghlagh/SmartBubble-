@@ -6,7 +6,11 @@ package com.example.agent.core
  */
 data class LibraryRef(val id: String, val title: String, val fileType: String, val source: FileSource = FileSource.LIBRARY) {
     /** The app-managed file id used by tools and grants. */
-    val fileId: String get() = if (source == FileSource.LIBRARY) TaskFile.libraryId(id) else TaskFile.templateId(id)
+    val fileId: String get() = when (source) {
+        FileSource.LIBRARY -> TaskFile.libraryId(id)
+        FileSource.MY_TEMPLATE -> TaskFile.templateId(id)
+        FileSource.DEVICE -> TaskFile.deviceId(id)
+    }
 }
 
 /**

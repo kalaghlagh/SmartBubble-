@@ -591,6 +591,8 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
 
     // Conversation Management Actions
     fun startNewConversation() {
+        // A new conversation starts without a shortcut: the three shortcuts are offered again.
+        agent.setWorkflow(null)
         launchSafely("startNewConversation") {
             val newId = UUID.randomUUID().toString()
             val newConv = ConversationEntity(
@@ -607,6 +609,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun selectConversation(id: String) {
+        if (id != _currentSessionId.value) agent.setWorkflow(null)
         // A thesis conversation reopens thesis mode, so its messages go to the thesis, not to normal chat.
         if (id.startsWith("thesis-")) {
             enterThesisChat(id.removePrefix("thesis-"))
@@ -767,6 +770,26 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                     // Files the user attached are used for this request only (and granted to its task only).
                     val selected = agent.state.value.selected
                     agent.clearSelection()
+                    // Document Reformatting: the message says what to change in the analyzed source.
+                    val agentState = agent.state.value
+                    if (agentState.workflow == com.example.agent.AgentWorkflow.REFORMAT) {
+                        val source = agentState.reformatSource
+                        if (source == null) {
+                            insertAgentQuestion(sessionId, str(R.string.agent_reformat_pick_first))
+                            return@launchChatOperation
+                        }
+                        val task = com.example.agent.office.OfficeTaskPlanner.change(
+                            com.example.agent.AgentService.newId(), sessionId, text, source, appLanguage.value,
+                            System.currentTimeMillis(), com.example.agent.AgentService::newId
+                        )
+                        runAgentTask(task, history, listener, fromVoice)
+                        return@launchChatOperation
+                    }
+                    // Create Content from Template: the content is written with the chosen template (the existing pipeline).
+                    if (agentState.workflow == com.example.agent.AgentWorkflow.TEMPLATE && _selectedTemplateForChat.value == null) {
+                        insertAgentQuestion(sessionId, str(R.string.agent_template_pick_first))
+                        return@launchChatOperation
+                    }
                     // Thesis document requests (insert pages or a table into the active thesis, add
                     // or replace text, extract pages or a table): local tools only, no AI request.
                     when (val decision = agent.analyzeThesis(text, selected)) {
@@ -785,6 +808,19 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
                             return@launchChatOperation
                         }
                         null -> Unit
+                    }
+                    // Library files: list, find, rename, copy, delete (rename and delete after approval).
+                    com.example.agent.office.FileRequestParser.parse(text, agent.files.listAccessibleFiles())?.let { fr ->
+                        if (fr.op == com.example.agent.office.FileOp.UNSUPPORTED) {
+                            insertAgentQuestion(sessionId, str(R.string.agent_files_unsupported))
+                        } else {
+                            val task = com.example.agent.office.LibraryTools.plan(
+                                com.example.agent.AgentService.newId(), sessionId, text, fr, appLanguage.value,
+                                System.currentTimeMillis(), com.example.agent.AgentService::newId
+                            )
+                            runAgentTask(task, history, listener, fromVoice)
+                        }
+                        return@launchChatOperation
                     }
                     val intent = agent.analyze(text, selected)
                     if (intent.ambiguous.isNotEmpty()) {
@@ -929,6 +965,14 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
             publishThesisResult(task, fromVoice)
             return
         }
+        if (com.example.agent.office.OfficeTaskPlanner.isOfficeTask(task)) {
+            publishOfficeResult(task, fromVoice)
+            return
+        }
+        if (com.example.agent.office.LibraryTools.isLibraryTask(task)) {
+            publishLibraryResult(task)
+            return
+        }
         val generate = task.step("generate")
         val validate = task.step("validate")
         val outcome = validate?.output?.get("outcome")
@@ -1057,6 +1101,170 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    // ------------------------------------------------------------------ Agent shortcuts
+
+    /** A shortcut card: sets the conversation's context and says what comes next (the chat stays free text). */
+    fun startAgentShortcut(workflow: com.example.agent.AgentWorkflow) {
+        agent.setWorkflow(workflow)
+        val sessionId = _currentSessionId.value
+        launchSafely("startAgentShortcut") {
+            ensureConversation(sessionId)
+            val text = when (workflow) {
+                com.example.agent.AgentWorkflow.REFORMAT -> str(R.string.agent_reformat_intro)
+                com.example.agent.AgentWorkflow.TEMPLATE -> str(R.string.agent_template_intro)
+                com.example.agent.AgentWorkflow.THESIS -> {
+                    val active = agent.thesisAccess.activeThesisId()
+                    val title = active?.let { id -> agent.thesisAccess.projects().firstOrNull { it.first == id }?.second }
+                    if (title != null) str(R.string.agent_thesis_intro_active, title) else str(R.string.agent_thesis_intro_none)
+                }
+            }
+            insertAgentQuestion(sessionId, text)
+        }
+    }
+
+    fun endAgentWorkflow() = agent.setWorkflow(null)
+
+    private suspend fun ensureConversation(sessionId: String) {
+        if (database.conversationDao().getConversationById(sessionId) == null) {
+            database.conversationDao().insertConversation(
+                ConversationEntity(id = sessionId, title = str(R.string.new_conversation), lastMessagePreview = "", updatedAt = System.currentTimeMillis())
+            )
+        }
+    }
+
+    /** Document Reformatting: a source picked from the phone (read into a private copy; never added to the Library or My Templates). */
+    fun pickReformatSourceFromDevice(uri: Uri) {
+        val sessionId = _currentSessionId.value
+        launchSafely("pickReformatSourceFromDevice") {
+            val name = withContext(Dispatchers.IO) { displayNameOf(uri) }
+            val ref = try {
+                agent.files.stageDeviceSource(name) { context.contentResolver.openInputStream(uri) }
+            } catch (e: com.example.agent.core.ToolException) {
+                ensureConversation(sessionId)
+                insertAgentQuestion(sessionId, officeFailureText(e.code) ?: str(R.string.agent_failed, e.code))
+                return@launchSafely
+            }
+            analyzeReformatSource(ref)
+        }
+    }
+
+    /** Document Reformatting: a source from the Library (only read). */
+    fun pickReformatSourceFromLibrary(ref: com.example.agent.core.LibraryRef) = analyzeReformatSource(ref)
+
+    private fun analyzeReformatSource(ref: com.example.agent.core.LibraryRef) {
+        // The previous phone copy is no longer needed.
+        agent.state.value.reformatSource?.takeIf { it.source == com.example.agent.core.FileSource.DEVICE && it.fileId != ref.fileId }
+            ?.let { old -> viewModelScope.launch { agent.files.discardDeviceSource(old.id) } }
+        agent.setReformatSource(ref)
+        val sessionId = _currentSessionId.value
+        val started = launchChatOperation(sessionId) { listener ->
+            ensureConversation(sessionId)
+            database.chatDao().insertMessage(
+                ChatMessageEntity(id = UUID.randomUUID().toString(), sessionId = sessionId, isUser = true, content = str(R.string.agent_reformat_source_message, ref.title))
+            )
+            val task = com.example.agent.office.OfficeTaskPlanner.analyze(
+                com.example.agent.AgentService.newId(), sessionId, ref.title, ref, appLanguage.value, System.currentTimeMillis(), com.example.agent.AgentService::newId
+            )
+            runAgentTask(task, buildContextHistory(sessionId), listener, fromVoice = false)
+        }
+        if (!started) _snackBarMessage.value = str(R.string.agent_busy)
+    }
+
+    /** Library documents that can be reformatted (PDF, Word, images): never My Templates. */
+    suspend fun reformatLibrarySources(): List<com.example.agent.core.LibraryRef> =
+        agent.files.listAccessibleFiles().filter { it.source == com.example.agent.core.FileSource.LIBRARY && it.fileType.uppercase() in setOf("PDF", "DOCX", "PNG", "JPG", "JPEG", "WEBP") }
+
+    /** Result of a Document Reformatting task, stored once in the conversation. */
+    private suspend fun publishOfficeResult(task: com.example.agent.core.AgentTask, fromVoice: Boolean) {
+        val done = com.example.agent.core.StepStatus.COMPLETED
+        val analyzed = task.step("analyze")
+        val verify = task.step("verify")
+        val id = "agent-office-${task.id}"
+        when {
+            task.status == com.example.agent.core.TaskStatus.FAILED -> {
+                if (fromVoice) endVoiceConversation()
+                val removed = verify?.output?.get("removed")?.takeIf { it.isNotBlank() }
+                val text = if (removed != null) str(R.string.agent_reformat_not_confirmed) else officeFailureText(task.error.orEmpty()) ?: agentFailureText(task)
+                insertAgentNote(task, id, text, null)
+            }
+            task.step("write") == null && analyzed?.status == done -> {
+                val out = analyzed.output
+                val text = buildString {
+                    append(str(R.string.agent_reformat_analyzed, out["title"].orEmpty(), out["pages"]?.toIntOrNull() ?: 1))
+                    val summary = com.example.agent.office.localizeFieldNames(out["summary"].orEmpty(), ::fieldName)
+                    append("\n\n").append(if (summary.isBlank()) str(R.string.agent_reformat_no_fields) else summary)
+                    if ((out["uncertain"]?.toIntOrNull() ?: 0) > 0) append("\n\n").append(str(R.string.agent_reformat_uncertain))
+                    if (out["signature"] == "true") append("\n\n").append(str(R.string.agent_reformat_signature_notice))
+                    val protected = out["protected"].orEmpty()
+                    append("\n\n").append(if (protected.isNotEmpty()) str(R.string.agent_reformat_protected) else str(R.string.agent_reformat_ask_changes))
+                }
+                agent.state.value.reformatSource?.let { agent.setReformatSource(it, analyzed = true) }
+                insertAgentNote(task, id, text, null)
+            }
+            verify?.status == done -> {
+                val docId = verify.output["documentId"]
+                val doc = docId?.let { database.documentDao().getDocumentById(it) }
+                val prepared = task.step("prepare")?.output.orEmpty()
+                val text = buildString {
+                    append(str(R.string.agent_reformat_done, doc?.title.orEmpty()))
+                    prepared["preview"]?.takeIf { it.isNotBlank() }?.let { append("\n\n").append(com.example.agent.office.localizeFieldNames(it, ::fieldName)) }
+                    if (verify.output["issues"].orEmpty().isNotBlank()) append("\n\n").append(str(R.string.agent_result_warnings))
+                    if (task.step("write")?.output?.get("rebuilt") == "true") append("\n\n").append(str(R.string.agent_reformat_rebuilt_notice))
+                }
+                insertAgentNote(task, id, text, doc)
+            }
+            task.steps.any { it.status == com.example.agent.core.StepStatus.REJECTED } ->
+                insertAgentNote(task, id, str(R.string.agent_reformat_discarded), null)
+        }
+    }
+
+    private fun fieldName(key: com.example.agent.office.FieldKey): String = str(com.example.ui.screens.officeFieldRes(key))
+
+    /** Result of a Library file request, stored once in the conversation. */
+    private suspend fun publishLibraryResult(task: com.example.agent.core.AgentTask) {
+        val step = task.steps.single()
+        val out = step.output
+        val id = "agent-files-${task.id}"
+        val done = step.status == com.example.agent.core.StepStatus.COMPLETED
+        val text = when {
+            task.status == com.example.agent.core.TaskStatus.FAILED -> officeFailureText(task.error.orEmpty()) ?: agentFailureText(task)
+            step.status == com.example.agent.core.StepStatus.REJECTED -> str(R.string.agent_files_cancelled)
+            !done -> return
+            step.toolId == com.example.agent.office.LibraryTools.LIST ->
+                if ((out["count"]?.toIntOrNull() ?: 0) == 0) str(R.string.agent_files_list_empty)
+                else str(R.string.agent_files_list_result, out["count"]!!.toInt()) + "\n\n" + out["items"].orEmpty()
+            step.toolId == com.example.agent.office.LibraryTools.RENAME -> str(R.string.agent_files_renamed, out["title"].orEmpty())
+            step.toolId == com.example.agent.office.LibraryTools.COPY -> str(R.string.agent_files_copied, out["title"].orEmpty())
+            step.toolId == com.example.agent.office.LibraryTools.DELETE -> str(R.string.agent_files_deleted, task.files.firstOrNull()?.name.orEmpty())
+            else -> return
+        }
+        val doc = out["documentId"]?.takeIf { step.toolId == com.example.agent.office.LibraryTools.COPY }?.let { database.documentDao().getDocumentById(it) }
+        insertAgentNote(task, id, text, doc)
+    }
+
+    /** Text for a Document Reformatting failure code, or null for other codes. */
+    private fun officeFailureText(code: String): String? {
+        val head = code.substringBefore(':')
+        val rest = code.substringAfter(':', "")
+        return when (head) {
+            "no_changes_understood", "no_changes" -> str(R.string.agent_reformat_no_changes_understood)
+            "field_not_found" -> str(R.string.agent_reformat_field_not_found, rest)
+            "field_ambiguous" -> str(R.string.agent_reformat_field_ambiguous, rest.substringBefore(':'), rest.substringAfter(':', ""))
+            "text_not_found" -> str(R.string.agent_reformat_text_not_found, rest)
+            "conflicting_changes" -> str(R.string.agent_reformat_conflict, rest)
+            "protected_document" -> str(R.string.agent_reformat_protected)
+            "source_changed" -> str(R.string.agent_reformat_source_changed)
+            "source_unavailable" -> str(R.string.agent_reformat_source_unavailable)
+            "change_not_applied", "write_failed" -> str(R.string.agent_reformat_write_failed)
+            "unsupported_format", "extract_unsupported_format" -> str(R.string.agent_reformat_unsupported)
+            "document_empty" -> str(R.string.agent_error_no_text)
+            "encrypted_pdf" -> str(R.string.agent_error_encrypted_pdf)
+            "file_too_large", "document_too_large_to_edit" -> str(R.string.agent_error_too_large_to_edit)
+            "file_not_found" -> str(R.string.agent_error_file_not_found)
+            else -> null
+        }
+    }
+
     /** Undo of the shown thesis task: restores the revision before its change, only when nothing was changed after it. */
     fun undoAgentThesisEdit() {
         val shown = agent.state.value.task ?: return
@@ -1092,6 +1300,7 @@ class SmartBubbleViewModel(application: Application) : AndroidViewModel(applicat
     private fun agentFailureText(task: com.example.agent.core.AgentTask): String {
         val code = task.error.orEmpty()
         thesisFailureText(code)?.let { return it }
+        officeFailureText(code)?.let { return it }
         val kind = code.removePrefix("ai:").takeIf { code.startsWith("ai:") }
             ?.let { runCatching { AiErrorKind.valueOf(it) }.getOrNull() }
         if (kind != null) {

@@ -183,7 +183,51 @@ private fun stepTitle(step: AgentStep, sourceTitles: Map<String, String>): Strin
     ThesisTools.PREPARE -> stringResource(R.string.agent_tool_thesis_prepare)
     ThesisTools.APPLY -> stringResource(R.string.agent_tool_thesis_apply)
     ThesisTools.VALIDATE -> stringResource(R.string.agent_tool_thesis_validate)
+    com.example.agent.office.OfficeTools.ANALYZE -> stringResource(R.string.agent_tool_office_analyze, step.output["title"] ?: "…")
+    com.example.agent.office.OfficeTools.PREPARE -> stringResource(R.string.agent_tool_office_prepare)
+    com.example.agent.office.OfficeTools.WRITE -> stringResource(R.string.agent_tool_office_write)
+    com.example.agent.office.OfficeTools.VALIDATE -> stringResource(R.string.agent_tool_office_validate)
+    com.example.agent.office.LibraryTools.LIST -> stringResource(R.string.agent_tool_library_list)
+    com.example.agent.office.LibraryTools.RENAME -> stringResource(R.string.agent_tool_library_rename)
+    com.example.agent.office.LibraryTools.COPY -> stringResource(R.string.agent_tool_library_copy)
+    com.example.agent.office.LibraryTools.DELETE -> stringResource(R.string.agent_tool_library_delete)
     else -> step.toolId
+}
+
+/** String resource of a field kind's name. */
+fun officeFieldRes(key: com.example.agent.office.FieldKey): Int = when (key) {
+    com.example.agent.office.FieldKey.SENDER -> R.string.agent_field_sender
+    com.example.agent.office.FieldKey.RECIPIENT -> R.string.agent_field_recipient
+    com.example.agent.office.FieldKey.SUBJECT -> R.string.agent_field_subject
+    com.example.agent.office.FieldKey.DATE -> R.string.agent_field_date
+    com.example.agent.office.FieldKey.REFERENCE -> R.string.agent_field_reference
+    com.example.agent.office.FieldKey.PHONE -> R.string.agent_field_phone
+    com.example.agent.office.FieldKey.EMAIL -> R.string.agent_field_email
+    com.example.agent.office.FieldKey.ADDRESS -> R.string.agent_field_address
+    com.example.agent.office.FieldKey.NAME -> R.string.agent_field_name
+    com.example.agent.office.FieldKey.OTHER -> R.string.agent_field_other
+}
+
+/** What the user approves for an updated document: each change (old -> new) and the warnings. */
+@Composable
+private fun OfficeApprovalDetails(task: AgentTask) {
+    val analyzed = task.step("analyze")?.output.orEmpty()
+    val prepared = task.step("prepare")?.output.orEmpty()
+    val small = MaterialTheme.typography.bodySmall
+    val warn = MaterialTheme.colorScheme.error
+    Column(Modifier.testTag("agent_office_preview"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(stringResource(R.string.agent_reformat_source_kept), style = small)
+        val names = com.example.agent.office.FieldKey.values().associateWith { k -> stringResource(officeFieldRes(k)) }
+        prepared["preview"]?.takeIf { it.isNotBlank() }?.let {
+            Text(com.example.agent.office.localizeFieldNames(it) { k -> names.getValue(k) }, style = small, maxLines = 12, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("agent_office_changes"))
+        }
+        if (prepared["uncertain"] == "true") Text(stringResource(R.string.agent_reformat_uncertain), style = small, color = warn)
+        if (analyzed["signature"] == "true") Text(stringResource(R.string.agent_reformat_signature_notice), style = small, color = warn, modifier = Modifier.testTag("agent_office_signature"))
+        // Only a Word source written back as Word keeps its own file; anything else is rebuilt by the engines.
+        val wordToWord = task.files.firstOrNull()?.fileType.equals("DOCX", ignoreCase = true) && prepared["format"] != "PDF"
+        if (!wordToWord) Text(stringResource(R.string.agent_reformat_rebuilt_notice), style = small, modifier = Modifier.testTag("agent_office_rebuilt"))
+        prepared["unread"]?.takeIf { it.isNotBlank() }?.let { Text(stringResource(R.string.agent_reformat_unread, it), style = small, color = warn) }
+    }
 }
 
 /** What the user approves for a thesis change: target, position, source, content preview and warnings. */
@@ -298,6 +342,13 @@ private fun TaskCard(
                     proposal["changed"]?.toIntOrNull() ?: 0
                 )
                 step.toolId == TaskPlanner.Tools.FILE_REPLACE_ORIGINAL -> stringResource(R.string.agent_approval_replace, target?.name.orEmpty())
+                step.toolId == com.example.agent.office.LibraryTools.RENAME ->
+                    stringResource(R.string.agent_approval_rename, target?.name.orEmpty(), step.input["name"].orEmpty())
+                step.toolId == com.example.agent.office.LibraryTools.DELETE -> stringResource(R.string.agent_approval_delete, target?.name.orEmpty())
+                step.toolId == com.example.agent.office.OfficeTools.WRITE -> stringResource(
+                    R.string.agent_reformat_approval, task.step("analyze")?.output?.get("title").orEmpty(),
+                    if (task.step("prepare")?.output?.get("format") == "PDF") "PDF" else "Word (DOCX)"
+                )
                 step.toolId == ThesisTools.APPLY -> task.step("locate")?.output.orEmpty().let {
                     stringResource(R.string.agent_thesis_approval, it["thesisTitle"].orEmpty(), it["sectionTitle"].orEmpty())
                 }
@@ -305,6 +356,7 @@ private fun TaskCard(
             }
             Text(text, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("agent_approval_prompt"))
             if (step.toolId == ThesisTools.APPLY && step.error != "completion_unknown") ThesisApprovalDetails(task)
+            if (step.toolId == com.example.agent.office.OfficeTools.WRITE && step.error != "completion_unknown") OfficeApprovalDetails(task)
             if (step.toolId == TaskPlanner.Tools.DOCX_WRITE_COPY) {
                 proposal["examples"]?.takeIf { it.isNotBlank() }?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 12, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("agent_edit_examples"))
