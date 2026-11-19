@@ -97,6 +97,9 @@ class AppSmokeDeviceTest {
         compose.onNodeWithTag(tag).performClick()
         compose.waitForIdle()
         await("scope menu closed") { !exists("templates_scope_menu") }
+        // The menu is a popup window: until it is detached it still takes the next touch (as an
+        // outside touch that only dismisses it). Wait until the app's own window is the only root.
+        await("scope menu window gone") { compose.onAllNodes(isRoot()).fetchSemanticsNodes().size == 1 }
     }
 
     private fun shot(name: String) {
