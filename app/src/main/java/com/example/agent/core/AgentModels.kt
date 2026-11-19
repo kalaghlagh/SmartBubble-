@@ -27,8 +27,12 @@ enum class StepStatus {
 
 enum class ApprovalState { NOT_REQUIRED, PENDING, APPROVED, REJECTED }
 
-/** Where a file the Agent may use lives. */
-enum class FileSource { LIBRARY, MY_TEMPLATE }
+/**
+ * Where a file the Agent may use lives. [DEVICE]: a source document picked from the phone's
+ * storage for one task; it is read from a private copy and never added to the Library or to
+ * My Templates.
+ */
+enum class FileSource { LIBRARY, MY_TEMPLATE, DEVICE }
 
 /** What a task does with a file: read it for information, use it for formatting, or edit it (as a copy). */
 enum class FileRole { SOURCE, TEMPLATE, EDIT_TARGET }
@@ -49,6 +53,7 @@ data class TaskFile(
     companion object {
         fun libraryId(documentId: String) = "library:$documentId"
         fun templateId(templateId: String) = "template:$templateId"
+        fun deviceId(stagedId: String) = "device:$stagedId"
     }
 }
 

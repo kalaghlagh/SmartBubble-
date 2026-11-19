@@ -57,6 +57,7 @@ class AgentFileAccess(
     companion object {
         const val MAX_TEXT_CHARS = 60_000
         const val PREVIEW_CHARS = 1_500
+        const val MAX_SOURCE_BYTES = 50L * 1024 * 1024
     }
 
     /** Library documents and user-uploaded templates whose file exists. */
@@ -85,8 +86,67 @@ class AgentFileAccess(
                 if (!f.isFile) throw ToolException("file_not_found")
                 ResolvedFile(fileId, FileSource.MY_TEMPLATE, t.name, FileKind.ofFileType(t.fileType) ?: kindOf(f), f.length(), f, null, t)
             }
+            fileId.startsWith("device:") -> {
+                val f = stagedFile(fileId.removePrefix("device:")) ?: throw ToolException("file_not_found")
+                ResolvedFile(fileId, FileSource.DEVICE, f.name, kindOf(f), f.length(), f, null, null)
+            }
             else -> throw ToolException("unknown_file")
         }
+    }
+
+    // ------------------------------------------------------------------ source documents from the phone
+
+    /** Private copies of source documents picked from the phone (one folder each; never in the Library). */
+    val sourcesDir: File get() = File(workDir, "sources")
+
+    private fun stagedFile(id: String): File? {
+        if (!Regex("[A-Za-z0-9-]{8,64}").matches(id)) return null
+        return File(sourcesDir, id).listFiles()?.singleOrNull { it.isFile }
+    }
+
+    /**
+     * Reads a document the user picked from the phone (through the Storage Access Framework) into
+     * a private copy so the engines can read it; the original is only read. Refuses unsupported,
+     * encrypted, damaged and too large files with a code. Returns the reference to use.
+     */
+    suspend fun stageDeviceSource(name: String, open: () -> java.io.InputStream?): LibraryRef = withContext(Dispatchers.IO) {
+        val id = java.util.UUID.randomUUID().toString()
+        val dir = File(sourcesDir, id).apply { mkdirs() }
+        // No path separators or control characters in the private copy's name.
+        val safeName = name.map { c -> if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|' || c.code < 32) '_' else c }
+            .joinToString("").trim().take(120).ifBlank { "document" }.let { if (it == "." || it == "..") "document" else it }
+        val target = File(dir, safeName)
+        try {
+            val input = try { open() } catch (e: SecurityException) { null } ?: throw ToolException("source_unavailable")
+            input.use { inp ->
+                target.outputStream().use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val n = inp.read(buf)
+                        if (n < 0) break
+                        total += n
+                        if (total > MAX_SOURCE_BYTES) throw ToolException("file_too_large")
+                        out.write(buf, 0, n)
+                    }
+                }
+            }
+            val kind = when (val s = FileSniffer.sniff(target)) {
+                is FileSniffer.Result.Supported -> s.kind
+                is FileSniffer.Result.Refused -> throw ToolException(if (s.status == ImportStatus.ENCRYPTED_PDF) "encrypted_pdf" else if (s.status == ImportStatus.TOO_LARGE) "file_too_large" else "unsupported_format")
+            }
+            if (kind != FileKind.PDF && kind != FileKind.DOCX && !kind.isImage) throw ToolException("unsupported_format")
+            LibraryRef(id, name, kind.fileType, FileSource.DEVICE)
+        } catch (e: Exception) {
+            dir.deleteRecursively()
+            if (e is ToolException || e is CancellationException) throw e
+            throw ToolException("source_unavailable")
+        }
+    }
+
+    /** Deletes the private copy of a phone source (the original on the phone is not touched). */
+    suspend fun discardDeviceSource(stagedId: String) = withContext(Dispatchers.IO) {
+        if (Regex("[A-Za-z0-9-]{8,64}").matches(stagedId)) File(sourcesDir, stagedId).deleteRecursively()
     }
 
     private fun kindOf(f: File): FileKind? = (FileSniffer.sniff(f) as? FileSniffer.Result.Supported)?.kind

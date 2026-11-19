@@ -15,6 +15,13 @@ import javax.xml.transform.stream.StreamResult
 /** One paragraph change: [index] is the body paragraph index from [OoxmlReader]. */
 data class ParagraphEdit(val index: Int, val newText: String)
 
+/**
+ * Replace the [occurrence]-th (0-based) [oldText] in paragraph [index] by [newText], inside the
+ * runs that hold it: the formatting of every run is kept (the new text takes the formatting of
+ * the run where the old text started).
+ */
+data class TextReplacement(val index: Int, val oldText: String, val newText: String, val occurrence: Int = 0)
+
 /** What applying edits did. [mixedFormatting]: edited paragraphs whose runs had different formatting. */
 data class DocxEditResult(val changed: Int, val skipped: List<Int>, val mixedFormatting: List<Int>)
 
@@ -62,7 +69,59 @@ object DocxCopyEditor {
         return out.toString("UTF-8")
     }
 
-    fun writeCopy(source: File, target: File, edits: List<ParagraphEdit>): DocxEditResult {
+    fun writeCopy(source: File, target: File, edits: List<ParagraphEdit>): DocxEditResult = writeWith(source, target) { apply(it, edits) }
+
+    /**
+     * Writes a copy where only the given texts are replaced, run by run (bold labels, fonts,
+     * colors, tables, headers and everything else unchanged). A replacement whose text is not
+     * found is reported in [DocxEditResult.skipped] (by paragraph index).
+     */
+    fun writeCopyReplacing(source: File, target: File, replacements: List<TextReplacement>): DocxEditResult =
+        writeWith(source, target) { replace(it, replacements) }
+
+    private fun replace(bytes: ByteArray, replacements: List<TextReplacement>): Pair<ByteArray, DocxEditResult> {
+        val doc = OoxmlReader.parse(bytes)
+        val paragraphs = OoxmlReader.bodyParagraphs(doc)
+        var changed = 0
+        val skipped = ArrayList<Int>()
+        // Later occurrences first, so earlier offsets stay valid within a paragraph.
+        for (r in replacements.sortedWith(compareBy<TextReplacement> { it.index }.thenByDescending { it.occurrence })) {
+            val p = paragraphs.getOrNull(r.index)
+            val nodes = p?.getElementsByTagNameNS(W, "t")?.let { list -> (0 until list.length).map { list.item(it) as Element } }.orEmpty()
+            val texts = nodes.map { it.textContent }
+            val full = texts.joinToString("")
+            var at = -1
+            for (n in 0..r.occurrence) {
+                at = full.indexOf(r.oldText, at + 1)
+                if (at < 0) break
+            }
+            if (r.oldText.isEmpty() || at < 0) { skipped += r.index; continue }
+            val end = at + r.oldText.length
+            var offset = 0
+            var placed = false
+            for ((k, node) in nodes.withIndex()) {
+                val t = texts[k]
+                val nodeStart = offset
+                val nodeEnd = offset + t.length
+                offset = nodeEnd
+                if (nodeEnd <= at || nodeStart >= end) continue
+                val from = (at - nodeStart).coerceAtLeast(0)
+                val to = (end - nodeStart).coerceAtMost(t.length)
+                val replacement = if (!placed) r.newText.also { placed = true } else ""
+                node.textContent = t.substring(0, from) + replacement + t.substring(to)
+                node.setAttributeNS("http://www.w3.org/XML/1998/namespace", "xml:space", "preserve")
+            }
+            changed++
+        }
+        val out = ByteArrayOutputStream()
+        TransformerFactory.newInstance().newTransformer().apply {
+            setOutputProperty(OutputKeys.ENCODING, "UTF-8")
+            setOutputProperty(OutputKeys.STANDALONE, "yes")
+        }.transform(DOMSource(doc), StreamResult(out))
+        return out.toByteArray() to DocxEditResult(changed, skipped.distinct(), emptyList())
+    }
+
+    private fun writeWith(source: File, target: File, transform: (ByteArray) -> Pair<ByteArray, DocxEditResult>): DocxEditResult {
         require(source.canonicalPath != target.canonicalPath) { "The copy must not be the original" }
         val temp = File(target.parentFile, target.name + ".part")
         var result: DocxEditResult? = null
@@ -76,7 +135,7 @@ object DocxCopyEditor {
                         out.putNextEntry(ZipEntry(e.name))
                         if (e.name == "word/document.xml") {
                             val bytes = zip.getInputStream(e).use { it.readBytes() }
-                            val (xml, r) = apply(bytes, edits)
+                            val (xml, r) = transform(bytes)
                             result = r
                             out.write(xml)
                         } else {

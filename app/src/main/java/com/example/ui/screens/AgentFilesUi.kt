@@ -110,7 +110,13 @@ fun ImportResultsDialog(results: List<ImportOutcome>, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun sourceLabel(source: FileSource) = stringResource(if (source == FileSource.LIBRARY) R.string.agent_source_library else R.string.agent_source_template)
+private fun sourceLabel(source: FileSource) = stringResource(
+    when (source) {
+        FileSource.LIBRARY -> R.string.agent_source_library
+        FileSource.MY_TEMPLATE -> R.string.agent_source_template
+        FileSource.DEVICE -> R.string.agent_source_device
+    }
+)
 
 /**
  * Agent file picker: import from the phone, or choose Library documents and My Templates
