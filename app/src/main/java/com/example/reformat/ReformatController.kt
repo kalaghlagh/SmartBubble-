@@ -30,6 +30,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
@@ -78,14 +80,25 @@ class ReformatController(
         persist()
     }
 
+    /** Writes of the workspace file run one at a time (they share one temporary file). */
+    private val persistLock = Mutex()
+
+    /**
+     * Saves the workspace. Each write takes the state as it is when the write runs, under
+     * [persistLock]: writes started for older changes can finish late, but never leave an older
+     * state on disk after a newer one. An empty workspace removes the file.
+     */
     private fun persist() {
-        val snapshot = _state.value
         scope.launch(io) {
-            runCatching {
-                workDir.mkdirs()
-                val tmp = File(workDir, "workspace.json.part")
-                tmp.writeText(ReformatCore.encode(snapshot))
-                if (!tmp.renameTo(stateFile)) { stateFile.delete(); tmp.renameTo(stateFile) }
+            persistLock.withLock {
+                runCatching {
+                    val current = _state.value
+                    if (current.source == null) { stateFile.delete(); return@runCatching }
+                    workDir.mkdirs()
+                    val tmp = File(workDir, "workspace.json.part")
+                    tmp.writeText(ReformatCore.encode(current))
+                    if (!tmp.renameTo(stateFile)) { stateFile.delete(); tmp.renameTo(stateFile) }
+                }
             }
         }
     }
@@ -222,9 +235,16 @@ class ReformatController(
     /** Closes the source: the private copy and the workspace are removed (the original was never changed). */
     fun removeSource() {
         val path = _state.value.source?.path
-        scope.launch(io) { path?.let { File(it).parentFile?.deleteRecursively() }; stateFile.delete(); previewDir.deleteRecursively() }
         lastSavedId = null
         _state.value = ReformatState(templateId = _state.value.templateId)
+        scope.launch(io) {
+            persistLock.withLock {
+                path?.let { File(it).parentFile?.deleteRecursively() }
+                // Only when no new source was imported meanwhile.
+                if (_state.value.source == null) stateFile.delete()
+                previewDir.deleteRecursively()
+            }
+        }
     }
 
     /** null: Keep Source Formatting; else a Library template. Edits are kept. */
