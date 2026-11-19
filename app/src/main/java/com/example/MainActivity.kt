@@ -106,7 +106,7 @@ class MainActivity : ComponentActivity() {
                             )
                         },
                         snackbarHost = {
-                            SnackbarHost(hostState = snackbarHostState)
+                            SnackbarHost(hostState = snackbarHostState, modifier = Modifier.testTag("app_snackbar"))
                         }
                     ) { innerPadding ->
                         BackHandler(enabled = currentTab != AppNavTab.CHAT) {
