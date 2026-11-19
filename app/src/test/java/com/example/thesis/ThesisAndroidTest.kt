@@ -1423,6 +1423,8 @@ class ThesisAndroidTest {
         clickInList("thesis_structure", "thesis_complete_$introId")
         awaitRepo("completed") { repo.snapshot(id).section(introId)!!.completed }
         await("completed shown") { controller.state.value.snapshot?.section(introId)?.completed == true }
+        // The state changes before the screen is recomposed (run #116): wait for the next idle frame.
+        compose.waitForIdle()
         compose.onNodeWithTag("thesis_status_$introId", useUnmergedTree = true).assertTextEquals("Completed")
 
         // Preview screen: a document viewer only, with Return to Workspace and Full thesis; the
