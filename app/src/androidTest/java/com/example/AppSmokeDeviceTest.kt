@@ -73,6 +73,18 @@ class AppSmokeDeviceTest {
 
     private fun diagnostics(): String = buildString {
         append("tab=${vm.currentTab.value} thesis=${vm.thesis.state.value.screen} busy=${vm.thesis.state.value.busy}\n")
+        // One line (the CI log keeps only the first lines of a failure): number of windows and
+        // every tagged node with its bounds, so that what was on screen is always visible.
+        try {
+            val roots = compose.onAllNodes(isRoot()).fetchSemanticsNodes().size
+            val tagged = compose.onAllNodes(androidx.compose.ui.test.SemanticsMatcher("tagged") {
+                it.config.contains(androidx.compose.ui.semantics.SemanticsProperties.TestTag)
+            }, useUnmergedTree = true).fetchSemanticsNodes().joinToString("; ") { n ->
+                val b = n.boundsInRoot
+                "${n.config[androidx.compose.ui.semantics.SemanticsProperties.TestTag]}@${b.left.toInt()},${b.top.toInt()},${b.right.toInt()},${b.bottom.toInt()}"
+            }
+            append("roots=$roots tags: $tagged\n")
+        } catch (e: Throwable) { append("tags unavailable: $e\n") }
         try { append(compose.onAllNodes(isRoot()).printToString(maxDepth = 25)) } catch (e: Throwable) { append("tree unavailable: $e") }
     }
 
